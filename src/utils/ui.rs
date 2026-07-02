@@ -30,7 +30,7 @@ pub fn create_progress_bar(len: u64, msg: &str) -> indicatif::ProgressBar {
     pb.set_style(
         indicatif::ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
-            .unwrap()
+            .expect("Invalid progress bar template format")
             .progress_chars("#>-"),
     );
     pb.set_message(msg.to_string());
@@ -43,7 +43,7 @@ pub fn create_spinner(msg: &str) -> indicatif::ProgressBar {
     pb.set_style(
         indicatif::ProgressStyle::default_spinner()
             .template("{spinner:.green} {msg}")
-            .unwrap(),
+            .expect("Invalid spinner template format"),
     );
     pb.set_message(msg.to_string());
     pb
@@ -234,5 +234,32 @@ mod tests {
     fn test_dialoguer_ui_default() {
         let ui = DialoguerUi::default();
         assert!(ui.term.is_none());
+    }
+
+    #[test]
+    fn test_create_progress_bar() {
+        let pb = create_progress_bar(100, "test progress");
+        assert_eq!(pb.length(), Some(100));
+        assert_eq!(pb.message(), "test progress");
+        assert_eq!(pb.position(), 0);
+        assert!(!pb.is_finished());
+    }
+
+    #[test]
+    fn test_create_progress_bar_zero_len() {
+        let pb = create_progress_bar(0, "test empty");
+        assert_eq!(pb.length(), Some(0));
+        assert_eq!(pb.message(), "test empty");
+        assert_eq!(pb.position(), 0);
+        assert!(!pb.is_finished());
+    }
+
+    #[test]
+    fn test_create_spinner() {
+        let pb = create_spinner("test spinner");
+        assert_eq!(pb.message(), "test spinner");
+        assert_eq!(pb.length(), None);
+        assert_eq!(pb.position(), 0);
+        assert!(!pb.is_finished());
     }
 }

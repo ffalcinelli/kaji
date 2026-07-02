@@ -113,6 +113,163 @@ pub async fn init_secrets(
     Ok(Arc::new(CompositeResolver::new(resolvers)))
 }
 
+async fn handle_inspect(
+    cli: &Cli,
+    profile: Option<&Profile>,
+    workspace: &std::path::Path,
+    yes: bool,
+) -> Result<()> {
+    let client = init_client(cli, profile).await?;
+    println!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Inspecting Keycloak configuration into {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    inspect::run(&client, workspace.to_path_buf(), &cli.realms, yes).await?;
+    Ok(())
+}
+
+async fn handle_validate(cli: &Cli, workspace: &std::path::Path) -> Result<()> {
+    println!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Validating Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    validate::run(workspace.to_path_buf(), &cli.realms).await?;
+    Ok(())
+}
+
+async fn handle_apply(
+    cli: &Cli,
+    profile: Option<&Profile>,
+    workspace: &std::path::Path,
+    yes: bool,
+    review: bool,
+) -> Result<()> {
+    let client = init_client(cli, profile).await?;
+    let resolver = init_secrets(cli, workspace, profile).await?;
+    println!(
+        "{} {}",
+        ACTION,
+        style(format!(
+            "Applying Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    apply::run(
+        &client,
+        workspace.to_path_buf(),
+        &cli.realms,
+        yes,
+        review,
+        Arc::new(crate::utils::ui::DialoguerUi::new()),
+        resolver,
+        cli.profile.clone(),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_plan(
+    cli: &Cli,
+    profile: Option<&Profile>,
+    workspace: &std::path::Path,
+    changes_only: bool,
+    interactive: bool,
+) -> Result<()> {
+    let client = init_client(cli, profile).await?;
+    let resolver = init_secrets(cli, workspace, profile).await?;
+    println!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Planning Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    plan::run(
+        &client,
+        workspace.to_path_buf(),
+        changes_only,
+        interactive,
+        &cli.realms,
+        Arc::new(crate::utils::ui::DialoguerUi::new()),
+        resolver,
+        cli.profile.clone(),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_drift(
+    cli: &Cli,
+    profile: Option<&Profile>,
+    workspace: &std::path::Path,
+) -> Result<()> {
+    let client = init_client(cli, profile).await?;
+    let resolver = init_secrets(cli, workspace, profile).await?;
+    println!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Checking drift for Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    plan::run(
+        &client,
+        workspace.to_path_buf(),
+        true,
+        false,
+        &cli.realms,
+        Arc::new(crate::utils::ui::DialoguerUi::new()),
+        resolver,
+        cli.profile.clone(),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_cli(workspace: &std::path::Path) -> Result<()> {
+    cli::run(
+        workspace.to_path_buf(),
+        &crate::utils::ui::DialoguerUi::new(),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_clean(cli: &Cli, workspace: &std::path::Path, yes: bool) -> Result<()> {
+    println!(
+        "{} {}",
+        ACTION,
+        style(format!(
+            "Cleaning up Keycloak configuration in {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    clean::run(workspace.to_path_buf(), yes, &cli.realms).await?;
+    Ok(())
+}
+
 pub async fn run_app(cli: Cli) -> Result<()> {
     let workspace = match &cli.command {
         Commands::Inspect { workspace, .. } => workspace,
@@ -132,130 +289,40 @@ pub async fn run_app(cli: Cli) -> Result<()> {
 
     match &cli.command {
         Commands::Inspect { workspace, yes } => {
-            let client = init_client(&cli, profile.as_ref()).await?;
-            println!(
-                "{} {}",
-                SEARCH,
-                style(format!(
-                    "Inspecting Keycloak configuration into {:?}",
-                    workspace
-                ))
-                .cyan()
-                .bold()
-            );
-            inspect::run(&client, workspace.clone(), &cli.realms, *yes).await?;
+            handle_inspect(&cli, profile.as_ref(), workspace, *yes).await?;
         }
         Commands::Validate { workspace } => {
-            println!(
-                "{} {}",
-                SEARCH,
-                style(format!(
-                    "Validating Keycloak configuration from {:?}",
-                    workspace
-                ))
-                .cyan()
-                .bold()
-            );
-            validate::run(workspace.clone(), &cli.realms).await?;
+            handle_validate(&cli, workspace).await?;
         }
         Commands::Apply {
             workspace,
             yes,
             review,
         } => {
-            let client = init_client(&cli, profile.as_ref()).await?;
-            let resolver = init_secrets(&cli, workspace, profile.as_ref()).await?;
-            println!(
-                "{} {}",
-                ACTION,
-                style(format!(
-                    "Applying Keycloak configuration from {:?}",
-                    workspace
-                ))
-                .cyan()
-                .bold()
-            );
-            apply::run(
-                &client,
-                workspace.clone(),
-                &cli.realms,
-                *yes,
-                *review,
-                Arc::new(crate::utils::ui::DialoguerUi::new()),
-                resolver,
-                cli.profile.clone(),
-            )
-            .await?;
+            handle_apply(&cli, profile.as_ref(), workspace, *yes, *review).await?;
         }
         Commands::Plan {
             workspace,
             changes_only,
             interactive,
         } => {
-            let client = init_client(&cli, profile.as_ref()).await?;
-            let resolver = init_secrets(&cli, workspace, profile.as_ref()).await?;
-            println!(
-                "{} {}",
-                SEARCH,
-                style(format!(
-                    "Planning Keycloak configuration from {:?}",
-                    workspace
-                ))
-                .cyan()
-                .bold()
-            );
-            plan::run(
-                &client,
-                workspace.clone(),
+            handle_plan(
+                &cli,
+                profile.as_ref(),
+                workspace,
                 *changes_only,
                 *interactive,
-                &cli.realms,
-                Arc::new(crate::utils::ui::DialoguerUi::new()),
-                resolver,
-                cli.profile.clone(),
             )
             .await?;
         }
         Commands::Drift { workspace } => {
-            let client = init_client(&cli, profile.as_ref()).await?;
-            let resolver = init_secrets(&cli, workspace, profile.as_ref()).await?;
-            println!(
-                "{} {}",
-                SEARCH,
-                style(format!(
-                    "Checking drift for Keycloak configuration from {:?}",
-                    workspace
-                ))
-                .cyan()
-                .bold()
-            );
-            plan::run(
-                &client,
-                workspace.clone(),
-                true,
-                false,
-                &cli.realms,
-                Arc::new(crate::utils::ui::DialoguerUi::new()),
-                resolver,
-                cli.profile.clone(),
-            )
-            .await?;
+            handle_drift(&cli, profile.as_ref(), workspace).await?;
         }
         Commands::Cli { workspace } => {
-            cli::run(workspace.clone(), &crate::utils::ui::DialoguerUi::new()).await?;
+            handle_cli(workspace).await?;
         }
         Commands::Clean { workspace, yes } => {
-            println!(
-                "{} {}",
-                ACTION,
-                style(format!(
-                    "Cleaning up Keycloak configuration in {:?}",
-                    workspace
-                ))
-                .cyan()
-                .bold()
-            );
-            clean::run(workspace.clone(), *yes, &cli.realms).await?;
+            handle_clean(&cli, workspace, *yes).await?;
         }
     }
 

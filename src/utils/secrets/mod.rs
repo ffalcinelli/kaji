@@ -399,31 +399,55 @@ mod tests {
 
     #[test]
     fn test_is_secret_key() {
-        // Whitelist hits
+        // Whitelist exact matches (case variations)
         assert!(is_secret_key("secret", ""));
+        assert!(is_secret_key("SECRET", ""));
         assert!(is_secret_key("password", ""));
+        assert!(is_secret_key("PASSWORD", ""));
+        assert!(is_secret_key("token", ""));
+        assert!(is_secret_key("TOKEN", ""));
+        assert!(is_secret_key("credential", ""));
+        assert!(is_secret_key("CREDENTIAL", ""));
+
+        // Whitelist substring matches
         assert!(is_secret_key("myToken", ""));
         assert!(is_secret_key("user_credential", ""));
+        assert!(is_secret_key("clientSecret", ""));
 
-        // Blacklist hits (override whitelist)
+        // Blacklist exact and substring matches (override whitelist)
         assert!(!is_secret_key("passwordPolicy", ""));
         assert!(!is_secret_key("isPasswordless", ""));
         assert!(!is_secret_key("creationDate", ""));
         assert!(!is_secret_key("deliveryMethod", ""));
         assert!(!is_secret_key("resetCredentials", ""));
 
-        // "value" special case
+        // Additional blacklist cases testing case insensitivity and combinations
+        assert!(!is_secret_key("SECRET_POLICY", ""));
+        assert!(!is_secret_key("passwordless_auth", ""));
+        assert!(!is_secret_key("CREATION_secret", ""));
+        assert!(!is_secret_key("delivery_token", ""));
+        assert!(!is_secret_key("RESET_password", ""));
+        assert!(!is_secret_key("policy", ""));
+
+        // "value" special case with prefix case variations
         assert!(is_secret_key("value", "credential"));
+        assert!(is_secret_key("value", "CREDENTIAL"));
+        assert!(is_secret_key("VALUE", "credential"));
         assert!(is_secret_key("value", "my_secret_key"));
         assert!(is_secret_key("value", "password_field"));
         assert!(is_secret_key("value", "some_token"));
+        assert!(is_secret_key("value", "TOKEN"));
+
+        // "value" special case failures
         assert!(!is_secret_key("value", "other"));
         assert!(!is_secret_key("value", ""));
+        assert!(!is_secret_key("VALUE", ""));
 
         // General non-secret
         assert!(!is_secret_key("username", ""));
         assert!(!is_secret_key("clientId", ""));
         assert!(!is_secret_key("email", ""));
+        assert!(!is_secret_key("foo", ""));
     }
 
     #[test]
