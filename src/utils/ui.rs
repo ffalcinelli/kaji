@@ -241,6 +241,17 @@ mod tests {
         let pb = create_progress_bar(100, "test progress");
         assert_eq!(pb.length(), Some(100));
         assert_eq!(pb.message(), "test progress");
+        assert_eq!(pb.position(), 0);
+        assert!(!pb.is_finished());
+    }
+
+    #[test]
+    fn test_create_progress_bar_zero_len() {
+        let pb = create_progress_bar(0, "test empty");
+        assert_eq!(pb.length(), Some(0));
+        assert_eq!(pb.message(), "test empty");
+        assert_eq!(pb.position(), 0);
+        assert!(!pb.is_finished());
     }
 
     #[test]
