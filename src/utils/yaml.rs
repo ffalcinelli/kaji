@@ -46,20 +46,24 @@ pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> 
 /// Returns true if the file is a profile-specific overlay.
 pub fn is_overlay_file(path: &Path, profile: Option<&str>) -> bool {
     if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-        // Pattern: *.profile.yaml
+        let is_yaml_ext = file_name.ends_with(".yaml") || file_name.ends_with(".yml");
+        if !is_yaml_ext {
+            return false;
+        }
+
+        // Pattern: *.profile.yaml or *.profile.yml
         if let Some(p) = profile
-            && file_name.contains(&format!(".{}.yaml", p))
+            && (file_name.ends_with(&format!(".{}.yaml", p))
+                || file_name.ends_with(&format!(".{}.yml", p)))
         {
             return true;
         }
-        // Generic pattern for any profile: *.*.yaml
-        // We want to skip any file that looks like an overlay if we are not in that profile
-        // but wait, if we are in profile 'prod', we skip 'test.yaml'?
-        // No, 'test.yaml' is NOT an overlay. 'resource.test.yaml' IS an overlay.
 
+        // Generic pattern for any profile: *.*.yaml or *.*.yml
+        // Avoid matching ".hidden.yaml" which splits to ["", "hidden", "yaml"]
         let parts: Vec<&str> = file_name.split('.').collect();
-        if parts.len() >= 3 && parts[parts.len() - 1] == "yaml" {
-            // It has at least two dots before 'yaml'. e.g. 'resource.prod.yaml'
+        if parts.len() >= 3 && !parts[0].is_empty() {
+            // e.g. 'resource.prod.yaml' -> parts: ["resource", "prod", "yaml"]
             return true;
         }
     }
@@ -137,15 +141,36 @@ mod tests {
     }
 
     #[test]
-    fn test_is_overlay_file() {
+    fn test_is_overlay_file_exact_profile() {
         assert!(is_overlay_file(Path::new("role.prod.yaml"), Some("prod")));
-        assert!(is_overlay_file(Path::new("client.test.yaml"), Some("prod"))); // Generic pattern match
-        assert!(!is_overlay_file(Path::new("role.yaml"), Some("prod")));
-        assert!(!is_overlay_file(Path::new("some.txt"), Some("prod")));
+        assert!(is_overlay_file(Path::new("role.prod.yml"), Some("prod")));
+        assert!(is_overlay_file(Path::new("client.test.yaml"), Some("test")));
+    }
 
-        // Multi-dot non-overlay cases?
-        // Our current logic says if it has >= 3 parts (2 dots) and ends in yaml, it is an overlay.
-        // e.g. "my.resource.yaml" is an overlay.
+    #[test]
+    fn test_is_overlay_file_generic_profile() {
+        // Even if we specify profile "prod", "test.yaml" is detected as an overlay file
+        // (which is correctly handled so we know to skip it during Apply)
+        assert!(is_overlay_file(Path::new("client.test.yaml"), Some("prod")));
+        assert!(is_overlay_file(Path::new("client.test.yml"), Some("prod")));
+    }
+
+    #[test]
+    fn test_is_overlay_file_no_profile() {
+        // Without a profile, any file matching the multi-dot pattern is considered an overlay
+        assert!(is_overlay_file(Path::new("role.prod.yaml"), None));
         assert!(is_overlay_file(Path::new("my.resource.yaml"), None));
+        assert!(is_overlay_file(Path::new("my.resource.yml"), None));
+    }
+
+    #[test]
+    fn test_is_overlay_file_non_overlays() {
+        assert!(!is_overlay_file(Path::new("role.yaml"), Some("prod")));
+        assert!(!is_overlay_file(Path::new("role.yml"), Some("prod")));
+        assert!(!is_overlay_file(Path::new("role.yaml"), None));
+        assert!(!is_overlay_file(Path::new("some.txt"), Some("prod")));
+        assert!(!is_overlay_file(Path::new("some.txt"), None));
+        assert!(!is_overlay_file(Path::new("no_extension"), Some("prod")));
+        assert!(!is_overlay_file(Path::new(".hidden.yaml"), Some("prod")));
     }
 }
