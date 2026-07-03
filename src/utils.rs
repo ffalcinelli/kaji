@@ -335,6 +335,48 @@ mod tests {
     }
 
     #[test]
+    fn test_to_sorted_yaml_with_secrets_struct() {
+        #[derive(serde::Serialize)]
+        struct TestConfig {
+            #[serde(rename = "clientId")]
+            client_id: String,
+            name: String,
+            password: Option<String>,
+            value: i32,
+        }
+
+        let mut secrets = std::collections::BTreeMap::new();
+        let val = TestConfig {
+            client_id: "test-client".to_string(),
+            name: "test-name".to_string(),
+            password: Some("super-secret".to_string()),
+            value: 42,
+        };
+
+        let yaml = to_sorted_yaml_with_secrets(&val, "APP", &mut secrets).unwrap();
+
+        assert!(yaml.contains("password: ${KEYCLOAK_APP_TEST_CLIENT_PASSWORD}"));
+        assert!(yaml.contains("clientId: test-client"));
+        assert_eq!(
+            secrets.get("KEYCLOAK_APP_TEST_CLIENT_PASSWORD"),
+            Some(&"super-secret".to_string())
+        );
+    }
+
+    #[test]
+    fn test_to_sorted_yaml_with_secrets_error() {
+        struct FailingStruct;
+        impl serde::Serialize for FailingStruct {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("Simulated serialization error"))
+            }
+        }
+        let mut secrets = std::collections::BTreeMap::new();
+        let result = to_sorted_yaml_with_secrets(&FailingStruct, "FAIL", &mut secrets);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_to_sorted_yaml_simple() {
         let val = serde_json::json!({ "b": 2, "a": 1 });
         let yaml = to_sorted_yaml(&val).unwrap();
