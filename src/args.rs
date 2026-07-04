@@ -20,7 +20,7 @@ pub struct Cli {
     pub user: Option<String>,
 
     /// Keycloak Admin Password
-    #[arg(skip)]
+    #[arg(long, env = "KEYCLOAK_PASSWORD", hide_env_values = true)]
     pub password: Option<String>,
 
     /// Keycloak Client ID (for client credentials grant)
@@ -28,7 +28,7 @@ pub struct Cli {
     pub client_id: String,
 
     /// Keycloak Client Secret (for client credentials grant)
-    #[arg(skip)]
+    #[arg(long, env = "KEYCLOAK_CLIENT_SECRET", hide_env_values = true)]
     pub client_secret: Option<String>,
 
     /// Profile name to load from profiles/ directory
