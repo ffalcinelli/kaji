@@ -173,4 +173,12 @@ mod tests {
         assert!(!is_overlay_file(Path::new("no_extension"), Some("prod")));
         assert!(!is_overlay_file(Path::new(".hidden.yaml"), Some("prod")));
     }
+
+    #[test]
+    fn test_is_overlay_file_invalid_path() {
+        // These paths return None for file_name() and should be gracefully handled
+        assert!(!is_overlay_file(Path::new("/"), Some("prod")));
+        assert!(!is_overlay_file(Path::new(".."), Some("prod")));
+        assert!(!is_overlay_file(Path::new(""), Some("prod")));
+    }
 }
