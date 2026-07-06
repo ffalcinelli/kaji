@@ -87,8 +87,8 @@ macro_rules! impl_keycloak_resource {
                 $( self.$id_field.set_from_option_string(_id); )?
             }
 
-            fn get_identity(&$id_self) -> Option<String> { $id_expr }
-            fn get_name(&$name_self) -> String { $name_expr }
+            fn get_identity(&$id_self) -> Option<String> { ($id_expr).map(|s| s.to_string()) }
+            fn get_name(&$name_self) -> String { ($name_expr).to_string() }
 
             $(fn has_id(&$has_id_self) -> bool { $has_id_expr })?
             $(fn clear_metadata(&mut $clear_self) $clear_expr)?
@@ -140,8 +140,8 @@ impl_keycloak_resource!(
     RealmRepresentation,
     api_path = "realms",
     id_field = realm,
-    identity = |self| Some(self.realm.clone()),
-    name = |self| self.realm.clone()
+    identity = |self| Some(self.realm.as_str()),
+    name = |self| self.realm.as_str()
 );
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -234,8 +234,8 @@ impl_keycloak_resource!(
     api_path = "identity-provider/instances",
     dir_name = "identity-providers",
     id_field = internal_id,
-    identity = |self| self.alias.clone().or_else(|| self.internal_id.clone()),
-    name = |self| self.alias.clone().unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.alias.as_deref().or(self.internal_id.as_deref()),
+    name = |self| self.alias.as_deref().unwrap_or("unknown"),
     has_id = |self| self.internal_id.is_some(),
     clear_metadata = |self| {
         self.internal_id = None;
@@ -283,12 +283,8 @@ impl_keycloak_resource!(
     ClientRepresentation,
     api_path = "clients",
     id_field = id,
-    identity = |self| self.client_id.clone().or_else(|| self.id.clone()),
-    name = |self| self
-        .client_id
-        .clone()
-        .or_else(|| self.name.clone())
-        .unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.client_id.as_deref().or(self.id.as_deref()),
+    name = |self| self.client_id.as_deref().or(self.name.as_deref()).unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -322,8 +318,8 @@ impl_keycloak_resource!(
     RoleRepresentation,
     api_path = "roles",
     id_field = id,
-    identity = |self| Some(self.name.clone()).or_else(|| self.id.clone()),
-    name = |self| self.name.clone(),
+    identity = |self| Some(self.name.as_str()).or(self.id.as_deref()),
+    name = |self| self.name.as_str(),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -354,8 +350,8 @@ impl_keycloak_resource!(
     ClientScopeRepresentation,
     api_path = "client-scopes",
     id_field = id,
-    identity = |self| self.name.clone().or_else(|| self.id.clone()),
-    name = |self| self.name.clone().unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.name.as_deref().or(self.id.as_deref()),
+    name = |self| self.name.as_deref().unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -386,16 +382,8 @@ impl_keycloak_resource!(
     GroupRepresentation,
     api_path = "groups",
     id_field = id,
-    identity = |self| self
-        .path
-        .clone()
-        .or_else(|| self.id.clone())
-        .or_else(|| self.name.clone()),
-    name = |self| self
-        .name
-        .clone()
-        .or_else(|| self.path.clone())
-        .unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.path.as_deref().or(self.id.as_deref()).or(self.name.as_deref()),
+    name = |self| self.name.as_deref().or(self.path.as_deref()).unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -465,16 +453,8 @@ impl_keycloak_resource!(
     UserRepresentation,
     api_path = "users",
     id_field = id,
-    identity = |self| self
-        .username
-        .as_ref()
-        .map(|s| s.chars().collect::<String>())
-        .or_else(|| self.id.as_ref().map(|s| s.chars().collect::<String>())),
-    name = |self| self
-        .username
-        .as_ref()
-        .map(|s| s.chars().collect::<String>())
-        .unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.username.as_deref().or(self.id.as_deref()),
+    name = |self| self.username.as_deref().unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -534,8 +514,8 @@ impl_keycloak_resource!(
     api_path = "authentication/flows",
     dir_name = "authentication-flows",
     id_field = id,
-    identity = |self| self.alias.clone().or_else(|| self.id.clone()),
-    name = |self| self.alias.clone().unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.alias.as_deref().or(self.id.as_deref()),
+    name = |self| self.alias.as_deref().unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -573,8 +553,8 @@ impl_keycloak_resource!(
     api_path = "authentication/required-actions",
     dir_name = "required-actions",
     id_field = alias,
-    identity = |self| self.alias.clone(),
-    name = |self| self.alias.clone().unwrap_or_else(|| "unknown".to_string())
+    identity = |self| self.alias.as_deref(),
+    name = |self| self.alias.as_deref().unwrap_or("unknown")
 );
 
 impl_resource_meta!(
@@ -624,8 +604,8 @@ impl_keycloak_resource!(
     ComponentRepresentation,
     api_path = "components",
     id_field = id,
-    identity = |self| self.id.clone().or_else(|| self.name.clone()),
-    name = |self| self.name.clone().unwrap_or_else(|| "unknown".to_string()),
+    identity = |self| self.id.as_deref().or(self.name.as_deref()),
+    name = |self| self.name.as_deref().unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
