@@ -24,9 +24,17 @@ fn main() {
 
         let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
+        // Create some temp directories with resources inside to actually have something to plan
+        std::fs::create_dir_all("/tmp/perf_test/test-realm").unwrap();
+        std::fs::write(
+            "/tmp/perf_test/test-realm/realm.yaml",
+            "realm: test-realm\nenabled: true\n",
+        )
+        .unwrap();
+
         let start = std::time::Instant::now();
         let ui = Arc::new(DialoguerUi::new());
-        for _ in 0..50 {
+        for _ in 0..500 {
             plan::run(
                 &client,
                 PathBuf::from("/tmp/perf_test"),
@@ -42,5 +50,7 @@ fn main() {
         }
         let elapsed = start.elapsed();
         println!("Elapsed time: {:?}", elapsed);
+
+        std::fs::remove_dir_all("/tmp/perf_test").unwrap();
     });
 }
