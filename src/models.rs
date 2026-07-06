@@ -284,7 +284,11 @@ impl_keycloak_resource!(
     api_path = "clients",
     id_field = id,
     identity = |self| self.client_id.as_deref().or(self.id.as_deref()),
-    name = |self| self.client_id.as_deref().or(self.name.as_deref()).unwrap_or("unknown"),
+    name = |self| self
+        .client_id
+        .as_deref()
+        .or(self.name.as_deref())
+        .unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
@@ -382,8 +386,16 @@ impl_keycloak_resource!(
     GroupRepresentation,
     api_path = "groups",
     id_field = id,
-    identity = |self| self.path.as_deref().or(self.id.as_deref()).or(self.name.as_deref()),
-    name = |self| self.name.as_deref().or(self.path.as_deref()).unwrap_or("unknown"),
+    identity = |self| self
+        .path
+        .as_deref()
+        .or(self.id.as_deref())
+        .or(self.name.as_deref()),
+    name = |self| self
+        .name
+        .as_deref()
+        .or(self.path.as_deref())
+        .unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
