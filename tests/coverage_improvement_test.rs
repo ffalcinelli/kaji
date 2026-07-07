@@ -179,7 +179,7 @@ fn test_models_debug_obfuscation() {
 
     let debug_str = format!("{:?}", idp);
     assert!(debug_str.contains("********"));
-    assert!(debug_str.contains("public"));
+    assert!(!debug_str.contains("public")); // Config is completely redacted now
     assert!(!debug_str.contains("sensitive"));
 
     let cred = CredentialRepresentation {

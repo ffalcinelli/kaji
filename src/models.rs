@@ -107,24 +107,6 @@ macro_rules! impl_resource_meta {
     };
 }
 
-fn obfuscate_config<T>(
-    config: &Option<HashMap<String, T>>,
-    prefix: &str,
-) -> Option<HashMap<String, T>>
-where
-    T: From<&'static str> + Clone,
-{
-    let mut obfuscated_config = config.clone();
-    if let Some(cfg) = &mut obfuscated_config {
-        for (key, val) in cfg.iter_mut() {
-            if crate::utils::secrets::is_secret_key(key, prefix) {
-                *val = T::from("********");
-            }
-        }
-    }
-    obfuscated_config
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RealmRepresentation {
     pub realm: String,
@@ -195,8 +177,6 @@ pub struct IdentityProviderRepresentation {
 
 impl std::fmt::Debug for IdentityProviderRepresentation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let obfuscated_config = obfuscate_config(&self.config, "idp");
-
         f.debug_struct("IdentityProviderRepresentation")
             .field("internal_id", &self.internal_id)
             .field("alias", &self.alias)
@@ -223,7 +203,7 @@ impl std::fmt::Debug for IdentityProviderRepresentation {
                 &self.post_broker_login_flow_alias,
             )
             .field("display_name", &self.display_name)
-            .field("config", &obfuscated_config)
+            .field("config", &self.config.as_ref().map(|_| "********"))
             .field("extra", &self.extra)
             .finish()
     }
@@ -597,8 +577,6 @@ pub struct ComponentRepresentation {
 
 impl std::fmt::Debug for ComponentRepresentation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let obfuscated_config = obfuscate_config(&self.config, "component");
-
         f.debug_struct("ComponentRepresentation")
             .field("id", &self.id)
             .field("name", &self.name)
@@ -606,7 +584,7 @@ impl std::fmt::Debug for ComponentRepresentation {
             .field("provider_type", &self.provider_type)
             .field("parent_id", &self.parent_id)
             .field("sub_type", &self.sub_type)
-            .field("config", &obfuscated_config)
+            .field("config", &self.config.as_ref().map(|_| "********"))
             .field("extra", &self.extra)
             .finish()
     }

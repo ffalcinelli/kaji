@@ -43,8 +43,8 @@ fn test_idp_debug() {
 
     let debug_str = format!("{:?}", idp);
     assert!(debug_str.contains("alias: Some(\"google\")"));
-    assert!(debug_str.contains("\"clientSecret\": \"********\""));
-    assert!(debug_str.contains("\"normalParam\": \"normal_val\""));
+    assert!(debug_str.contains("config: Some(\"********\")"));
+    assert!(!debug_str.contains("normalParam")); // Config is completely redacted now
     assert!(!debug_str.contains("very_secret"));
 }
 
@@ -67,7 +67,7 @@ fn test_component_debug() {
 
     let debug_str = format!("{:?}", comp);
     assert!(debug_str.contains("name: Some(\"ldap\")"));
-    assert!(debug_str.contains("\"bindCredential\": String(\"********\")"));
-    assert!(debug_str.contains("\"other\": Array [String(\"val\")]"));
+    assert!(debug_str.contains("config: Some(\"********\")"));
+    assert!(!debug_str.contains("other")); // Config is completely redacted now
     assert!(!debug_str.contains("secret_val"));
 }
