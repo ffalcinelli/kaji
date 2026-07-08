@@ -54,10 +54,16 @@ impl fmt::Debug for Cli {
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "********"))
             .field("client_id", &self.client_id)
-            .field("client_secret", &self.client_secret.as_ref().map(|_| "********"))
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "********"),
+            )
             .field("profile", &self.profile)
             .field("vault_addr", &self.vault_addr)
-            .field("vault_token", &self.vault_token.as_ref().map(|_| "********"))
+            .field(
+                "vault_token",
+                &self.vault_token.as_ref().map(|_| "********"),
+            )
             .finish()
     }
 }
