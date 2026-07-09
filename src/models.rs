@@ -878,4 +878,10 @@ mod tests {
         os2.set_from_option_string(None);
         assert_eq!(os2, Some("new".to_string()));
     }
+
+    #[test]
+    fn test_object_path() {
+        assert_eq!(ClientRepresentation::object_path("123-abc"), "clients/123-abc");
+        assert_eq!(RoleRepresentation::object_path("456-def"), "roles-by-id/456-def");
+    }
 }
