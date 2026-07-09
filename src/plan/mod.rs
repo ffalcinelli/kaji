@@ -133,7 +133,7 @@ pub async fn run(
     }
     changed_files.sort();
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     if changed_files.is_empty() {
         if async_fs::try_exists(&plan_file).await? {
             async_fs::remove_file(&plan_file).await?;

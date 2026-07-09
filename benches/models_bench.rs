@@ -1,5 +1,5 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use kcd::models::ToOptionString;
+use kaji::models::ToOptionString;
 
 fn bench_to_option_string(c: &mut Criterion) {
     let s = String::from(

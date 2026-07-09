@@ -9,35 +9,35 @@ use common::start_mock_server;
 
 #[test]
 fn test_help() {
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Usage: kcd"))
+        .stdout(predicate::str::contains("Usage: kaji"))
         .stdout(predicate::str::contains("Commands:"));
 }
 
 #[test]
 fn test_version() {
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("kcd"));
+        .stdout(predicate::str::contains("kaji"));
 }
 
 #[test]
 fn test_no_args() {
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.env_clear()
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Usage: kcd [OPTIONS] <COMMAND>"));
+        .stderr(predicate::str::contains("Usage: kaji [OPTIONS] <COMMAND>"));
 }
 
 #[test]
 fn test_invalid_command() {
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("invalid")
         .assert()
         .failure()
@@ -52,7 +52,7 @@ fn test_validate_command() {
     let workspace = temp.path().join("workspace");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--server")
         .arg("http://localhost:8080")
         .arg("validate")
@@ -64,7 +64,7 @@ fn test_validate_command() {
 
 #[test]
 fn test_validate_help() {
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("validate")
         .arg("--help")
         .assert()
@@ -76,7 +76,7 @@ fn test_validate_help() {
 
 #[test]
 fn test_inspect_help() {
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("inspect")
         .arg("--help")
         .assert()
@@ -92,7 +92,7 @@ async fn test_inspect_command() {
     let temp = tempdir().unwrap();
     let workspace = temp.path().join("workspace");
 
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--server")
         .arg(&mock_url)
         .arg("--user")
@@ -123,7 +123,7 @@ async fn test_apply_command() {
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--server")
         .arg(&mock_url)
         .arg("--client-id")
@@ -151,7 +151,7 @@ async fn test_plan_command() {
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--server")
         .arg(&mock_url)
         .arg("--user")
@@ -171,7 +171,7 @@ async fn test_clean_command() {
     let realm_dir = workspace.join("test-realm");
     fs::create_dir_all(&realm_dir).unwrap();
 
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--server")
         .arg("http://localhost:8080")
         .arg("clean")
@@ -198,7 +198,7 @@ async fn test_drift_command() {
     )
     .unwrap();
 
-    let mut cmd = Command::cargo_bin("kcd").unwrap();
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
     cmd.arg("--server")
         .arg(&mock_url)
         .arg("--user")

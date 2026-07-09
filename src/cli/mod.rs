@@ -10,7 +10,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
-    ui.print_info("Welcome to kcd interactive CLI!");
+    ui.print_info("Welcome to kaji interactive CLI!");
 
     let selections = &[
         "Create User",

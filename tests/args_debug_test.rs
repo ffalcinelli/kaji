@@ -1,9 +1,9 @@
-use kcd::args::Cli;
+use kaji::args::Cli;
 
 #[test]
 fn test_cli_debug_obfuscation() {
     let cli = Cli {
-        command: kcd::args::Commands::Clean {
+        command: kaji::args::Commands::Clean {
             workspace: std::path::PathBuf::from("workspace"),
             yes: false,
         },

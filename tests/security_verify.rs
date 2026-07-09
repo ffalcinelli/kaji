@@ -1,4 +1,4 @@
-use kcd::cli::client::create_client_yaml;
+use kaji::cli::client::create_client_yaml;
 use std::fs;
 use tempfile::tempdir;
 

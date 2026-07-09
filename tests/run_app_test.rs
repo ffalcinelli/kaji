@@ -1,7 +1,7 @@
 mod common;
 use anyhow::Result;
-use kcd::args::{Cli, Commands};
-use kcd::run_app;
+use kaji::args::{Cli, Commands};
+use kaji::run_app;
 use tempfile::tempdir;
 
 #[tokio::test]

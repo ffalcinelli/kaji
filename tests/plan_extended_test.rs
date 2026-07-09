@@ -1,13 +1,13 @@
 use std::sync::Arc;
 mod common;
 use common::start_mock_server;
-use kcd::client::KeycloakClient;
-use kcd::models::RealmRepresentation;
-use kcd::plan;
+use kaji::client::KeycloakClient;
+use kaji::models::RealmRepresentation;
+use kaji::plan;
 use std::fs;
 use tempfile::tempdir;
 
-use kcd::utils::ui::MockUi;
+use kaji::utils::ui::MockUi;
 
 #[tokio::test]
 async fn test_plan_extended_scenarios() {
@@ -24,9 +24,9 @@ async fn test_plan_extended_scenarios() {
     let realm_dir = workspace_dir.join("test-realm");
     fs::create_dir(&realm_dir).unwrap();
 
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     let ui = Arc::new(MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
@@ -63,8 +63,8 @@ async fn test_plan_extended_scenarios() {
     .await
     .unwrap();
 
-    // scenario: .kcdplan exists but is empty
-    fs::write(workspace_dir.join(".kcdplan"), "[]").unwrap();
+    // scenario: .kajiplan exists but is empty
+    fs::write(workspace_dir.join(".kajiplan"), "[]").unwrap();
     plan::run(
         &client,
         workspace_dir.clone(),
@@ -78,9 +78,9 @@ async fn test_plan_extended_scenarios() {
     .await
     .unwrap();
 
-    // scenario: .kcdplan exists with non-existent files
+    // scenario: .kajiplan exists with non-existent files
     fs::write(
-        workspace_dir.join(".kcdplan"),
+        workspace_dir.join(".kajiplan"),
         "[\"test-realm/non-existent.yaml\"]",
     )
     .unwrap();

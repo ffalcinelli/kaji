@@ -1,14 +1,14 @@
 mod common;
 use common::start_mock_server;
-use kcd::client::KeycloakClient;
-use kcd::plan;
-use kcd::utils::secrets::{EnvResolver, SecretResolver};
+use kaji::client::KeycloakClient;
+use kaji::plan;
+use kaji::utils::secrets::{EnvResolver, SecretResolver};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-use kcd::utils::ui::DialoguerUi;
+use kaji::utils::ui::DialoguerUi;
 
 #[tokio::test]
 async fn test_plan_non_existent_workspace() {
@@ -21,7 +21,7 @@ async fn test_plan_non_existent_workspace() {
         false,
         &[],
         Arc::new(DialoguerUi::new()),
-        Arc::new(kcd::utils::secrets::EnvResolver::new(
+        Arc::new(kaji::utils::secrets::EnvResolver::new(
             std::collections::HashMap::new(),
         )),
         None,
@@ -95,13 +95,13 @@ async fn test_plan_cleanup_old_plan_file() {
 
     let dir = tempdir().unwrap();
     let workspace_dir = dir.path().to_path_buf();
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     fs::write(&plan_file, "[]").unwrap();
 
     let realm_dir = workspace_dir.join("test-realm");
     fs::create_dir_all(&realm_dir).unwrap();
 
-    // No changes, so it should remove .kcdplan
+    // No changes, so it should remove .kajiplan
     let res = plan::run(
         &client,
         workspace_dir.clone(),
@@ -133,7 +133,7 @@ async fn test_plan_realm_not_found_remote() {
     let realm_dir = workspace_dir.join("new-realm");
     fs::create_dir_all(&realm_dir).unwrap();
 
-    let realm = kcd::models::RealmRepresentation {
+    let realm = kaji::models::RealmRepresentation {
         realm: "new-realm".to_string(),
         enabled: Some(true),
         display_name: Some("New Realm".to_string()),
@@ -178,7 +178,7 @@ async fn test_plan_resources_creation() {
 
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: None,
         name: "new-role".to_string(),
         description: Some("New role".to_string()),
@@ -203,7 +203,7 @@ async fn test_plan_resources_creation() {
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists());
     let plan_content = fs::read_to_string(plan_file).unwrap();
     assert!(plan_content.contains("test-realm/roles/new-role.yaml"));
@@ -252,7 +252,7 @@ description: ${KEYCLOAK_ROLE_DESC}
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists());
     let plan_content = fs::read_to_string(plan_file).unwrap();
     assert!(plan_content.contains("test-realm/roles/secret-role.yaml"));
@@ -346,7 +346,7 @@ async fn test_plan_resources_update() {
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
     // 'role-1' exists in mock server
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: Some("r1".to_string()),
         name: "role-1".to_string(),
         description: Some("Updated description".to_string()),
@@ -371,7 +371,7 @@ async fn test_plan_resources_update() {
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists());
 }
 
@@ -394,7 +394,7 @@ async fn test_plan_resources_changes_only() {
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
     // 'role-1' exists in mock server, same content
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: Some("r1".to_string()),
         name: "role-1".to_string(),
         description: Some("Role 1".to_string()),
@@ -419,11 +419,11 @@ async fn test_plan_resources_changes_only() {
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(!plan_file.exists());
 }
 
-use kcd::utils::ui::MockUi;
+use kaji::utils::ui::MockUi;
 use std::sync::Mutex;
 
 #[tokio::test]
@@ -444,7 +444,7 @@ async fn test_plan_interactive_include() {
 
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: None,
         name: "interactive-role".to_string(),
         description: Some("Interactive role".to_string()),
@@ -476,7 +476,7 @@ async fn test_plan_interactive_include() {
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists());
     let plan_content = fs::read_to_string(plan_file).unwrap();
     assert!(plan_content.contains("test-realm/roles/interactive-role.yaml"));
@@ -500,7 +500,7 @@ async fn test_plan_interactive_exclude() {
 
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: None,
         name: "excluded-role".to_string(),
         description: Some("Excluded role".to_string()),
@@ -532,7 +532,7 @@ async fn test_plan_interactive_exclude() {
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(!plan_file.exists());
 }
 
@@ -641,8 +641,8 @@ async fn test_plan_empty_realms_list() {
 
 #[test]
 fn test_print_diff_delete() {
-    use kcd::models::RoleRepresentation;
-    use kcd::plan::print_diff;
+    use kaji::models::RoleRepresentation;
+    use kaji::plan::print_diff;
     use std::collections::HashMap;
 
     let old = RoleRepresentation {
@@ -714,7 +714,7 @@ async fn test_plan_resources_ignore_non_yaml() {
     fs::create_dir_all(&roles_dir).unwrap();
 
     // Valid YAML
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: None,
         name: "role-1".to_string(),
         description: None,
@@ -767,7 +767,7 @@ async fn test_plan_resources_with_id_no_clear() {
     fs::create_dir_all(&roles_dir).unwrap();
 
     // Local role WITH ID. 'role-1' exists in mock server with id 'r1'.
-    let role = kcd::models::RoleRepresentation {
+    let role = kaji::models::RoleRepresentation {
         id: Some("different-id".to_string()),
         name: "role-1".to_string(),
         description: Some("Role 1".to_string()),
@@ -795,7 +795,7 @@ async fn test_plan_resources_with_id_no_clear() {
     .await;
     assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists());
 }
 

@@ -1,7 +1,7 @@
 mod common;
 use anyhow::Result;
-use kcd::args::{Cli, Commands};
-use kcd::{init_client, init_secrets, load_profile};
+use kaji::args::{Cli, Commands};
+use kaji::{init_client, init_secrets, load_profile};
 use std::fs;
 use tempfile::tempdir;
 
@@ -84,7 +84,7 @@ async fn test_init_secrets_with_profile() -> Result<()> {
         "KEYCLOAK_PROD_API_KEY=supersecret",
     )?;
 
-    let profile = kcd::Profile {
+    let profile = kaji::Profile {
         server_url: "http://localhost:8080".to_string(),
         client_id: None,
         client_secret: None,

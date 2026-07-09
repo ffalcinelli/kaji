@@ -1,10 +1,10 @@
-use kcd::models::{
+use kaji::models::{
     AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
     ComponentRepresentation, GroupRepresentation, IdentityProviderRepresentation,
     RealmRepresentation, RequiredActionProviderRepresentation, RoleRepresentation,
     UserRepresentation,
 };
-use kcd::validate;
+use kaji::validate;
 use std::fs;
 use tempfile::tempdir;
 

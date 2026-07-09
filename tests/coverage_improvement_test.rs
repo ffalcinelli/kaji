@@ -1,10 +1,10 @@
 mod common;
 use common::start_mock_server;
-use kcd::apply;
-use kcd::client::KeycloakClient;
-use kcd::models::*;
-use kcd::utils::secrets::{EnvResolver, SecretResolver};
-use kcd::utils::ui::MockUi;
+use kaji::apply;
+use kaji::client::KeycloakClient;
+use kaji::models::*;
+use kaji::utils::secrets::{EnvResolver, SecretResolver};
+use kaji::utils::ui::MockUi;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ async fn test_coverage_gaps_apply_generic() {
     .unwrap();
 
     // 2. Test planned_files exclusion
-    let plan_file = workspace_dir.join(".kcdplan");
+    let plan_file = workspace_dir.join(".kajiplan");
     // We want to apply only r1, so r2 should be skipped (hitting DA:68)
     let planned_files = vec![realm_dir.join("roles/r1.yaml")];
     fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();

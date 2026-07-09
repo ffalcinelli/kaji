@@ -1,4 +1,4 @@
-use kcd::models::*;
+use kaji::models::*;
 use std::collections::HashMap;
 
 #[test]

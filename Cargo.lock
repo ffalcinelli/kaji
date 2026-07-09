@@ -1134,7 +1134,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kcd"
+name = "kaji"
 version = "2603.1.0"
 dependencies = [
  "anyhow",

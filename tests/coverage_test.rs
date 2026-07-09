@@ -1,13 +1,13 @@
 use std::sync::Arc;
 mod common;
 use common::start_mock_server;
-use kcd::client::KeycloakClient;
-use kcd::models::RealmRepresentation;
-use kcd::{apply, clean, inspect, plan};
+use kaji::client::KeycloakClient;
+use kaji::models::RealmRepresentation;
+use kaji::{apply, clean, inspect, plan};
 use std::fs;
 use tempfile::tempdir;
 
-use kcd::utils::ui::MockUi;
+use kaji::utils::ui::MockUi;
 
 #[tokio::test]
 async fn test_plan_edge_cases() {
@@ -22,9 +22,9 @@ async fn test_plan_edge_cases() {
     let dir = tempdir().unwrap();
     let workspace_dir = dir.path().to_path_buf();
 
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     let ui = Arc::new(MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
@@ -151,9 +151,9 @@ async fn test_apply_edge_cases() {
     let dir = tempdir().unwrap();
     let workspace_dir = dir.path().to_path_buf();
 
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     let ui = Arc::new(MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
@@ -221,8 +221,8 @@ async fn test_apply_edge_cases() {
     .await
     .unwrap();
 
-    // 5. Test with empty .kcdplan
-    fs::write(workspace_dir.join(".kcdplan"), "[]").unwrap();
+    // 5. Test with empty .kajiplan
+    fs::write(workspace_dir.join(".kajiplan"), "[]").unwrap();
     apply::run(
         &client,
         workspace_dir.clone(),
@@ -265,9 +265,9 @@ async fn test_check_keys_drift() {
     let realm_dir = workspace_dir.join("test-realm");
     fs::create_dir(&realm_dir).unwrap();
 
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     let ui = Arc::new(MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
@@ -373,12 +373,12 @@ async fn test_validate_edge_cases() {
     let workspace_dir = dir.path().to_path_buf();
 
     // 1. Test run with non-existent directory
-    let res = kcd::validate::run(workspace_dir.join("non-existent"), &[]).await;
+    let res = kaji::validate::run(workspace_dir.join("non-existent"), &[]).await;
     assert!(res.is_err());
 
     // 2. Test run with empty directory (no realms)
     fs::create_dir_all(&workspace_dir).unwrap();
-    let res = kcd::validate::run(workspace_dir.clone(), &[]).await;
+    let res = kaji::validate::run(workspace_dir.clone(), &[]).await;
     assert!(res.is_ok());
 
     // 3. Test auto-discovery of realms for validation
@@ -396,7 +396,7 @@ async fn test_validate_edge_cases() {
     )
     .unwrap();
 
-    kcd::validate::run(workspace_dir.clone(), &[])
+    kaji::validate::run(workspace_dir.clone(), &[])
         .await
         .unwrap();
 }

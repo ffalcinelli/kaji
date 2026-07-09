@@ -86,8 +86,8 @@ pub async fn run(
         anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
     }
 
-    // Check for .kcdplan
-    let plan_path = workspace_dir.join(".kcdplan");
+    // Check for .kajiplan
+    let plan_path = workspace_dir.join(".kajiplan");
     let planned_files = if plan_path.exists() {
         let content = async_fs::read_to_string(&plan_path).await?;
         let items: Vec<PathBuf> = serde_json::from_str(&content)?;
