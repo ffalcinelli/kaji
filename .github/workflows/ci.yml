@@ -60,6 +60,8 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install cargo-audit
         uses: taiki-e/install-action@c7eb1735f09259a5035e8e5d44b1406b1cddc0fb # v2.83.0 # cargo-audit
+        with:
+          tool: cargo-audit
       - name: Security audit of dependencies
         run: cargo audit
 
@@ -74,6 +76,8 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Install cargo-tarpaulin
         uses: taiki-e/install-action@c7eb1735f09259a5035e8e5d44b1406b1cddc0fb # v2.83.0 # cargo-tarpaulin
+        with:
+          tool: cargo-tarpaulin
       - name: Generate coverage report
         run: cargo tarpaulin --out Xml
       - name: Archive code coverage results
