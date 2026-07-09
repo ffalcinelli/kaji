@@ -480,6 +480,12 @@ async fn get_flow_executions_handler(
                     "authenticatorConfig": "config-1",
                     "requirement": "REQUIRED",
                     "priority": 1
+                },
+                {
+                    "id": "exec-2",
+                    "authenticator": "another-authenticator",
+                    "requirement": "REQUIRED",
+                    "priority": 2
                 }
             ])),
         )
@@ -514,10 +520,15 @@ async fn create_config_handler(
     axum::extract::Path((realm, exec_id)): axum::extract::Path<(String, String)>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    if realm == "test-realm" && exec_id == "exec-1" {
+    if realm == "test-realm" && (exec_id == "exec-1" || exec_id == "exec-2") {
         let mut response_body = body;
+        let config_id = if exec_id == "exec-1" {
+            "config-1"
+        } else {
+            "config-2"
+        };
         if let Some(obj) = response_body.as_object_mut() {
-            obj.insert("id".to_string(), serde_json::json!("config-1"));
+            obj.insert("id".to_string(), serde_json::json!(config_id));
         }
         (StatusCode::CREATED, Json(response_body))
     } else {
