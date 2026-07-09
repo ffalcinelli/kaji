@@ -881,7 +881,13 @@ mod tests {
 
     #[test]
     fn test_object_path() {
-        assert_eq!(ClientRepresentation::object_path("123-abc"), "clients/123-abc");
-        assert_eq!(RoleRepresentation::object_path("456-def"), "roles-by-id/456-def");
+        assert_eq!(
+            ClientRepresentation::object_path("123-abc"),
+            "clients/123-abc"
+        );
+        assert_eq!(
+            RoleRepresentation::object_path("456-def"),
+            "roles-by-id/456-def"
+        );
     }
 }
