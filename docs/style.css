@@ -43,6 +43,9 @@ body {
   overflow-x: hidden;
 }
 
+/* Prevent any element from creating document-level horizontal overflow */
+html { overflow-x: hidden; }
+
 ::selection { background: rgba(108,99,255,0.35); }
 
 a { color: inherit; text-decoration: none; }
@@ -620,27 +623,27 @@ code, pre {
 .yaml-str  { color: #86efac; }
 .yaml-bool { color: #fca5a5; }
 
-/* STAGE PIPELINE */
+/* STAGE PIPELINE — always a vertical timeline; fits any card width */
 .stage-pipeline {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   margin-top: 20px;
-  flex-wrap: wrap;
 }
 
 .stage {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
+  gap: 14px;
   background: rgba(108,99,255,0.1);
   border: 1px solid rgba(108,99,255,0.3);
-  border-radius: var(--radius);
+  border-left: 3px solid rgba(108,99,255,0.6);
+  border-radius: 0 var(--radius) var(--radius) 0;
   padding: 10px 16px;
   font-size: 0.8rem;
   color: var(--text-muted);
-  min-width: 80px;
 }
 
 .stage-num {
@@ -648,12 +651,18 @@ code, pre {
   font-weight: 800;
   color: var(--accent-1);
   font-family: var(--font-mono);
+  min-width: 1.4em;
+  text-align: center;
 }
 
 .stage-arrow {
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: var(--accent-1);
   opacity: 0.6;
+  /* &#x2192; (→) rotated 90° becomes a downward connector */
+  transform: rotate(90deg);
+  align-self: center;
+  margin-left: 18px;
 }
 
 /* ===== RESOURCES GRID ===== */
@@ -692,7 +701,7 @@ code, pre {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 4px;
-  margin-bottom: 24px;
+  margin: 0 auto 24px; /* Center horizontally */
   width: fit-content;
 }
 
@@ -729,6 +738,7 @@ code, pre {
   border-radius: var(--radius-lg);
   overflow: hidden;
   max-width: 760px;
+  margin: 0 auto; /* Center horizontally */
 }
 
 .code-header {
@@ -791,6 +801,7 @@ code, pre {
   margin-top: 16px;
   font-size: 0.85rem;
   color: var(--text-dim);
+  text-align: center; /* Center note text */
 }
 
 .install-note a { color: var(--accent-1); text-decoration: underline; }
@@ -1159,24 +1170,120 @@ code, pre {
 @media (max-width: 768px) {
   :root { --section-pad: 64px; }
 
-  .nav-links { display: none; flex-direction: column; position: absolute; top: var(--nav-h); left: 0; right: 0; background: rgba(10,11,15,0.97); border-bottom: 1px solid var(--border); padding: 16px 24px 24px; gap: 4px; }
+  /* ── NAV ──────────────────────────────────────────────────────────── */
+  /* z-index:200 ensures the dropdown overlays hero content */
+  .nav-links {
+    display: none;
+    flex-direction: column;
+    position: absolute;
+    top: var(--nav-h);
+    left: 0; right: 0;
+    z-index: 200;
+    background: rgba(10,11,15,0.97);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px 24px;
+    gap: 4px;
+  }
   .nav-links.open { display: flex; }
   .nav-hamburger { display: flex; }
   .nav.scrolled .nav-links.open { backdrop-filter: blur(16px); }
 
+  /* ── HERO ─────────────────────────────────────────────────────────── */
+  /* hero-content is a flex ITEM inside the row-direction .hero container.
+     Without width:100% the browser auto-sizes it to max-content (~450 px),
+     overflowing the viewport. width:100% + min-width:0 lock it to the row. */
+  .hero-content { width: 100%; min-width: 0; align-items: stretch; }
+  .hero-content > * { max-width: 100%; min-width: 0; }
+  .hero-title {
+    text-align: center;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  /* hero-kanji is display:block so it keeps its own line without the <br> */
+  .hero-title br { display: none; }
+  .hero-subtitle { max-width: 100%; }
+
+  /* ── GRID / FLEX CARDS ────────────────────────────────────────────── */
+  /* <pre> elements have white-space:pre which creates a large min-content
+     size. Without min-width:0 the grid cell expands past 1fr, making cards
+     wider than the viewport. */
+  .feature-card,
+  .command-card,
+  .secret-option,
+  .secrets-workflow { min-width: 0; }
+
+  /* ── NO HORIZONTAL SCROLLERS ──────────────────────────────────────── */
+  /* overflow-x:auto on inner elements causes the ENTIRE PAGE to scroll
+     horizontally on mobile browsers (iOS Safari in particular).
+     Replace with pre-wrap so code wraps in place instead. */
+  .terminal-body,
+  .code-body,
+  .command-example,
+  .feature-code-block pre,
+  .secret-example {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+  .terminal-body code,
+  .code-body code,
+  .command-example code,
+  .feature-code-block code,
+  .secret-example code {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  /* ── FEATURES ─────────────────────────────────────────────────────── */
   .features-grid { grid-template-columns: 1fr; }
-  .feature-card--wide { grid-column: span 1; display: block; }
+  /* Switch wide card from grid to flex-column so grid-row/col spans don't linger */
+  .feature-card--wide {
+    grid-column: span 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .feature-card--wide .feature-icon-wrap { grid-row: unset; }
+  .feature-card--wide .feature-code-block { grid-column: unset; margin-top: 0; }
+  .feature-code-block,
+  .secret-example { max-width: 100%; overflow-x: visible; }
+
+  /* ── COMMANDS ─────────────────────────────────────────────────────── */
   .commands-grid { grid-template-columns: 1fr; }
-  .stage-pipeline { flex-direction: column; align-items: flex-start; }
-  .stage-arrow { transform: rotate(90deg); }
-  .stats-grid { flex-direction: column; gap: 8px; }
-  .stat-sep { width: 40px; height: 1px; }
-  .install-tabs { flex-direction: column; width: 100%; }
+
+
+  /* ── STATS STRIP ──────────────────────────────────────────────────── */
+  /* Hide separators — they look broken in column layout */
+  .stats-grid { flex-direction: column; gap: 0; align-items: stretch; }
+  .stat-sep { display: none; }
+
+  /* ── INSTALL TABS ─────────────────────────────────────────────────── */
+  /* max-width:none clears the desktop width:fit-content */
+  .install-tabs { flex-direction: column; width: 100%; max-width: none; }
   .tab-btn { text-align: left; }
+
+  /* ── CODE BLOCKS ──────────────────────────────────────────────────── */
+  .code-block { max-width: 100%; overflow-x: visible; }
 }
 
 @media (max-width: 480px) {
   .hero-actions { flex-direction: column; align-items: center; }
   .cta-actions  { flex-direction: column; align-items: center; }
   .btn { width: 100%; justify-content: center; }
+
+  /* Terminal: constrain width, reduce font for very small screens */
+  .hero-terminal { width: 100%; min-width: 0; }
+  .terminal-body { font-size: 0.74rem; padding: 14px; }
+
+  /* Lower title font-size floor for 320 px screens */
+  .hero-title { font-size: clamp(1.7rem, 8vw, 2.2rem); }
+
+  /* Code block: full width, tighter padding */
+  .code-block { width: 100%; }
+  .code-body { padding: 14px; }
+
+  /* Footer links: breathing room on very narrow screens */
+  .footer-links { padding: 0 8px; gap: 2px; }
 }
