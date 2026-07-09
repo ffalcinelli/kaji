@@ -458,6 +458,8 @@ impl_resource_meta!(UserRepresentation, label = "users", secret_prefix = "user")
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthenticationExecutionExportRepresentation {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub authenticator: Option<String>,
     #[serde(
         rename = "authenticatorConfig",
@@ -611,6 +613,53 @@ impl_resource_meta!(
     ComponentRepresentation,
     label = "components",
     secret_prefix = "component"
+);
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AuthenticatorConfigRepresentation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<HashMap<String, Value>>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for AuthenticatorConfigRepresentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthenticatorConfigRepresentation")
+            .field("id", &self.id)
+            .field("alias", &self.alias)
+            .field("config", &self.config.as_ref().map(|_| "********"))
+            .field("extra", &self.extra)
+            .finish()
+    }
+}
+
+impl_keycloak_resource!(
+    AuthenticatorConfigRepresentation,
+    api_path = "authentication/config",
+    dir_name = "authenticator-configs",
+    id_field = id,
+    identity = |self| self.alias.as_deref(),
+    name = |self| self.alias.as_deref().unwrap_or("unknown"),
+    has_id = |self| self.id.is_some(),
+    clear_metadata = |self| {
+        self.id = None;
+    },
+    get_filename = |self| format!(
+        "{}-{}",
+        self.get_name(),
+        self.id.as_deref().unwrap_or("unknown")
+    )
+);
+
+impl_resource_meta!(
+    AuthenticatorConfigRepresentation,
+    label = "authenticator configs",
+    secret_prefix = "authenticatorconfig"
 );
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

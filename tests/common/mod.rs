@@ -103,6 +103,20 @@ pub async fn start_mock_server() -> String {
         .route(
             "/admin/realms/{realm}/keys",
             axum::routing::get(get_keys_handler),
+        )
+        .route(
+            "/admin/realms/{realm}/authentication/flows/{flow}/executions",
+            axum::routing::get(get_flow_executions_handler).put(generic_handler),
+        )
+        .route(
+            "/admin/realms/{realm}/authentication/config/{id}",
+            axum::routing::get(get_config_handler)
+                .put(generic_handler)
+                .delete(generic_handler),
+        )
+        .route(
+            "/admin/realms/{realm}/authentication/executions/{execution}/config",
+            axum::routing::post(create_config_handler),
         );
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -450,5 +464,77 @@ async fn get_roles_handler(
         )
     } else {
         (StatusCode::OK, Json(serde_json::json!([])))
+    }
+}
+
+async fn get_flow_executions_handler(
+    axum::extract::Path((realm, flow)): axum::extract::Path<(String, String)>,
+) -> impl IntoResponse {
+    if realm == "test-realm" && flow == "flow-1" {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!([
+                {
+                    "id": "exec-1",
+                    "authenticator": "review-profile",
+                    "authenticatorConfig": "config-1",
+                    "requirement": "REQUIRED",
+                    "priority": 1
+                },
+                {
+                    "id": "exec-2",
+                    "authenticator": "another-authenticator",
+                    "requirement": "REQUIRED",
+                    "priority": 2
+                }
+            ])),
+        )
+    } else {
+        (StatusCode::OK, Json(serde_json::json!([])))
+    }
+}
+
+async fn get_config_handler(
+    axum::extract::Path((realm, id)): axum::extract::Path<(String, String)>,
+) -> impl IntoResponse {
+    if realm == "test-realm" && id == "config-1" {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": "config-1",
+                "alias": "review profile config",
+                "config": {
+                    "loa-condition-level": "4"
+                }
+            })),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+    }
+}
+
+async fn create_config_handler(
+    axum::extract::Path((realm, exec_id)): axum::extract::Path<(String, String)>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    if realm == "test-realm" && (exec_id == "exec-1" || exec_id == "exec-2") {
+        let mut response_body = body;
+        let config_id = if exec_id == "exec-1" {
+            "config-1"
+        } else {
+            "config-2"
+        };
+        if let Some(obj) = response_body.as_object_mut() {
+            obj.insert("id".to_string(), serde_json::json!(config_id));
+        }
+        (StatusCode::CREATED, Json(response_body))
+    } else {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "bad request"})),
+        )
     }
 }

@@ -1,5 +1,7 @@
+#![allow(clippy::collapsible_if)]
 use crate::models::{
-    AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
+    AuthenticationExecutionExportRepresentation, AuthenticationFlowRepresentation,
+    AuthenticatorConfigRepresentation, ClientRepresentation, ClientScopeRepresentation,
     ComponentRepresentation, GroupRepresentation, IdentityProviderRepresentation, KeycloakResource,
     RealmRepresentation, RequiredActionProviderRepresentation, RoleRepresentation,
     UserRepresentation,
@@ -8,6 +10,7 @@ use anyhow::{Context, Result};
 use log::{debug, info};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct KeycloakClient {
@@ -60,7 +63,29 @@ impl KeycloakClient {
     pub async fn get_resources<T: KeycloakResource + for<'a> Deserialize<'a>>(
         &self,
     ) -> Result<Vec<T>> {
-        self.get(&self.resource_url::<T>()).await
+        if T::API_PATH == "authentication/config" {
+            let configs = self.get_authenticator_configs_internal().await?;
+            let json_val = serde_json::to_value(configs)?;
+            let result = serde_json::from_value(json_val)?;
+            Ok(result)
+        } else if T::API_PATH == "authentication/flows" {
+            let flows: Vec<AuthenticationFlowRepresentation> =
+                self.get(&self.resource_url::<T>()).await?;
+            let mut mapped_flows = Vec::new();
+            for mut flow in flows {
+                if let Some(alias) = &flow.alias {
+                    if let Ok(executions) = self.get_flow_executions(alias).await {
+                        flow.authentication_executions = Some(executions);
+                    }
+                }
+                mapped_flows.push(self.map_flow_executions(flow).await);
+            }
+            let json_val = serde_json::to_value(mapped_flows)?;
+            let result = serde_json::from_value(json_val)?;
+            Ok(result)
+        } else {
+            self.get(&self.resource_url::<T>()).await
+        }
     }
 
     pub async fn get_resource<T: KeycloakResource + for<'a> Deserialize<'a>>(
@@ -71,7 +96,14 @@ impl KeycloakClient {
     }
 
     pub async fn create_resource<T: KeycloakResource + Serialize>(&self, res: &T) -> Result<()> {
-        self.post(&self.resource_url::<T>(), res).await
+        if T::API_PATH == "authentication/flows" {
+            let json_val = serde_json::to_value(res)?;
+            let flow: AuthenticationFlowRepresentation = serde_json::from_value(json_val)?;
+            let unmapped_flow = self.unmap_flow_executions(flow).await;
+            self.post(&self.resource_url::<T>(), &unmapped_flow).await
+        } else {
+            self.post(&self.resource_url::<T>(), res).await
+        }
     }
 
     pub async fn update_resource<T: KeycloakResource + Serialize>(
@@ -79,7 +111,14 @@ impl KeycloakClient {
         id: &str,
         res: &T,
     ) -> Result<()> {
-        self.put(&self.object_url::<T>(id), res).await
+        if T::API_PATH == "authentication/flows" {
+            let json_val = serde_json::to_value(res)?;
+            let flow: AuthenticationFlowRepresentation = serde_json::from_value(json_val)?;
+            let unmapped_flow = self.unmap_flow_executions(flow).await;
+            self.put(&self.object_url::<T>(id), &unmapped_flow).await
+        } else {
+            self.put(&self.object_url::<T>(id), res).await
+        }
     }
 
     pub async fn delete_resource<T: KeycloakResource>(&self, id: &str) -> Result<()> {
@@ -452,6 +491,155 @@ impl KeycloakClient {
         let url = self.realm_admin_url() + "/keys";
         self.get(&url).await
     }
+
+    pub async fn get_authenticator_configs_internal(
+        &self,
+    ) -> Result<Vec<AuthenticatorConfigRepresentation>> {
+        let flows = self.get_authentication_flows_raw().await?;
+        let mut configs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for flow in &flows {
+            if let Some(alias) = &flow.alias {
+                if let Ok(executions) = self.get_flow_executions(alias).await {
+                    for exec in executions {
+                        if let Some(config_id) = exec.authenticator_config {
+                            if seen.insert(config_id.clone()) {
+                                if let Ok(config) =
+                                    self.get_authenticator_config_raw(&config_id).await
+                                {
+                                    configs.push(config);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(configs)
+    }
+
+    pub async fn get_authenticator_config_map(&self) -> Result<HashMap<String, String>> {
+        let configs = self.get_authenticator_configs_internal().await?;
+        let mut map = HashMap::new();
+        for config in configs {
+            if let (Some(alias), Some(id)) = (config.alias, config.id) {
+                map.insert(alias, id);
+            }
+        }
+        Ok(map)
+    }
+
+    pub async fn get_authentication_flows_raw(
+        &self,
+    ) -> Result<Vec<AuthenticationFlowRepresentation>> {
+        self.get(&self.resource_url::<AuthenticationFlowRepresentation>())
+            .await
+    }
+
+    pub async fn get_flow_executions(
+        &self,
+        flow_alias: &str,
+    ) -> Result<Vec<AuthenticationExecutionExportRepresentation>> {
+        let url = format!(
+            "{}/authentication/flows/{}/executions",
+            self.realm_admin_url(),
+            flow_alias
+        );
+        self.get(&url).await
+    }
+
+    pub async fn get_authenticator_config_raw(
+        &self,
+        id: &str,
+    ) -> Result<AuthenticatorConfigRepresentation> {
+        let url = format!("{}/authentication/config/{}", self.realm_admin_url(), id);
+        self.get(&url).await
+    }
+
+    pub async fn update_flow_execution(
+        &self,
+        flow_alias: &str,
+        exec: &AuthenticationExecutionExportRepresentation,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/authentication/flows/{}/executions",
+            self.realm_admin_url(),
+            flow_alias
+        );
+        self.put(&url, exec).await
+    }
+
+    pub async fn create_authenticator_config_for_execution(
+        &self,
+        execution_id: &str,
+        config: &AuthenticatorConfigRepresentation,
+    ) -> Result<AuthenticatorConfigRepresentation> {
+        let url = format!(
+            "{}/authentication/executions/{}/config",
+            self.realm_admin_url(),
+            execution_id
+        );
+        let token = self.get_token()?;
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(token)
+            .json(config)
+            .send()
+            .await
+            .with_context(|| format!("Failed to send POST request to {}", url))?;
+        let response = Self::check_response(response, "POST authenticator config failed").await?;
+        response
+            .json()
+            .await
+            .context("Failed to parse created authenticator config response")
+    }
+
+    pub async fn map_flow_executions(
+        &self,
+        mut flow: AuthenticationFlowRepresentation,
+    ) -> AuthenticationFlowRepresentation {
+        if let Ok(config_map) = self.get_authenticator_config_map().await {
+            let id_map: HashMap<String, String> =
+                config_map.into_iter().map(|(k, v)| (v, k)).collect();
+            if let Some(ref mut executions) = flow.authentication_executions {
+                for exec in executions {
+                    if let Some(ref config_id) = exec.authenticator_config {
+                        if let Some(alias) = id_map.get(config_id) {
+                            exec.authenticator_config = Some(alias.clone());
+                        }
+                    }
+                }
+            }
+        }
+        flow
+    }
+
+    pub async fn unmap_flow_executions(
+        &self,
+        mut flow: AuthenticationFlowRepresentation,
+    ) -> AuthenticationFlowRepresentation {
+        if let Ok(config_map) = self.get_authenticator_config_map().await {
+            if let Some(ref mut executions) = flow.authentication_executions {
+                for exec in executions {
+                    if let Some(ref alias) = exec.authenticator_config {
+                        if let Some(config_id) = config_map.get(alias) {
+                            exec.authenticator_config = Some(config_id.clone());
+                        } else {
+                            if !is_uuid(alias) {
+                                exec.authenticator_config = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        flow
+    }
+}
+
+fn is_uuid(s: &str) -> bool {
+    s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
 #[cfg(test)]

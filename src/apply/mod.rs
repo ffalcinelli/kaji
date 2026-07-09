@@ -1,3 +1,4 @@
+pub mod authenticator_config;
 pub mod components;
 pub mod generic;
 pub mod realm;
@@ -334,6 +335,20 @@ async fn apply_single_realm(
         set.spawn(async move {
             generic::apply_resources::<UserRepresentation>(
                 &client_us, &dir_us, res_us, plan_us, &rn_us, p_us, review, ui_us,
+            )
+            .await
+        });
+
+        let client_ac = client.clone();
+        let dir_ac = workspace_dir.clone();
+        let res_ac = Arc::clone(&resolver);
+        let plan_ac = Arc::clone(&planned_files);
+        let rn_ac = realm_name.to_string();
+        let p_ac = profile.clone();
+        let ui_ac = Arc::clone(&ui);
+        set.spawn(async move {
+            authenticator_config::apply_authenticator_configs(
+                &client_ac, &dir_ac, res_ac, plan_ac, &rn_ac, p_ac, review, ui_ac,
             )
             .await
         });

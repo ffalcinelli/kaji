@@ -1,0 +1,27 @@
+yes = false
+upgrade_strategy = "latest"
+concurrency = 10
+ignore = []
+no_security_feedback = false
+
+vetted = [
+    { ref = "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", tag = "v6.0.2", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "taiki-e/create-gh-release-action@eba8ea96c86cca8a37f1b56e94b4d13301fba651", tag = "v1", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6", tag = "v1", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac", tag = "v5", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "taiki-e/install-action@ed231242016b72f307a6b7ccb8b42c0ef91334e3", tag = "cargo-tarpaulin", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", tag = "v4", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", tag = "v7.0.1", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "taiki-e/install-action@56f527ce5f0c778165d7ba9409086ccf5c910b6d", tag = "cargo-audit", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32", tag = "v2", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30", tag = "stable", timestamp = "2026-07-09T15:37:54Z" },
+    { ref = "ffalcinelli/pinner/action@dff77e1d17140dc88eb827aa7d833f995796b92b", tag = "v0.0.11", timestamp = "2026-07-09T15:41:37Z" },
+    { ref = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0", tag = "v7.0.0", timestamp = "2026-07-09T15:50:48Z" },
+    { ref = "ffalcinelli/pinner/action@63b8e31e3ca2144f6298fcb0d4b676bb3f1d7be6", tag = "v0.0.13", timestamp = "2026-07-09T15:50:48Z" },
+    { ref = "dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9", tag = "v1", timestamp = "2026-07-09T15:50:48Z" },
+    { ref = "Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4", tag = "v2.9.1", timestamp = "2026-07-09T15:50:48Z" },
+    { ref = "taiki-e/install-action@c7eb1735f09259a5035e8e5d44b1406b1cddc0fb", tag = "v2.83.0", timestamp = "2026-07-09T15:50:48Z" },
+    { ref = "codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f", tag = "v7.0.0", timestamp = "2026-07-09T15:50:48Z" }
+]
+
+compromised = []
