@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="apple-touch-icon" href="favicon.svg" />
+  <title>kaji — Steer Your Keycloak Configuration</title>
+  <meta name="description" content="kaji (舵) is a blazing-fast, declarative CLI tool for managing Keycloak configurations. Inspect, plan, apply, and drift-detect your identity infrastructure — version controlled and reliable." />
+  <meta property="og:title" content="kaji — Steer Your Keycloak Configuration" />
+  <meta property="og:description" content="Declarative Keycloak configuration management. Define your identity infrastructure as code, detect drift, and apply changes with confidence." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="kaji — Steer Your Keycloak Configuration" />
+  <meta name="twitter:description" content="Declarative Keycloak configuration management CLI. Written in Rust." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-logo" aria-label="kaji home">
+        <span class="nav-kanji">舵</span>
+        <span class="nav-brand">kaji</span>
+      </a>
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#commands">Commands</a></li>
+        <li><a href="#secrets">Secrets</a></li>
+        <li><a href="https://github.com/ffalcinelli/kaji" target="_blank" rel="noopener" class="nav-gh-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.52 11.52 0 0 1 3-.405c1.02.005 2.045.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.298 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a></li>
+      </ul>
+      <button class="nav-hamburger" id="nav-hamburger" aria-label="Toggle menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero" id="hero">
+    <div class="hero-bg-grid" aria-hidden="true"></div>
+    <div class="hero-orbs" aria-hidden="true">
+      <div class="orb orb-1"></div>
+      <div class="orb orb-2"></div>
+      <div class="orb orb-3"></div>
+    </div>
+    <div class="container hero-content">
+      <h1 class="hero-title">
+        <span class="hero-kanji" aria-label="Kanji for helm">舵</span><br />
+        Steer your Keycloak<br />
+        <span class="hero-gradient">Configuration.</span>
+      </h1>
+      <p class="hero-subtitle">
+        <strong>kaji</strong> is a blazing-fast, declarative CLI that brings GitOps discipline to your Keycloak identity infrastructure &mdash; inspect, plan, apply, drift-detect, and sleep soundly at night.
+      </p>
+      <div class="hero-actions">
+        <a href="#install" class="btn btn-primary" id="hero-install-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Install kaji
+        </a>
+        <a href="https://github.com/ffalcinelli/kaji" target="_blank" rel="noopener" class="btn btn-secondary" id="hero-github-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.52 11.52 0 0 1 3-.405c1.02.005 2.045.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.298 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+      <div class="hero-terminal" id="hero-terminal" aria-label="Example terminal output">
+        <div class="terminal-bar">
+          <span class="t-dot t-red"></span>
+          <span class="t-dot t-yellow"></span>
+          <span class="t-dot t-green"></span>
+          <span class="t-title">kaji plan</span>
+        </div>
+        <pre class="terminal-body"><code><span class="t-dim">$</span> <span class="t-cmd">kaji plan --interactive</span>
+<span class="t-info">// Calculating diff for realm 'master'...</span>
+
+<span class="t-section">  Clients:</span>
+<span class="t-add">    [+] my-new-app</span>         <span class="t-tag">Create</span>
+<span class="t-mod">    [~] admin-cli</span>           <span class="t-tag-mod">Update</span>
+<span class="t-dim">        root_url: "http://localhost" &#x2192; "https://idp.example.com"</span>
+<span class="t-del">    [-] legacy-app</span>          <span class="t-tag-del">Delete</span>
+
+<span class="t-section">  Roles:</span>
+<span class="t-add">    [+] billing-manager</span>    <span class="t-tag">Create</span>
+
+<span class="t-prompt">? Apply change to client 'my-new-app'?</span> <span class="t-cursor">&#x2588;</span></code></pre>
+      </div>
+    </div>
+    <div class="hero-scroll-hint" aria-hidden="true">
+      <span>scroll</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+  </section>
+
+  <!-- STATS STRIP -->
+  <section class="stats-strip" aria-label="Key highlights">
+    <div class="container stats-grid">
+      <div class="stat-item"><span class="stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span><span class="stat-label">Async Rust core</span></div>
+      <div class="stat-sep" aria-hidden="true"></div>
+      <div class="stat-item"><span class="stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span><span class="stat-label">4-stage reconciliation</span></div>
+      <div class="stat-sep" aria-hidden="true"></div>
+      <div class="stat-item"><span class="stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span><span class="stat-label">Multi-env profiles</span></div>
+      <div class="stat-sep" aria-hidden="true"></div>
+      <div class="stat-item"><span class="stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span><span class="stat-label">Vault + Env secrets</span></div>
+      <div class="stat-sep" aria-hidden="true"></div>
+      <div class="stat-item"><span class="stat-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><span class="stat-label">10+ resource types</span></div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-eyebrow">Capabilities</span>
+        <h2 class="section-title">Everything you need to <span class="gradient-text">manage Keycloak</span> at scale</h2>
+        <p class="section-desc">Stop clicking through the admin UI. Define your desired state, let kaji calculate the diff, and apply with full confidence.</p>
+      </div>
+
+      <div class="features-grid">
+        <article class="feature-card feature-card--wide" id="feat-declarative">
+          <div class="feature-icon-wrap"><span class="feature-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span></div>
+          <h3>Declarative State Management</h3>
+          <p>Define your entire Keycloak realm &mdash; clients, roles, users, flows &mdash; as human-readable YAML files. Commit them to Git, review in PRs, roll back with <code>git revert</code>.</p>
+          <div class="feature-code-block">
+            <pre><code><span class="yaml-key">clientId</span>: <span class="yaml-str">internal-api</span>
+<span class="yaml-key">enabled</span>: <span class="yaml-bool">true</span>
+<span class="yaml-key">redirectUris</span>:
+  - <span class="yaml-str">"https://api.example.com/*"</span>
+<span class="yaml-key">secret</span>: <span class="yaml-str">${KEYCLOAK_CLIENT_INTERNAL_API_SECRET}</span></code></pre>
+          </div>
+        </article>
+
+        <article class="feature-card" id="feat-reconciliation">
+          <div class="feature-icon-wrap"><span class="feature-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span></div>
+          <h3>Dependency-Aware Reconciliation</h3>
+          <p>kaji applies changes in the right order &mdash; Realms first, then Roles and IdPs, then Clients and Flows, finally Users and Keys. No race conditions.</p>
+          <div class="stage-pipeline">
+            <div class="stage"><span class="stage-num">0</span><span>Realms</span></div>
+            <div class="stage-arrow" aria-hidden="true">&#x2192;</div>
+            <div class="stage"><span class="stage-num">1</span><span>Roles &amp; IdPs</span></div>
+            <div class="stage-arrow" aria-hidden="true">&#x2192;</div>
+            <div class="stage"><span class="stage-num">2</span><span>Clients &amp; Flows</span></div>
+            <div class="stage-arrow" aria-hidden="true">&#x2192;</div>
+            <div class="stage"><span class="stage-num">3</span><span>Users &amp; Keys</span></div>
+          </div>
+        </article>
+
+        <article class="feature-card" id="feat-profiles">
+          <div class="feature-icon-wrap"><span class="feature-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span></div>
+          <h3>Environment Profiles &amp; Overlays</h3>
+          <p>One base configuration, zero duplication. Override only what differs per environment via YAML deep-merge overlays.</p>
+          <ul class="feature-list">
+            <li><span class="check">&#x2713;</span> profiles/dev.yaml, staging.yaml, prod.yaml</li>
+            <li><span class="check">&#x2713;</span> YAML deep-merge overlays per resource</li>
+            <li><span class="check">&#x2713;</span> Per-profile secrets files</li>
+          </ul>
+        </article>
+
+        <article class="feature-card" id="feat-drift">
+          <div class="feature-icon-wrap"><span class="feature-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></div>
+          <h3>Drift Detection</h3>
+          <p>Is your live Keycloak still matching your declared config? Run <code>kaji drift</code> to instantly know what changed outside your controlled process.</p>
+          <ul class="feature-list">
+            <li><span class="check">&#x2713;</span> Compares remote vs local state</li>
+            <li><span class="check">&#x2713;</span> Outputs precise field-level diffs</li>
+            <li><span class="check">&#x2713;</span> Integrates with CI/CD pipelines</li>
+          </ul>
+        </article>
+
+        <article class="feature-card" id="feat-secrets">
+          <div class="feature-icon-wrap"><span class="feature-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div>
+          <h3>Secret Masking &amp; Resolution</h3>
+          <p>Inspect auto-masks sensitive values. Resolve them from environment variables or directly from HashiCorp Vault KV2 &mdash; no secret ever touches your repo.</p>
+          <ul class="feature-list">
+            <li><span class="check">&#x2713;</span> Env vars &amp; .secrets file</li>
+            <li><span class="check">&#x2713;</span> HashiCorp Vault KV2 integration</li>
+            <li><span class="check">&#x2713;</span> Automatic masking on inspect</li>
+          </ul>
+        </article>
+
+        <article class="feature-card" id="feat-perf">
+          <div class="feature-icon-wrap"><span class="feature-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span></div>
+          <h3>Blazing Fast &mdash; Async Rust</h3>
+          <p>Built on <strong>Tokio</strong> with full concurrency. Independent resources are inspected and reconciled in parallel via <code>JoinSet</code>.</p>
+          <ul class="feature-list">
+            <li><span class="check">&#x2713;</span> Parallel inspect pipeline</li>
+            <li><span class="check">&#x2713;</span> Concurrent reconciliation per stage</li>
+            <li><span class="check">&#x2713;</span> Benchmarked with Criterion</li>
+          </ul>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESOURCES -->
+  <section class="section section--dark" id="resources">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-eyebrow">Resource Coverage</span>
+        <h2 class="section-title">All your Keycloak resources, <span class="gradient-text">fully managed</span></h2>
+      </div>
+      <div class="resources-grid" role="list" aria-label="Supported resource types">
+        <div class="resource-chip" role="listitem">Realms</div>
+        <div class="resource-chip" role="listitem">Roles</div>
+        <div class="resource-chip" role="listitem">Clients</div>
+        <div class="resource-chip" role="listitem">Client Scopes</div>
+        <div class="resource-chip" role="listitem">Users</div>
+        <div class="resource-chip" role="listitem">Groups</div>
+        <div class="resource-chip" role="listitem">Identity Providers</div>
+        <div class="resource-chip" role="listitem">Authentication Flows</div>
+        <div class="resource-chip" role="listitem">Required Actions</div>
+        <div class="resource-chip" role="listitem">Components</div>
+        <div class="resource-chip" role="listitem">Keys</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="section" id="install">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-eyebrow">Installation</span>
+        <h2 class="section-title">Up and running in <span class="gradient-text">seconds</span></h2>
+      </div>
+
+      <div class="install-tabs" role="tablist" aria-label="Installation options">
+        <button class="tab-btn tab-btn--active" role="tab" id="tab-linux" aria-selected="true" aria-controls="panel-linux">macOS &amp; Linux</button>
+        <button class="tab-btn" role="tab" id="tab-windows" aria-selected="false" aria-controls="panel-windows">Windows</button>
+        <button class="tab-btn" role="tab" id="tab-source" aria-selected="false" aria-controls="panel-source">From Source</button>
+      </div>
+
+      <div class="tab-panel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">bash</span>
+            <button class="copy-btn" id="copy-linux-btn" data-code="curl -LsSf https://raw.githubusercontent.com/ffalcinelli/kaji/main/scripts/install.sh | sh" aria-label="Copy to clipboard">Copy</button>
+          </div>
+          <pre class="code-body"><code>curl -LsSf https://raw.githubusercontent.com/ffalcinelli/kaji/main/scripts/install.sh | sh</code></pre>
+        </div>
+      </div>
+      <div class="tab-panel tab-panel--hidden" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows">
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">powershell</span>
+            <button class="copy-btn" id="copy-windows-btn" data-code='powershell -c "irm https://raw.githubusercontent.com/ffalcinelli/kaji/main/scripts/install.ps1 | iex"' aria-label="Copy to clipboard">Copy</button>
+          </div>
+          <pre class="code-body"><code>powershell -c "irm https://raw.githubusercontent.com/ffalcinelli/kaji/main/scripts/install.ps1 | iex"</code></pre>
+        </div>
+      </div>
+      <div class="tab-panel tab-panel--hidden" role="tabpanel" id="panel-source" aria-labelledby="tab-source">
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">bash</span>
+            <button class="copy-btn" id="copy-source-btn" data-code="git clone https://github.com/ffalcinelli/kaji.git&#10;cd kaji&#10;cargo build --release&#10;sudo cp target/release/kaji /usr/local/bin/" aria-label="Copy to clipboard">Copy</button>
+          </div>
+          <pre class="code-body"><code>git clone https://github.com/ffalcinelli/kaji.git
+cd kaji
+cargo build --release
+sudo cp target/release/kaji /usr/local/bin/</code></pre>
+        </div>
+      </div>
+      <p class="install-note">Requires <a href="https://www.rust-lang.org/tools/install" target="_blank" rel="noopener">Rust 1.85+</a> when building from source.</p>
+    </div>
+  </section>
+
+  <!-- COMMANDS -->
+  <section class="section section--dark" id="commands">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-eyebrow">Command Reference</span>
+        <h2 class="section-title">Six commands to <span class="gradient-text">rule your realm</span></h2>
+      </div>
+      <div class="commands-grid">
+        <article class="command-card" id="cmd-inspect">
+          <div class="command-header">
+            <code class="command-name">kaji inspect</code>
+            <span class="command-badge command-badge--blue">Bootstrap</span>
+          </div>
+          <p class="command-desc">Export the remote server state to local YAML files. The perfect starting point to bring an existing Keycloak into version control.</p>
+          <pre class="command-example"><code>kaji inspect --workspace my-workspace --yes</code></pre>
+        </article>
+
+        <article class="command-card" id="cmd-validate">
+          <div class="command-header">
+            <code class="command-name">kaji validate</code>
+            <span class="command-badge command-badge--green">Safety</span>
+          </div>
+          <p class="command-desc">Checks your local YAML files for syntax errors and schema compliance before any changes reach the server.</p>
+          <pre class="command-example"><code>kaji validate</code></pre>
+        </article>
+
+        <article class="command-card" id="cmd-plan">
+          <div class="command-header">
+            <code class="command-name">kaji plan</code>
+            <span class="command-badge command-badge--purple">Preview</span>
+          </div>
+          <p class="command-desc">Calculates the diff between local files and the live server. Use <code>--interactive</code> to cherry-pick which changes to include.</p>
+          <pre class="command-example"><code>kaji plan --profile prod --interactive</code></pre>
+        </article>
+
+        <article class="command-card" id="cmd-apply">
+          <div class="command-header">
+            <code class="command-name">kaji apply</code>
+            <span class="command-badge command-badge--orange">Apply</span>
+          </div>
+          <p class="command-desc">Reconciles the remote state in staged order. Use <code>--review</code> to confirm each change individually before it's applied.</p>
+          <pre class="command-example"><code>kaji apply --profile prod --review</code></pre>
+        </article>
+
+        <article class="command-card" id="cmd-drift">
+          <div class="command-header">
+            <code class="command-name">kaji drift</code>
+            <span class="command-badge command-badge--red">Detect</span>
+          </div>
+          <p class="command-desc">A focused shortcut for <code>plan --changes-only</code>. Instantly surface any configuration drift in your production Keycloak.</p>
+          <pre class="command-example"><code>kaji drift --profile prod</code></pre>
+        </article>
+
+        <article class="command-card" id="cmd-cli">
+          <div class="command-header">
+            <code class="command-name">kaji cli</code>
+            <span class="command-badge command-badge--teal">Interactive</span>
+          </div>
+          <p class="command-desc">An interactive TUI menu to scaffold resources, rotate keys, or perform quick operations without writing YAML by hand.</p>
+          <pre class="command-example"><code>kaji cli</code></pre>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECRETS -->
+  <section class="section" id="secrets">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-eyebrow">Secret Management</span>
+        <h2 class="section-title">Zero secrets <span class="gradient-text">in your repository</span></h2>
+        <p class="section-desc">kaji detects sensitive fields on inspect and replaces them with safe placeholders. Resolve them at runtime from your environment or HashiCorp Vault.</p>
+      </div>
+      <div class="secrets-layout">
+        <div class="secrets-options">
+          <div class="secret-option" id="secret-env">
+            <div class="secret-option-header">
+              <span class="secret-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
+              <h3>Environment Variables</h3>
+            </div>
+            <p>Placeholders like <code>${VAR_NAME}</code> are resolved from the shell environment or a local <code>.secrets</code> file (never committed).</p>
+            <pre class="secret-example"><code><span class="yaml-key">secret</span>: <span class="yaml-str">${KEYCLOAK_CLIENT_MYAPP_SECRET}</span></code></pre>
+          </div>
+          <div class="secret-option" id="secret-vault">
+            <div class="secret-option-header">
+              <span class="secret-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+              <h3>HashiCorp Vault</h3>
+            </div>
+            <p>Placeholders like <code>${vault:mount/path#field}</code> are resolved live from a Vault KV2 engine using <code>VAULT_ADDR</code> and <code>VAULT_TOKEN</code>.</p>
+            <pre class="secret-example"><code><span class="yaml-key">secret</span>: <span class="yaml-str">${vault:secret/data/kaji/clients/myapp#secret}</span></code></pre>
+          </div>
+        </div>
+        <div class="secrets-workflow" id="secrets-workflow-diagram">
+          <h3 class="workflow-title">Recommended Workflow</h3>
+          <ol class="workflow-steps">
+            <li class="workflow-step"><span class="step-num">1</span><div><strong>Bootstrap</strong> &mdash; run <code>kaji inspect</code> to export your live Keycloak</div></li>
+            <li class="workflow-step"><span class="step-num">2</span><div><strong>Auto-mask</strong> &mdash; sensitive values are replaced with <code>${KEYCLOAK_&hellip;}</code> placeholders and collected in <code>.secrets</code></div></li>
+            <li class="workflow-step"><span class="step-num">3</span><div><strong>Gitignore</strong> &mdash; add <code>.secrets</code> to <code>.gitignore</code>. Commit only the YAML resource files.</div></li>
+            <li class="workflow-step"><span class="step-num">4</span><div><strong>Optionally</strong> &mdash; migrate placeholders to <code>${vault:&hellip;}</code> syntax for centralized secret management.</div></li>
+            <li class="workflow-step"><span class="step-num">5</span><div><strong>Apply</strong> &mdash; run <code>kaji apply</code>; secrets are resolved at runtime, never written to disk.</div></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section" id="cta">
+    <div class="cta-orbs" aria-hidden="true">
+      <div class="cta-orb cta-orb-1"></div>
+      <div class="cta-orb cta-orb-2"></div>
+    </div>
+    <div class="container cta-content">
+      <span class="hero-kanji cta-kanji" aria-label="Kanji for helm">舵</span>
+      <h2>Ready to take the helm?</h2>
+      <p>Bring your Keycloak configuration under version control today.</p>
+      <div class="cta-actions">
+        <a href="#install" class="btn btn-primary" id="cta-install-btn">Get Started</a>
+        <a href="https://github.com/ffalcinelli/kaji" target="_blank" rel="noopener" class="btn btn-outline" id="cta-github-btn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23a11.52 11.52 0 0 1 3-.405c1.02.005 2.045.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.298 24 12c0-6.63-5.37-12-12-12z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <span class="nav-kanji">舵</span>
+        <span class="nav-brand">kaji</span>
+      </div>
+      <p class="footer-desc">Declarative Keycloak configuration management, built with Rust.</p>
+      <div class="footer-links">
+        <a href="https://github.com/ffalcinelli/kaji" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/ffalcinelli/kaji/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+        <a href="https://github.com/ffalcinelli/kaji/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://github.com/ffalcinelli/kaji/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+        <a href="https://github.com/ffalcinelli/kaji/issues" target="_blank" rel="noopener">Issues</a>
+      </div>
+      <p class="footer-copy">&copy; 2026 Fabio Falcinelli &middot; Released under the MIT License</p>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
