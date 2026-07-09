@@ -1,13 +1,13 @@
 use std::sync::Arc;
 mod common;
 use common::start_mock_server;
-use kcd::client::KeycloakClient;
-use kcd::models::RealmRepresentation;
-use kcd::{apply, plan};
+use kaji::client::KeycloakClient;
+use kaji::models::RealmRepresentation;
+use kaji::{apply, plan};
 use std::fs;
 use tempfile::tempdir;
 
-use kcd::utils::ui::MockUi;
+use kaji::utils::ui::MockUi;
 
 #[tokio::test]
 async fn test_ultimate_flow() {
@@ -24,9 +24,9 @@ async fn test_ultimate_flow() {
     let realm_dir = workspace_dir.join("test-realm");
     fs::create_dir(&realm_dir).unwrap();
 
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     let ui = Arc::new(MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
@@ -61,8 +61,8 @@ async fn test_ultimate_flow() {
     .await
     .unwrap();
 
-    // Verify .kcdplan exists
-    assert!(workspace_dir.join(".kcdplan").exists());
+    // Verify .kajiplan exists
+    assert!(workspace_dir.join(".kajiplan").exists());
 
     // 2. Apply
     apply::run(
@@ -78,8 +78,8 @@ async fn test_ultimate_flow() {
     .await
     .unwrap();
 
-    // Verify .kcdplan is gone
-    assert!(!workspace_dir.join(".kcdplan").exists());
+    // Verify .kajiplan is gone
+    assert!(!workspace_dir.join(".kajiplan").exists());
 
     // 3. Plan again - should have no changes (matches)
     // Wait, my mock server doesn't actually store state,
@@ -109,8 +109,8 @@ async fn test_ultimate_flow() {
     .await
     .unwrap();
 
-    // Verify .kcdplan does not exist
-    assert!(!workspace_dir.join(".kcdplan").exists());
+    // Verify .kajiplan does not exist
+    assert!(!workspace_dir.join(".kajiplan").exists());
 
     // 4. Interactive plan - say 'no' to changes
     let realm_mismatch = RealmRepresentation {
@@ -140,6 +140,6 @@ async fn test_ultimate_flow() {
     .await
     .unwrap();
 
-    // Verify .kcdplan does not exist (rejected)
-    assert!(!workspace_dir.join(".kcdplan").exists());
+    // Verify .kajiplan does not exist (rejected)
+    assert!(!workspace_dir.join(".kajiplan").exists());
 }

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning (CalVer)](https://calver.org/) in the format `YYMM.MICRO.MODIFIER`.
 
+## [2607.1.0] - 2026-07-08
+### Changed
+- **Project Rebrand**: Renamed from `kcd` (Keycloak Configuration Drive) to `kaji` (舵, Japanese for *helm/rudder*). The new name reflects the tool's purpose — steering Keycloak configuration to a stable, declared state.
+- Binary renamed from `kcd` to `kaji`.
+- Plan artifact renamed from `.kcdplan` to `.kajiplan`.
+
 ## [2606.1.0] - 2026-06-05
 ### Added
 - **Generic Reconciliation Engine**: Consolidated reconciliation logic for all resource types into a single, maintainable generic engine.

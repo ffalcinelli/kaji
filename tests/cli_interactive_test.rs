@@ -1,6 +1,6 @@
 mod common;
-use kcd::cli;
-use kcd::utils::ui::MockUi;
+use kaji::cli;
+use kaji::utils::ui::MockUi;
 use std::sync::Mutex;
 use tempfile::tempdir;
 
@@ -226,7 +226,7 @@ async fn test_rotate_keys_interactive() {
     // Create a key file
     let keys_dir = workspace_dir.join("master").join("components");
     std::fs::create_dir_all(&keys_dir).unwrap();
-    let key = kcd::models::ComponentRepresentation {
+    let key = kaji::models::ComponentRepresentation {
         id: Some("k1".to_string()),
         name: Some("rsa-generated".to_string()),
         provider_id: Some("rsa-generated".to_string()),

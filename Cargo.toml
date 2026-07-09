@@ -1,13 +1,13 @@
 [package]
-name = "kcd"
+name = "kaji"
 version = "2603.1.0"
 edition = "2024"
-description = "Keycloak Configuration Drive"
-repository = "https://github.com/ffalcinelli/kcd"
+description = "Steer your Keycloak configuration to a stable, declared state."
+repository = "https://github.com/ffalcinelli/kaji"
 license = "MIT"
 
 [[bin]]
-name = "kcd"
+name = "kaji"
 path = "src/main.rs"
 
 [dependencies]

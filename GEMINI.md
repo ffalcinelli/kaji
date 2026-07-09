@@ -1,14 +1,14 @@
-# GEMINI.md - Keycloak Configuration Drive (kcd)
+# GEMINI.md - kaji (舵 — Helm/Rudder)
 
-This document serves as the internal developer guide for `kcd`. It explains the architecture, design decisions, and workflows for extending the tool.
+This document serves as the internal developer guide for `kaji`. It explains the architecture, design decisions, and workflows for extending the tool.
 
 ## 🏛️ Architecture Overview
 
-`kcd` follows a **Reconciliation Loop** pattern, similar to Kubernetes controllers.
+`kaji` follows a **Reconciliation Loop** pattern, similar to Kubernetes controllers.
 
 1.  **Desired State**: Defined in local YAML files within the workspace. Support for **Environment Profiles & Overlays** allows for multi-environment configurations (e.g., `realm.yaml` + `realm.prod.yaml`).
 2.  **Current State**: Fetched from the Keycloak Admin API.
-3.  **Diff Engine (`plan.rs`)**: Compares the two states to identify what needs to be Created, Updated, or Deleted. It generates a `.kcdplan` file in the workspace containing the list of files that have pending changes.
+3.  **Diff Engine (`plan.rs`)**: Compares the two states to identify what needs to be Created, Updated, or Deleted. It generates a `.kajiplan` file in the workspace containing the list of files that have pending changes.
 4.  **Reconciler (`apply.rs`)**: Executes the necessary API calls to bring the Current State in line with the Desired State. It uses **Dependency-Aware (Staged) Reconciliation** to ensure resources are applied in the correct order (e.g., Realms before Roles, Roles before Users).
 
 ### Core Modules
@@ -37,19 +37,19 @@ To prevent race conditions and ensure correct dependency handling, `apply` is ex
 
 ## 🌍 Environment Profiles & Overlays
 
-`kcd` supports multi-environment configurations via the `--profile` (`-p`) flag.
+`kaji` supports multi-environment configurations via the `--profile` (`-p`) flag.
 
 ### Profiles
 Profiles are stored in the `profiles/` directory (e.g., `profiles/prod.yaml`). They define environment-specific connection details:
 ```yaml
 server_url: "https://keycloak.prod.example.com"
-client_id: "kcd-cli"
-client_secret: "${PROD_KCD_SECRET}"
+client_id: "kaji-cli"
+client_secret: "${PROD_KAJI_SECRET}"
 secrets_file: ".secrets.prod"
 ```
 
 ### Overlays
-For any resource `resource.yaml`, `kcd` looks for `resource.{profile}.yaml` and deep-merges it onto the base configuration if that profile is active. This is handled by `src/utils/yaml.rs`.
+For any resource `resource.yaml`, `kaji` looks for `resource.{profile}.yaml` and deep-merges it onto the base configuration if that profile is active. This is handled by `src/utils/yaml.rs`.
 
 ---
 
@@ -71,7 +71,7 @@ To support a new Keycloak resource (e.g., "Event Listeners"):
 
 ## 🧪 Testing Strategy
 
-`kcd` employs a multi-layered testing strategy:
+`kaji` employs a multi-layered testing strategy:
 
 ### Unit Tests
 Located within the modules themselves (e.g., `src/utils/secrets.rs`). Focused on pure logic like secret masking, path resolution, and YAML parsing.
@@ -90,19 +90,19 @@ Located in `benches/`. Used to monitor performance for large workspaces with tho
 
 ## 🌍 Environment Profiles & Overlays
 
-`kcd` supports multi-environment configurations via the `--profile` (`-p`) flag.
+`kaji` supports multi-environment configurations via the `--profile` (`-p`) flag.
 
 ### Profiles
 Profiles are stored in the `profiles/` directory (e.g., `profiles/prod.yaml`). They define environment-specific connection details:
 ```yaml
 server_url: "https://keycloak.prod.example.com"
-client_id: "kcd-cli"
-client_secret: "${PROD_KCD_SECRET}"
+client_id: "kaji-cli"
+client_secret: "${PROD_KAJI_SECRET}"
 secrets_file: ".secrets.prod"
 ```
 
 ### Overlays
-For any resource `resource.yaml`, `kcd` looks for `resource.{profile}.yaml` and deep-merges it onto the base configuration if that profile is active. This allows for environment-specific tweaks without duplicating entire files.
+For any resource `resource.yaml`, `kaji` looks for `resource.{profile}.yaml` and deep-merges it onto the base configuration if that profile is active. This allows for environment-specific tweaks without duplicating entire files.
 
 ---
 

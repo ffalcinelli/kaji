@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use kcd::validate;
+use kaji::validate;
 use std::path::PathBuf;
 
 fn criterion_benchmark(c: &mut Criterion) {

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use kcd::client::KeycloakClient;
-use kcd::{apply, inspect, plan};
+use kaji::client::KeycloakClient;
+use kaji::{apply, inspect, plan};
 use std::fs;
 use std::process::Command;
 use std::sync::Arc;
@@ -99,14 +99,14 @@ standardFlowEnabled: true
         new_client_yaml,
     )?;
 
-    use kcd::utils::ui::DialoguerUi;
+    use kaji::utils::ui::DialoguerUi;
 
     // 5. Plan - Should see changes
     println!("Planning changes...");
     // Just ensuring plan runs without error
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = Arc::new(DialoguerUi::new());
     plan::run(
         &client,

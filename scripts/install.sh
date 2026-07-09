@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-GITHUB_REPO="ffalcinelli/kcd"
+GITHUB_REPO="ffalcinelli/kaji"
 
 # Colors for output
 RED='\033[0;31m'
@@ -9,7 +9,7 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${BLUE}Installing kcd...${NC}"
+echo -e "${BLUE}Installing kaji...${NC}"
 
 # Detect OS
 OS="$(uname -s)"
@@ -35,13 +35,13 @@ mkdir -p "$INSTALL_DIR"
 
 VERSION=${1:-latest}
 if [ "$VERSION" = "latest" ]; then
-    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/latest/download/kcd-${TARGET}.tar.gz"
+    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/latest/download/kaji-${TARGET}.tar.gz"
 else
-    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/${VERSION}/kcd-${TARGET}.tar.gz"
+    DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/${VERSION}/kaji-${TARGET}.tar.gz"
 fi
 
 TEMP_DIR="$(mktemp -d)"
-TAR_FILE="${TEMP_DIR}/kcd.tar.gz"
+TAR_FILE="${TEMP_DIR}/kaji.tar.gz"
 
 echo "Downloading $DOWNLOAD_URL..."
 if command -v curl >/dev/null 2>&1; then
@@ -57,17 +57,17 @@ echo "Extracting..."
 tar -xzf "$TAR_FILE" -C "$TEMP_DIR"
 
 # Find and install the executable
-KCD_BIN=$(find "$TEMP_DIR" -type f -name "kcd" | head -n 1)
-if [ -z "$KCD_BIN" ]; then
-    echo -e "${RED}Error: kcd executable not found in archive.${NC}"
+KAJI_BIN=$(find "$TEMP_DIR" -type f -name "kaji" | head -n 1)
+if [ -z "$KAJI_BIN" ]; then
+    echo -e "${RED}Error: kaji executable not found in archive.${NC}"
     rm -rf "$TEMP_DIR"; exit 1
 fi
 
-chmod +x "$KCD_BIN"
-mv "$KCD_BIN" "$INSTALL_DIR/kcd"
+chmod +x "$KAJI_BIN"
+mv "$KAJI_BIN" "$INSTALL_DIR/kaji"
 rm -rf "$TEMP_DIR"
 
-echo -e "${GREEN}Successfully installed kcd to $INSTALL_DIR/kcd${NC}"
+echo -e "${GREEN}Successfully installed kaji to $INSTALL_DIR/kaji${NC}"
 
 # PATH verification
 if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then

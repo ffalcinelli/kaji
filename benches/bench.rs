@@ -1,7 +1,7 @@
-use kcd::client::KeycloakClient;
-use kcd::plan;
-use kcd::utils::secrets::{EnvResolver, SecretResolver};
-use kcd::utils::ui::DialoguerUi;
+use kaji::client::KeycloakClient;
+use kaji::plan;
+use kaji::utils::secrets::{EnvResolver, SecretResolver};
+use kaji::utils::ui::DialoguerUi;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

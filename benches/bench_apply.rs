@@ -1,7 +1,7 @@
-use kcd::apply;
-use kcd::client::KeycloakClient;
-use kcd::utils::secrets::{EnvResolver, SecretResolver};
-use kcd::utils::ui::DialoguerUi;
+use kaji::apply;
+use kaji::client::KeycloakClient;
+use kaji::utils::secrets::{EnvResolver, SecretResolver};
+use kaji::utils::ui::DialoguerUi;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -30,7 +30,7 @@ fn main() {
             let realm_dir = workspace_dir.join(&realm_name);
             std::fs::create_dir_all(&realm_dir).unwrap();
 
-            let realm = kcd::models::RealmRepresentation {
+            let realm = kaji::models::RealmRepresentation {
                 realm: realm_name.clone(),
                 enabled: Some(true),
                 display_name: Some(format!("Updated Realm {}", i)),

@@ -1,8 +1,8 @@
 mod common;
-use kcd::client::KeycloakClient;
-use kcd::plan::components::{check_keys_drift, plan_components_or_keys};
-use kcd::plan::{PlanContext, PlanOptions};
-use kcd::utils::ui::DialoguerUi;
+use kaji::client::KeycloakClient;
+use kaji::plan::components::{check_keys_drift, plan_components_or_keys};
+use kaji::plan::{PlanContext, PlanOptions};
+use kaji::utils::ui::DialoguerUi;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio::fs;
@@ -12,9 +12,9 @@ async fn test_plan_components_no_dir() {
     let client = KeycloakClient::new("http://localhost:8080".to_string());
     let dir = tempdir().unwrap();
     let workspace_dir = dir.path();
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = DialoguerUi::new();
 
     let options = PlanOptions {
@@ -61,9 +61,9 @@ async fn test_plan_components_with_invalid_yaml() {
         .await
         .unwrap();
 
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = DialoguerUi::new();
 
     let options = PlanOptions {
@@ -107,9 +107,9 @@ async fn test_plan_components_no_identity() {
     let client = KeycloakClient::new("http://localhost:8080".to_string());
     let dir = tempdir().unwrap();
     let workspace_dir = dir.path();
-    let resolver = Arc::new(kcd::utils::secrets::EnvResolver::new(
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
         std::collections::HashMap::new(),
-    )) as Arc<dyn kcd::utils::secrets::SecretResolver>;
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = DialoguerUi::new();
 
     let options = PlanOptions {

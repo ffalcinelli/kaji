@@ -1,9 +1,9 @@
 mod common;
 use common::start_mock_server;
-use kcd::apply;
-use kcd::client::KeycloakClient;
-use kcd::models::{ClientRepresentation, RealmRepresentation, RoleRepresentation};
-use kcd::utils::secrets::{EnvResolver, SecretResolver};
+use kaji::apply;
+use kaji::client::KeycloakClient;
+use kaji::models::{ClientRepresentation, RealmRepresentation, RoleRepresentation};
+use kaji::utils::secrets::{EnvResolver, SecretResolver};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::Arc;
@@ -118,7 +118,7 @@ async fn test_apply() {
     // Identity Providers
     let idps_dir = realm_dir.join("identity-providers");
     fs::create_dir(&idps_dir).unwrap();
-    let idp = kcd::models::IdentityProviderRepresentation {
+    let idp = kaji::models::IdentityProviderRepresentation {
         internal_id: None,
         alias: Some("google".to_string()),
         provider_id: Some("google".to_string()),
@@ -141,7 +141,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_idp = kcd::models::IdentityProviderRepresentation {
+    let new_idp = kaji::models::IdentityProviderRepresentation {
         internal_id: None,
         alias: Some("new-idp".to_string()),
         provider_id: Some("oidc".to_string()),
@@ -167,7 +167,7 @@ async fn test_apply() {
     // Client Scopes
     let scopes_dir = realm_dir.join("client-scopes");
     fs::create_dir(&scopes_dir).unwrap();
-    let scope = kcd::models::ClientScopeRepresentation {
+    let scope = kaji::models::ClientScopeRepresentation {
         id: None,
         name: Some("scope-1".to_string()),
         description: None,
@@ -181,7 +181,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_scope = kcd::models::ClientScopeRepresentation {
+    let new_scope = kaji::models::ClientScopeRepresentation {
         id: None,
         name: Some("new-scope".to_string()),
         description: None,
@@ -198,7 +198,7 @@ async fn test_apply() {
     // Groups
     let groups_dir = realm_dir.join("groups");
     fs::create_dir(&groups_dir).unwrap();
-    let group = kcd::models::GroupRepresentation {
+    let group = kaji::models::GroupRepresentation {
         id: None,
         name: Some("group-1".to_string()),
         path: Some("/group-1".to_string()),
@@ -211,7 +211,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_group = kcd::models::GroupRepresentation {
+    let new_group = kaji::models::GroupRepresentation {
         id: None,
         name: Some("new-group".to_string()),
         path: Some("/new-group".to_string()),
@@ -227,7 +227,7 @@ async fn test_apply() {
     // Users
     let users_dir = realm_dir.join("users");
     fs::create_dir(&users_dir).unwrap();
-    let user = kcd::models::UserRepresentation {
+    let user = kaji::models::UserRepresentation {
         id: None,
         username: Some("user-1".to_string()),
         enabled: Some(true),
@@ -244,7 +244,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_user = kcd::models::UserRepresentation {
+    let new_user = kaji::models::UserRepresentation {
         id: None,
         username: Some("new-user".to_string()),
         enabled: Some(true),
@@ -264,7 +264,7 @@ async fn test_apply() {
     // Authentication Flows
     let flows_dir = realm_dir.join("authentication-flows");
     fs::create_dir(&flows_dir).unwrap();
-    let flow = kcd::models::AuthenticationFlowRepresentation {
+    let flow = kaji::models::AuthenticationFlowRepresentation {
         id: None,
         alias: Some("flow-1".to_string()),
         description: None,
@@ -280,7 +280,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_flow = kcd::models::AuthenticationFlowRepresentation {
+    let new_flow = kaji::models::AuthenticationFlowRepresentation {
         id: None,
         alias: Some("new-flow".to_string()),
         description: None,
@@ -299,7 +299,7 @@ async fn test_apply() {
     // Required Actions
     let actions_dir = realm_dir.join("required-actions");
     fs::create_dir(&actions_dir).unwrap();
-    let action = kcd::models::RequiredActionProviderRepresentation {
+    let action = kaji::models::RequiredActionProviderRepresentation {
         alias: Some("action-1".to_string()),
         name: Some("Action 1".to_string()),
         provider_id: Some("action-provider".to_string()),
@@ -315,7 +315,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_action = kcd::models::RequiredActionProviderRepresentation {
+    let new_action = kaji::models::RequiredActionProviderRepresentation {
         alias: Some("new-action".to_string()),
         name: Some("New Action".to_string()),
         provider_id: Some("new-action-provider".to_string()),
@@ -334,7 +334,7 @@ async fn test_apply() {
     // Components
     let components_dir = realm_dir.join("components");
     fs::create_dir(&components_dir).unwrap();
-    let component = kcd::models::ComponentRepresentation {
+    let component = kaji::models::ComponentRepresentation {
         id: None,
         name: Some("component-1".to_string()),
         provider_id: Some("ldap".to_string()),
@@ -350,7 +350,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let new_component = kcd::models::ComponentRepresentation {
+    let new_component = kaji::models::ComponentRepresentation {
         id: None,
         name: Some("new-component".to_string()),
         provider_id: Some("ldap".to_string()),
@@ -369,7 +369,7 @@ async fn test_apply() {
     // Keys (stored as components in 'keys' directory)
     let keys_dir = realm_dir.join("keys");
     fs::create_dir(&keys_dir).unwrap();
-    let key_component = kcd::models::ComponentRepresentation {
+    let key_component = kaji::models::ComponentRepresentation {
         id: None,
         name: Some("rsa-generated".to_string()),
         provider_id: Some("rsa-generated".to_string()),
@@ -385,7 +385,7 @@ async fn test_apply() {
     )
     .unwrap();
 
-    let ui = Arc::new(kcd::utils::ui::MockUi {
+    let ui = Arc::new(kaji::utils::ui::MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
         confirms: std::sync::Mutex::new(Vec::new()),
         selects: std::sync::Mutex::new(Vec::new()),
@@ -406,8 +406,8 @@ async fn test_apply() {
     .await
     .expect("Apply failed");
 
-    // Test with .kcdplan
-    let plan_file = workspace_dir.join(".kcdplan");
+    // Test with .kajiplan
+    let plan_file = workspace_dir.join(".kajiplan");
     let planned_files = vec![realm_dir.join("realm.yaml")];
     fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
 

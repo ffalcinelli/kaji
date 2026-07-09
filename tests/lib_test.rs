@@ -1,6 +1,6 @@
-use kcd::args::{Cli, Commands};
-use kcd::init_client;
-use kcd::run_app;
+use kaji::args::{Cli, Commands};
+use kaji::init_client;
+use kaji::run_app;
 use std::path::PathBuf;
 
 #[tokio::test]

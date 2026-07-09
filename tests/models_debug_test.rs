@@ -1,4 +1,4 @@
-use kcd::models::*;
+use kaji::models::*;
 use serde_json::json;
 use std::collections::HashMap;
 

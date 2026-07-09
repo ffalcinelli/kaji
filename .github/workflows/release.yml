@@ -47,7 +47,7 @@ jobs:
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required) Binary names (non-extension portion of filename) to build and upload.
-          bin: kcd
+          bin: kaji
           # (optional) Target triple, default is host triple.
           target: ${{ matrix.target }}
           # (optional) Tool to build binaries.

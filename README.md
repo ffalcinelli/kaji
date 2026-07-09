@@ -1,13 +1,13 @@
-# Keycloak Configuration Drive (kcd)
+# kaji — Steer Your Keycloak Configuration
 
-[![CI](https://github.com/ffalcinelli/kcd/actions/workflows/ci.yml/badge.svg)](https://github.com/ffalcinelli/kcd/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/ffalcinelli/kcd/graph/badge.svg)](https://app.codecov.io/gh/ffalcinelli/kcd)
+[![CI](https://github.com/ffalcinelli/kaji/actions/workflows/ci.yml/badge.svg)](https://github.com/ffalcinelli/kaji/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/ffalcinelli/kaji/graph/badge.svg)](https://app.codecov.io/gh/ffalcinelli/kaji)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Rust Version](https://img.shields.io/badge/rust-1.85%2B-blue.svg)
 
 **Disclaimer**: This project is experimentally written almost entirely by AI, so any usage should keep this in mind and that the execution of this software is at your own risk.
 
-`kcd` is a robust CLI tool for the **declarative management** of [Keycloak](https://www.keycloak.org/) configurations. It allows you to treat your Keycloak settings as code, enabling version control, automated testing, and a seamless drive of your identity infrastructure configuration.
+`kaji` (舵, Japanese for *helm* or *rudder*) is a robust CLI tool for the **declarative management** of [Keycloak](https://www.keycloak.org/) configurations. Just as a ship's helm holds its course through any conditions, `kaji` steers your Keycloak identity infrastructure to a stable, locked, declared state — enabling version control, automated testing, and reliable drift detection.
 
 ---
 
@@ -16,10 +16,10 @@
 ### Interactive Plan Mode
 > Previewing changes before applying them with interactive confirmation.
 
-![kcd plan screenshot](https://raw.githubusercontent.com/ffalcinelli/kcd/main/assets/kcd-plan.png)
+![kaji plan screenshot](https://raw.githubusercontent.com/ffalcinelli/kaji/main/assets/kaji-plan.png)
 
 ```text
-$ kcd plan --interactive
+$ kaji plan --interactive
 💡 Calculating diff for realm 'master'...
 
   Clients:
@@ -34,11 +34,11 @@ $ kcd plan --interactive
 ### Interactive CLI Menu
 > Scaffolding resources without writing YAML by hand.
 
-![kcd cli screenshot](https://raw.githubusercontent.com/ffalcinelli/kcd/main/assets/kcd-cli.png)
+![kaji cli screenshot](https://raw.githubusercontent.com/ffalcinelli/kaji/main/assets/kaji-cli.png)
 
 ```text
-$ kcd cli
-💡 Welcome to kcd interactive CLI!
+$ kaji cli
+💡 Welcome to kaji interactive CLI!
 ? What would you like to do?
 ❯ Create User
   Change User Password
@@ -74,12 +74,12 @@ $ kcd cli
 
 **macOS and Linux:**
 ```bash
-curl -LsSf https://raw.githubusercontent.com/ffalcinelli/kcd/main/scripts/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/ffalcinelli/kaji/main/scripts/install.sh | sh
 ```
 
 **Windows:**
 ```powershell
-powershell -c "irm https://raw.githubusercontent.com/ffalcinelli/kcd/main/scripts/install.ps1 | iex"
+powershell -c "irm https://raw.githubusercontent.com/ffalcinelli/kaji/main/scripts/install.ps1 | iex"
 ```
 
 ### Prerequisites
@@ -89,10 +89,10 @@ powershell -c "irm https://raw.githubusercontent.com/ffalcinelli/kcd/main/script
 ### Building from Source
 
 ```bash
-git clone https://github.com/ffalcinelli/kcd.git
-cd kcd
+git clone https://github.com/ffalcinelli/kaji.git
+cd kaji
 cargo build --release
-sudo cp target/release/kcd /usr/local/bin/
+sudo cp target/release/kaji /usr/local/bin/
 ```
 
 ---
@@ -110,7 +110,7 @@ Running tests will automatically install the Git hooks in your `.git/hooks` dire
 
 ## 🌍 Environment Profiles
 
-`kcd` allows you to manage multiple Keycloak instances (e.g., Development, Staging, Production) using a native **Profiles** system.
+`kaji` allows you to manage multiple Keycloak instances (e.g., Development, Staging, Production) using a native **Profiles** system.
 
 ### 1. Define a Profile
 Create a YAML file in the `profiles/` directory:
@@ -118,8 +118,8 @@ Create a YAML file in the `profiles/` directory:
 **`profiles/prod.yaml`**
 ```yaml
 server_url: "https://keycloak.prod.example.com"
-client_id: "kcd-cli"
-client_secret: "${PROD_KCD_SECRET}"
+client_id: "kaji-cli"
+client_secret: "${PROD_KAJI_SECRET}"
 secrets_file: ".secrets.prod"  # Load environment secrets from this file
 ```
 
@@ -140,13 +140,13 @@ redirectUris:
   - "https://app.example.com/*"
 ```
 
-When running with `--profile prod`, `kcd` deep-merges the overlay onto the base configuration.
+When running with `--profile prod`, `kaji` deep-merges the overlay onto the base configuration.
 
 ---
 
 ## ⚙️ Configuration
 
-`kcd` uses environment variables for connection and authentication. You can export these in your shell or use a `.secrets` file.
+`kaji` uses environment variables for connection and authentication. You can export these in your shell or use a `.secrets` file.
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -182,58 +182,58 @@ workspace/
 Exports the remote server state to local YAML files.
 ```bash
 # Export everything to 'my-workspace'
-kcd inspect --workspace my-workspace --yes
+kaji inspect --workspace my-workspace --yes
 ```
 
 ### `validate`
 Ensures your local YAML files are syntactically correct and follow the Keycloak model.
 ```bash
-kcd validate
+kaji validate
 ```
 
 ### `plan`
 Calculates the "diff" between local files and the remote server.
 ```bash
 # Plan for a specific profile
-kcd plan --profile prod
+kaji plan --profile prod
 
 # Interactive: decide for each change whether to include it in the plan
-kcd plan --interactive
+kaji plan --interactive
 ```
 
 ### `apply`
 Reconciles the remote state. It follows a **staged application order** (Realms -> Roles -> Clients -> Users) to ensure dependencies are met.
 ```bash
 # Apply planned changes for production
-kcd apply --profile prod --yes
+kaji apply --profile prod --yes
 
 # Review mode: confirm each change before application
-kcd apply --profile prod --review
+kaji apply --profile prod --review
 ```
 
 ### `drift`
 A shortcut for `plan --changes-only`.
 ```bash
-kcd drift --profile prod
+kaji drift --profile prod
 ```
 
 ### `clean`
 Removes local YAML files that are no longer referenced or are invalid.
 ```bash
-kcd clean --yes
+kaji clean --yes
 ```
 
 ### `cli`
 An interactive menu to generate resource scaffolds or perform quick actions.
 ```bash
-kcd cli
+kaji cli
 ```
 
 ---
 
 ## 🔐 Secret Management
 
-`kcd` is designed with security in mind. During `inspect`, it detects sensitive fields and replaces them with placeholders.
+`kaji` is designed with security in mind. During `inspect`, it detects sensitive fields and replaces them with placeholders.
 
 ### Resolution Strategies
 
@@ -259,7 +259,7 @@ name: API Gateway
 enabled: true
 publicClient: false
 # Format: ${vault:mount/path#field}
-secret: ${vault:secret/data/kcd/clients/api-gateway#secret}
+secret: ${vault:secret/data/kaji/clients/api-gateway#secret}
 redirectUris:
   - "https://gateway.example.com/*"
 protocol: openid-connect
@@ -267,18 +267,18 @@ protocol: openid-connect
 
 ### Usage Workflow
 
-1. Run `kcd inspect` to bootstrap your local configuration.
+1. Run `kaji inspect` to bootstrap your local configuration.
 2. Sensitive values are automatically replaced with `${KEYCLOAK_...}` placeholders and saved to a `.secrets` file.
 3. **DO NOT commit the `.secrets` file**.
 4. (Optional) Replace placeholders with `vault:` syntax if using HashiCorp Vault.
 5. Provide secrets via environment variables or set `VAULT_ADDR` and `VAULT_TOKEN`.
-6. Run `kcd apply` to synchronize changes.
+6. Run `kaji apply` to synchronize changes.
 
 ---
 
 ## 📅 Versioning
 
-`kcd` uses [Calendar Versioning (CalVer)](https://calver.org/) with the format `YYMM.MICRO.MODIFIER` (e.g., `2603.1.0`).
+`kaji` uses [Calendar Versioning (CalVer)](https://calver.org/) with the format `YYMM.MICRO.MODIFIER` (e.g., `2603.1.0`).
 - **YYMM**: The year and month of the release (e.g., `2603` for March 2026).
 - **MICRO**: Increments for each release within the same month.
 - **MODIFIER**: Typically `0`, used for specific hotfixes.
@@ -289,7 +289,7 @@ This format provides an immediate understanding of how recent your installed ver
 
 ## 🤝 Credits
 
-`kcd` is built for and relies on the excellent work of the [Keycloak](https://www.keycloak.org/) project and its community. Keycloak is an open-source identity and access management solution.
+`kaji` is built for and relies on the excellent work of the [Keycloak](https://www.keycloak.org/) project and its community. Keycloak is an open-source identity and access management solution.
 
 ---
 

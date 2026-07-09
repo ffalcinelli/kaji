@@ -1,4 +1,4 @@
-use kcd::utils::ui::{DialoguerUi, MockUi, Ui};
+use kaji::utils::ui::{DialoguerUi, MockUi, Ui};
 use std::sync::Mutex;
 
 #[test]

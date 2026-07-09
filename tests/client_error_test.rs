@@ -1,5 +1,5 @@
 mod common;
-use kcd::client::KeycloakClient;
+use kaji::client::KeycloakClient;
 
 #[tokio::test]
 async fn test_client_error_handling() {

@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Currently, the following versions of Keycloak Configuration Drive (kcd) are supported with security updates:
+Currently, the following versions of kaji are supported with security updates:
 
 | Version | Status                |
 | ------- | --------------------- |
@@ -10,7 +10,7 @@ Currently, the following versions of Keycloak Configuration Drive (kcd) are supp
 
 ## Reporting a Vulnerability
 
-If you discover a potential security vulnerability in `kcd`, please do **not** open a public issue. Instead, report it privately to the maintainers:
+If you discover a potential security vulnerability in `kaji`, please do **not** open a public issue. Instead, report it privately to the maintainers:
 
 - Fabio Falcinelli: [fabio.falcinelli@gmail.com](mailto:fabio.falcinelli@gmail.com)
 
@@ -23,14 +23,14 @@ To help us address the issue quickly, please include:
 - A minimal reproducible example (PoC) if possible.
 - Any potential impact or exploitation scenarios.
 
-## Security Best Practices for kcd Users
+## Security Best Practices for kaji Users
 
-`kcd` interacts with the Keycloak Admin API and manages sensitive configuration data. To ensure your usage remains secure:
+`kaji` interacts with the Keycloak Admin API and manages sensitive configuration data. To ensure your usage remains secure:
 
-1.  **Principle of Least Privilege**: Ensure that the Keycloak client or user credentials used by `kcd` only have the minimum necessary permissions to manage the target realm.
-2.  **Secret Management**: `kcd` automatically masks detected secrets in local YAML configurations and stores them in a separate `.secrets` file. Do **not** commit `.secrets` files to version control.
-3.  **Environment Variables**: Protect environment variables containing Keycloak credentials (e.g., `KEYCLOAK_CLIENT_SECRET`) used by `kcd`.
-4.  **Keep kcd Updated**: Ensure you are using the latest version of `kcd` to benefit from upstream security fixes.
+1.  **Principle of Least Privilege**: Ensure that the Keycloak client or user credentials used by `kaji` only have the minimum necessary permissions to manage the target realm.
+2.  **Secret Management**: `kaji` automatically masks detected secrets in local YAML configurations and stores them in a separate `.secrets` file. Do **not** commit `.secrets` files to version control.
+3.  **Environment Variables**: Protect environment variables containing Keycloak credentials (e.g., `KEYCLOAK_CLIENT_SECRET`) used by `kaji`.
+4.  **Keep kaji Updated**: Ensure you are using the latest version of `kaji` to benefit from upstream security fixes.
 
 ## Disclosure Policy
 
