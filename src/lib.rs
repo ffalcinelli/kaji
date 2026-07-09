@@ -328,3 +328,56 @@ pub async fn run_app(cli: Cli) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_load_profile_success() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path();
+        let profiles_dir = workspace.join("profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+
+        let profile_path = profiles_dir.join("test_prof.yaml");
+        let yaml_content = r#"
+server_url: "http://localhost:8080"
+client_id: "test-client"
+"#;
+        std::fs::write(&profile_path, yaml_content).unwrap();
+
+        let profile = load_profile(workspace, "test_prof").await.unwrap();
+        assert_eq!(profile.server_url, "http://localhost:8080");
+        assert_eq!(profile.client_id, Some("test-client".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_load_profile_missing_file() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path();
+
+        let result = load_profile(workspace, "non_existent").await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to read profile file:"));
+    }
+
+    #[tokio::test]
+    async fn test_load_profile_invalid_yaml() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path();
+        let profiles_dir = workspace.join("profiles");
+        std::fs::create_dir_all(&profiles_dir).unwrap();
+
+        let profile_path = profiles_dir.join("invalid.yaml");
+        let yaml_content = "server_url: [invalid_yaml";
+        std::fs::write(&profile_path, yaml_content).unwrap();
+
+        let result = load_profile(workspace, "invalid").await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to parse profile file:"));
+    }
+}
