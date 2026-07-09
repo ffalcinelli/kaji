@@ -166,9 +166,9 @@ pub async fn run(
 }
 
 use crate::models::{
-    AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
-    GroupRepresentation, IdentityProviderRepresentation, RequiredActionProviderRepresentation,
-    RoleRepresentation, UserRepresentation,
+    AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
+    ClientScopeRepresentation, GroupRepresentation, IdentityProviderRepresentation,
+    RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
 };
 
 async fn plan_single_realm(
@@ -186,6 +186,7 @@ async fn plan_single_realm(
         (mut user_changes, user_summary),
         (mut auth_flow_changes, auth_flow_summary),
         (mut required_action_changes, required_action_summary),
+        (mut config_changes, config_summary),
         (mut component_changes, component_summary),
         (mut key_changes, key_summary),
         _,
@@ -199,6 +200,7 @@ async fn plan_single_realm(
         generic::plan_resources::<UserRepresentation>(&ctx),
         generic::plan_resources::<AuthenticationFlowRepresentation>(&ctx),
         generic::plan_resources::<RequiredActionProviderRepresentation>(&ctx),
+        generic::plan_resources::<AuthenticatorConfigRepresentation>(&ctx),
         components::plan_components_or_keys(&ctx, "components"),
         components::plan_components_or_keys(&ctx, "keys"),
         components::check_keys_drift(ctx.client, ctx.options, ctx.realm_name),
@@ -213,6 +215,7 @@ async fn plan_single_realm(
     changed_files.append(&mut user_changes);
     changed_files.append(&mut auth_flow_changes);
     changed_files.append(&mut required_action_changes);
+    changed_files.append(&mut config_changes);
     changed_files.append(&mut component_changes);
     changed_files.append(&mut key_changes);
 
@@ -225,6 +228,7 @@ async fn plan_single_realm(
     summary.add(&user_summary);
     summary.add(&auth_flow_summary);
     summary.add(&required_action_summary);
+    summary.add(&config_summary);
     summary.add(&component_summary);
     summary.add(&key_summary);
 

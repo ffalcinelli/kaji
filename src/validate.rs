@@ -1,8 +1,8 @@
 use crate::models::{
-    AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
-    ComponentRepresentation, GroupRepresentation, IdentityProviderRepresentation,
-    RealmRepresentation, RequiredActionProviderRepresentation, RoleRepresentation,
-    UserRepresentation,
+    AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
+    ClientScopeRepresentation, ComponentRepresentation, GroupRepresentation,
+    IdentityProviderRepresentation, RealmRepresentation, RequiredActionProviderRepresentation,
+    RoleRepresentation, UserRepresentation,
 };
 use crate::utils::ui::{CHECK, SEARCH, SUCCESS, WARN};
 use anyhow::{Context, Result};
@@ -264,6 +264,26 @@ fn validate_required_actions(
     Ok(())
 }
 
+fn validate_authenticator_configs(
+    configs: &[(PathBuf, AuthenticatorConfigRepresentation)],
+) -> Result<()> {
+    for (path, config) in configs {
+        if config.alias.as_deref().unwrap_or_default().is_empty() {
+            anyhow::bail!(
+                "Authenticator Config alias is missing or empty in {:?}",
+                path
+            );
+        }
+    }
+    println!(
+        "  {} {} {}",
+        CHECK,
+        style("Validated authenticator configs:").dim(),
+        style(configs.len()).green()
+    );
+    Ok(())
+}
+
 async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
     // 1. Validate Realm
     validate_realm_config(&workspace_dir).await?;
@@ -277,8 +297,9 @@ async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
     let users_dir = workspace_dir.join("users");
     let flows_dir = workspace_dir.join("authentication-flows");
     let actions_dir = workspace_dir.join("required-actions");
+    let configs_dir = workspace_dir.join("authenticator-configs");
 
-    let (roles, clients, idps, scopes, groups, users, flows, actions) = tokio::try_join!(
+    let (roles, clients, idps, scopes, groups, users, flows, actions, configs) = tokio::try_join!(
         read_yaml_files::<RoleRepresentation>(&roles_dir, "role"),
         read_yaml_files::<ClientRepresentation>(&clients_dir, "client"),
         read_yaml_files::<IdentityProviderRepresentation>(&idps_dir, "idp"),
@@ -287,6 +308,7 @@ async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
         read_yaml_files::<UserRepresentation>(&users_dir, "user"),
         read_yaml_files::<AuthenticationFlowRepresentation>(&flows_dir, "authentication-flow"),
         read_yaml_files::<RequiredActionProviderRepresentation>(&actions_dir, "required-action"),
+        read_yaml_files::<AuthenticatorConfigRepresentation>(&configs_dir, "authenticator-config"),
     )?;
 
     // Validate resources
@@ -298,6 +320,7 @@ async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
     validate_users(&users)?;
     validate_authentication_flows(&flows)?;
     validate_required_actions(&actions)?;
+    validate_authenticator_configs(&configs)?;
 
     // Validate Components and Keys
     tokio::try_join!(

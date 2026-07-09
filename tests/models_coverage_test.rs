@@ -212,4 +212,28 @@ fn test_models_resource_trait() {
     assert_eq!(ComponentRepresentation::DIR_NAME, "components");
     assert_eq!(ComponentRepresentation::LABEL, "components");
     assert_eq!(ComponentRepresentation::SECRET_PREFIX, "component");
+
+    let mut config = AuthenticatorConfigRepresentation {
+        id: Some("id9".to_string()),
+        alias: Some("alias9".to_string()),
+        config: None,
+        extra: HashMap::new(),
+    };
+    assert_eq!(config.get_identity(), Some("alias9".to_string()));
+    assert_eq!(config.get_name(), "alias9".to_string());
+    assert!(config.has_id());
+    config.clear_metadata();
+    assert!(config.id.is_none());
+    assert_eq!(
+        AuthenticatorConfigRepresentation::DIR_NAME,
+        "authenticator-configs"
+    );
+    assert_eq!(
+        AuthenticatorConfigRepresentation::LABEL,
+        "authenticator configs"
+    );
+    assert_eq!(
+        AuthenticatorConfigRepresentation::SECRET_PREFIX,
+        "authenticatorconfig"
+    );
 }

@@ -1,8 +1,9 @@
 use crate::client::KeycloakClient;
 use crate::models::{
-    AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
-    ComponentRepresentation, GroupRepresentation, IdentityProviderRepresentation, KeycloakResource,
-    RequiredActionProviderRepresentation, ResourceMeta, RoleRepresentation, UserRepresentation,
+    AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
+    ClientScopeRepresentation, ComponentRepresentation, GroupRepresentation,
+    IdentityProviderRepresentation, KeycloakResource, RequiredActionProviderRepresentation,
+    ResourceMeta, RoleRepresentation, UserRepresentation,
 };
 use crate::utils::to_sorted_yaml_with_secrets;
 use crate::utils::ui::{CHECK, SEARCH, SUCCESS, WARN};
@@ -381,6 +382,15 @@ async fn inspect_realm(
         &prompt_mutex,
     );
     spawn_inspect::<ComponentRepresentation>(
+        &mut set,
+        client,
+        realm_name,
+        &workspace_dir,
+        &all_secrets,
+        yes,
+        &prompt_mutex,
+    );
+    spawn_inspect::<AuthenticatorConfigRepresentation>(
         &mut set,
         client,
         realm_name,
