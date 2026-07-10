@@ -119,3 +119,44 @@ termLines.forEach((span, i) => {
     span.style.opacity = '1';
   }, 800 + i * 80);
 });
+
+/* ===== DYNAMIC VERSION FETCH ===== */
+async function fetchLatestVersion() {
+  const versionEl = document.getElementById('latest-version');
+  if (!versionEl) return;
+
+  const githubUrl = 'https://api.github.com/repos/ffalcinelli/kaji/releases/latest';
+  const cratesUrl = 'https://crates.io/api/v1/crates/kaji';
+
+  const formatVersion = (version) => {
+    return version.startsWith('v') ? version : `v${version}`;
+  };
+
+  try {
+    const res = await fetch(githubUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.tag_name) {
+        versionEl.textContent = formatVersion(data.tag_name);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch from GitHub releases:', err);
+  }
+
+  try {
+    const res = await fetch(cratesUrl);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.crate && data.crate.max_version) {
+        versionEl.textContent = formatVersion(data.crate.max_version);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch from crates.io:', err);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', fetchLatestVersion);

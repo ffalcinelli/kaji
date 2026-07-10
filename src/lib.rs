@@ -1,12 +1,28 @@
+#![warn(missing_docs)]
+//! `kaji` is a declarative configuration management CLI tool for Keycloak.
+//!
+//! It brings GitOps workflows to identity infrastructure, allowing you to define,
+//! validate, plan, apply, and drift-detect Keycloak configurations.
+
+/// Staged reconciliation logic for Keycloak resources.
 pub mod apply;
+/// Command-line argument parser and command definitions.
 pub mod args;
+/// Logic to clean up configuration files in the workspace.
 pub mod clean;
+/// Scaffolding for interactive command-line initialization.
 pub mod cli;
+/// Keycloak Admin REST API HTTP client wrapper.
 pub mod client;
+/// Inspection pipeline to bootstrap local configuration files.
 pub mod inspect;
+/// Strongly-typed representations of Keycloak resources.
 pub mod models;
+/// Diff calculation and drift planning.
 pub mod plan;
+/// Helper utilities (secrets resolvers, YAML helpers, terminal UI).
 pub mod utils;
+/// Validation of local workspace YAML configuration files.
 pub mod validate;
 
 use anyhow::{Context, Result};
@@ -21,18 +37,31 @@ use utils::secrets::{CompositeResolver, EnvResolver, SecretResolver};
 static ACTION: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
 static SEARCH: Emoji<'_, '_> = Emoji("🔍 ", "> ");
 
+/// Connection profile details for a target environment.
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct Profile {
+    /// Keycloak server base URL.
     pub server_url: String,
+    /// Client ID used for client credentials grant.
     pub client_id: Option<String>,
+    /// Client secret used for client credentials grant.
     pub client_secret: Option<String>,
+    /// Username for administrator credentials login.
     pub user: Option<String>,
+    /// Password for administrator credentials login.
     pub password: Option<String>,
+    /// Relative path to the secret variables file.
     pub secrets_file: Option<String>,
+    /// Address of HashiCorp Vault server (optional).
     pub vault_addr: Option<String>,
+    /// Token for HashiCorp Vault server (optional).
     pub vault_token: Option<String>,
 }
 
+/// Loads a profile configuration file from the `profiles/` directory in the workspace.
+///
+/// # Errors
+/// Returns an error if the profile file fails to load or parse as YAML.
 pub async fn load_profile(workspace: &std::path::Path, name: &str) -> Result<Profile> {
     let profile_path = workspace.join("profiles").join(format!("{}.yaml", name));
     let content = std::fs::read_to_string(&profile_path)
@@ -42,6 +71,10 @@ pub async fn load_profile(workspace: &std::path::Path, name: &str) -> Result<Pro
     Ok(profile)
 }
 
+/// Initializes a `KeycloakClient` by logging in using credentials from the CLI or active profile.
+///
+/// # Errors
+/// Returns an error if connection URL is missing or login authentication fails.
 pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<KeycloakClient> {
     let server = profile
         .map(|p| p.server_url.clone())
@@ -77,6 +110,10 @@ pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<Keycloa
     Ok(client)
 }
 
+/// Initializes secret resolvers (environment variables and/or Vault) to substitute secret tokens.
+///
+/// # Errors
+/// Returns an error if any vault address is invalid or resolvers cannot be set up.
 pub async fn init_secrets(
     cli: &Cli,
     workspace: &std::path::Path,
@@ -270,6 +307,10 @@ async fn handle_clean(cli: &Cli, workspace: &std::path::Path, yes: bool) -> Resu
     Ok(())
 }
 
+/// Standard entry point that resolves config workspaces and executes command handlers.
+///
+/// # Errors
+/// Returns an error if command execution or network request fails.
 pub async fn run_app(cli: Cli) -> Result<()> {
     let workspace = match &cli.command {
         Commands::Inspect { workspace, .. } => workspace,

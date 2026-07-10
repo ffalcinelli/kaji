@@ -1,7 +1,38 @@
+#![allow(missing_docs)]
+//! Apply module for applying local configuration changes to Keycloak.
+
 pub mod authenticator_config;
 pub mod components;
 pub mod generic;
 pub mod realm;
+
+macro_rules! spawn_apply_stage {
+    ($set:expr, $client:expr, $dir:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, [ $($t:ty),* ]) => {
+        $(
+            let client_clone = $client.clone();
+            let dir_clone = $dir.clone();
+            let resolver_clone = Arc::clone(&$resolver);
+            let planned_files_clone = Arc::clone(&$planned_files);
+            let realm_name_clone = $realm_name.to_string();
+            let profile_clone = $profile.clone();
+            let ui_clone = Arc::clone(&$ui);
+            let review_clone = $review;
+            $set.spawn(async move {
+                generic::apply_resources::<$t>(
+                    &client_clone,
+                    &dir_clone,
+                    resolver_clone,
+                    planned_files_clone,
+                    &realm_name_clone,
+                    profile_clone,
+                    review_clone,
+                    ui_clone,
+                )
+                .await
+            });
+        )*
+    };
+}
 
 #[cfg(test)]
 pub mod test_utils;
@@ -72,6 +103,11 @@ use std::sync::Arc;
 use tokio::fs as async_fs;
 use tokio::task::JoinSet;
 
+/// Reconciles local configuration files in the workspace directory with the remote Keycloak server.
+///
+/// # Errors
+/// Returns an error if the workspace does not exist, network communication fails,
+/// or authentication details are invalid.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     client: &KeycloakClient,
@@ -214,130 +250,60 @@ async fn apply_single_realm(
     // Stage 1: Identity Providers, Roles
     {
         let mut set = JoinSet::new();
-        let client1 = client.clone();
-        let dir1 = workspace_dir.clone();
-        let res1 = Arc::clone(&resolver);
-        let plan1 = Arc::clone(&planned_files);
-        let rn1 = realm_name.to_string();
-        let p1 = profile.clone();
-        let ui1 = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<IdentityProviderRepresentation>(
-                &client1, &dir1, res1, plan1, &rn1, p1, review, ui1,
-            )
-            .await
-        });
-
-        let client2 = client.clone();
-        let dir2 = workspace_dir.clone();
-        let res2 = Arc::clone(&resolver);
-        let plan2 = Arc::clone(&planned_files);
-        let rn2 = realm_name.to_string();
-        let p2 = profile.clone();
-        let ui2 = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<RoleRepresentation>(
-                &client2, &dir2, res2, plan2, &rn2, p2, review, ui2,
-            )
-            .await
-        });
+        spawn_apply_stage!(
+            set,
+            client,
+            workspace_dir,
+            resolver,
+            planned_files,
+            realm_name,
+            profile,
+            review,
+            ui,
+            [IdentityProviderRepresentation, RoleRepresentation]
+        );
         crate::utils::join_all_tasks(set, None).await?;
     }
 
     // Stage 2: Clients, Client Scopes, Authentication Flows, Required Actions, Groups
     {
         let mut set = JoinSet::new();
-
-        let client_cl = client.clone();
-        let dir_cl = workspace_dir.clone();
-        let res_cl = Arc::clone(&resolver);
-        let plan_cl = Arc::clone(&planned_files);
-        let rn_cl = realm_name.to_string();
-        let p_cl = profile.clone();
-        let ui_cl = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<ClientRepresentation>(
-                &client_cl, &dir_cl, res_cl, plan_cl, &rn_cl, p_cl, review, ui_cl,
-            )
-            .await
-        });
-
-        let client_sc = client.clone();
-        let dir_sc = workspace_dir.clone();
-        let res_sc = Arc::clone(&resolver);
-        let plan_sc = Arc::clone(&planned_files);
-        let rn_sc = realm_name.to_string();
-        let p_sc = profile.clone();
-        let ui_sc = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<ClientScopeRepresentation>(
-                &client_sc, &dir_sc, res_sc, plan_sc, &rn_sc, p_sc, review, ui_sc,
-            )
-            .await
-        });
-
-        let client_fl = client.clone();
-        let dir_fl = workspace_dir.clone();
-        let res_fl = Arc::clone(&resolver);
-        let plan_fl = Arc::clone(&planned_files);
-        let rn_fl = realm_name.to_string();
-        let p_fl = profile.clone();
-        let ui_fl = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<AuthenticationFlowRepresentation>(
-                &client_fl, &dir_fl, res_fl, plan_fl, &rn_fl, p_fl, review, ui_fl,
-            )
-            .await
-        });
-
-        let client_ra = client.clone();
-        let dir_ra = workspace_dir.clone();
-        let res_ra = Arc::clone(&resolver);
-        let plan_ra = Arc::clone(&planned_files);
-        let rn_ra = realm_name.to_string();
-        let p_ra = profile.clone();
-        let ui_ra = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<RequiredActionProviderRepresentation>(
-                &client_ra, &dir_ra, res_ra, plan_ra, &rn_ra, p_ra, review, ui_ra,
-            )
-            .await
-        });
-
-        let client_gr = client.clone();
-        let dir_gr = workspace_dir.clone();
-        let res_gr = Arc::clone(&resolver);
-        let plan_gr = Arc::clone(&planned_files);
-        let rn_gr = realm_name.to_string();
-        let p_gr = profile.clone();
-        let ui_gr = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<GroupRepresentation>(
-                &client_gr, &dir_gr, res_gr, plan_gr, &rn_gr, p_gr, review, ui_gr,
-            )
-            .await
-        });
-
+        spawn_apply_stage!(
+            set,
+            client,
+            workspace_dir,
+            resolver,
+            planned_files,
+            realm_name,
+            profile,
+            review,
+            ui,
+            [
+                ClientRepresentation,
+                ClientScopeRepresentation,
+                AuthenticationFlowRepresentation,
+                RequiredActionProviderRepresentation,
+                GroupRepresentation
+            ]
+        );
         crate::utils::join_all_tasks(set, None).await?;
     }
 
     // Stage 3: Users, Components, Keys
     {
         let mut set = JoinSet::new();
-
-        let client_us = client.clone();
-        let dir_us = workspace_dir.clone();
-        let res_us = Arc::clone(&resolver);
-        let plan_us = Arc::clone(&planned_files);
-        let rn_us = realm_name.to_string();
-        let p_us = profile.clone();
-        let ui_us = Arc::clone(&ui);
-        set.spawn(async move {
-            generic::apply_resources::<UserRepresentation>(
-                &client_us, &dir_us, res_us, plan_us, &rn_us, p_us, review, ui_us,
-            )
-            .await
-        });
+        spawn_apply_stage!(
+            set,
+            client,
+            workspace_dir,
+            resolver,
+            planned_files,
+            realm_name,
+            profile,
+            review,
+            ui,
+            [UserRepresentation]
+        );
 
         let client_ac = client.clone();
         let dir_ac = workspace_dir.clone();

@@ -45,6 +45,10 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
     Ok(results)
 }
 
+/// Validates the structure and syntax of local YAML configuration files.
+///
+/// # Errors
+/// Returns an error if validation fails or a file cannot be parsed.
 pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Result<()> {
     if !fs::try_exists(&workspace_dir).await? {
         anyhow::bail!("Input directory {:?} does not exist", workspace_dir);

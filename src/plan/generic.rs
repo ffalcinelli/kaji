@@ -14,6 +14,7 @@ pub async fn plan_resources<T>(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
 where
     T: KeycloakResource
         + ResourceMeta
+        + crate::client::KeycloakResourceMapping
         + serde::Serialize
         + for<'de> serde::Deserialize<'de>
         + Send

@@ -1,8 +1,11 @@
+#![allow(missing_docs)]
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Helper trait to convert various string-like types to an optional string slice.
 pub trait ToOptionString {
+    /// Converts the type to an Option containing a string slice.
     fn to_option_string(&self) -> Option<&str>;
 }
 
@@ -17,7 +20,10 @@ impl ToOptionString for Option<String> {
         self.as_deref()
     }
 }
+
+/// Helper trait to assign string values to string-like optional fields.
 pub trait FromOptionString {
+    /// Sets the value from an optional string.
     fn set_from_option_string(&mut self, val: Option<String>);
 }
 
@@ -36,27 +42,44 @@ impl FromOptionString for Option<String> {
         }
     }
 }
+
+/// Common trait for all Keycloak resource representations.
+///
+/// Defines API endpoints, identification keys, and path formatting logic.
 pub trait KeycloakResource {
+    /// Relative URL API path on the Keycloak server.
     const API_PATH: &'static str;
+    /// Relative local directory name inside the workspace.
     const DIR_NAME: &'static str = Self::API_PATH;
+    /// Gets the unique ID of the resource, if available.
     fn get_id(&self) -> Option<&str>;
+    /// Sets the unique ID of the resource.
     fn set_id(&mut self, id: Option<String>);
+    /// Gets the unique identity string (e.g. name or clientId) used for comparing local vs remote.
     fn get_identity(&self) -> Option<String>;
+    /// Gets the display name of the resource.
     fn get_name(&self) -> String;
+    /// Formats the API endpoint path for a specific resource ID.
     fn object_path(id: &str) -> String {
         format!("{}/{}", Self::API_PATH, id)
     }
+    /// Gets the local filename without extension.
     fn get_filename(&self) -> String {
         self.get_name()
     }
+    /// Returns true if the resource requires/has a server-assigned ID.
     fn has_id(&self) -> bool {
         false
     }
+    /// Clears read-only or server-assigned metadata fields prior to export.
     fn clear_metadata(&mut self) {}
 }
 
+/// Metadata attributes for resolving and formatting secrets of a resource.
 pub trait ResourceMeta {
+    /// Human-readable label for the resource (e.g. "Client").
     const LABEL: &'static str;
+    /// Prefix prefix used when masking credentials of this resource.
     const SECRET_PREFIX: &'static str;
 }
 

@@ -1,3 +1,6 @@
+#![allow(missing_docs)]
+//! Interactive CLI module for generating local configurations.
+
 pub mod client;
 pub mod group;
 pub mod idp;
@@ -9,6 +12,10 @@ use crate::utils::ui::Ui;
 use anyhow::Result;
 use std::path::PathBuf;
 
+/// Runs the interactive configuration generation CLI menu.
+///
+/// # Errors
+/// Returns an error if directory creation or file writing fails.
 pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
     ui.print_info("Welcome to kaji interactive CLI!");
 

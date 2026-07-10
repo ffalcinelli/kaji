@@ -3,6 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 
+/// Resolves secrets from a HashiCorp Vault server.
 pub struct VaultResolver {
     address: String,
     token: String,
@@ -10,6 +11,10 @@ pub struct VaultResolver {
 }
 
 impl VaultResolver {
+    /// Creates a new `VaultResolver` targeting the Vault address and authenticated with the given token.
+    ///
+    /// # Errors
+    /// Returns an error if the address is not a valid URL.
     pub fn new(address: &str, token: &str) -> Result<Self> {
         reqwest::Url::parse(address)?;
         Ok(Self {

@@ -4,18 +4,26 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Vault secret resolver submodule.
 pub mod vault;
 
+/// Interface for resolving masked secret values to actual credentials (e.g. from environment or Vault).
 #[async_trait]
 pub trait SecretResolver: Send + Sync {
+    /// Resolves the given secret key.
+    ///
+    /// Returns `Ok(Some(value))` if found, `Ok(None)` if not managed by this resolver,
+    /// or an error if resolution fails.
     async fn resolve(&self, key: &str) -> Result<Option<String>>;
 }
 
+/// Resolves secrets from environment variables or a local `.secrets` file.
 pub struct EnvResolver {
     vars: HashMap<String, String>,
 }
 
 impl EnvResolver {
+    /// Creates a new `EnvResolver` with a predefined map of variables.
     pub fn new(vars: HashMap<String, String>) -> Self {
         Self { vars }
     }
@@ -38,11 +46,13 @@ impl SecretResolver for EnvResolver {
     }
 }
 
+/// Chains multiple `SecretResolver` implementations together in a prioritized list.
 pub struct CompositeResolver {
     resolvers: Vec<Box<dyn SecretResolver>>,
 }
 
 impl CompositeResolver {
+    /// Creates a new `CompositeResolver` with the given list of resolvers.
     pub fn new(resolvers: Vec<Box<dyn SecretResolver>>) -> Self {
         Self { resolvers }
     }
