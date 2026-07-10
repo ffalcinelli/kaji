@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn test_to_sorted_yaml_with_secrets() {
+    fn test_to_sorted_yaml_with_secrets() -> anyhow::Result<()> {
         let mut secrets = std::collections::BTreeMap::new();
         let val = serde_json::json!({
             "clientId": "myclient",
@@ -319,7 +319,7 @@ mod tests {
             }
         });
 
-        let yaml = to_sorted_yaml_with_secrets(&val, "CLIENT", &mut secrets).unwrap();
+        let yaml = to_sorted_yaml_with_secrets(&val, "CLIENT", &mut secrets)?;
         // current_prefix should be "CLIENT_myclient"
         // secret env var should be "KEYCLOAK_CLIENT_MYCLIENT_SECRET"
         // nested password env var should be "KEYCLOAK_CLIENT_MYCLIENT_NESTED_PASSWORD"
@@ -333,10 +333,11 @@ mod tests {
             secrets.get("KEYCLOAK_CLIENT_MYCLIENT_NESTED_PASSWORD"),
             Some(&"pass".to_string())
         );
+        Ok(())
     }
 
     #[test]
-    fn test_to_sorted_yaml_with_secrets_struct() {
+    fn test_to_sorted_yaml_with_secrets_struct() -> anyhow::Result<()> {
         #[derive(serde::Serialize)]
         struct TestConfig {
             #[serde(rename = "clientId")]
@@ -354,7 +355,7 @@ mod tests {
             value: 42,
         };
 
-        let yaml = to_sorted_yaml_with_secrets(&val, "APP", &mut secrets).unwrap();
+        let yaml = to_sorted_yaml_with_secrets(&val, "APP", &mut secrets)?;
 
         assert!(yaml.contains("password: ${KEYCLOAK_APP_TEST_CLIENT_PASSWORD}"));
         assert!(yaml.contains("clientId: test-client"));
@@ -362,6 +363,7 @@ mod tests {
             secrets.get("KEYCLOAK_APP_TEST_CLIENT_PASSWORD"),
             Some(&"super-secret".to_string())
         );
+        Ok(())
     }
 
     #[test]
@@ -378,55 +380,57 @@ mod tests {
     }
 
     #[test]
-    fn test_to_sorted_yaml_simple() {
+    fn test_to_sorted_yaml_simple() -> anyhow::Result<()> {
         let val = serde_json::json!({ "b": 2, "a": 1 });
-        let yaml = to_sorted_yaml(&val).unwrap();
+        let yaml = to_sorted_yaml(&val)?;
         assert_eq!(yaml.trim(), "a: 1\nb: 2");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_write_secure_permissions() {
-        let temp_dir = tempfile::tempdir().unwrap();
+    async fn test_write_secure_permissions() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
         let file_path = temp_dir.path().join("secure.txt");
         let content = "sensitive data";
 
         // Test creating a new file
-        write_secure(&file_path, content).await.unwrap();
-        let read_content = std::fs::read_to_string(&file_path).unwrap();
+        write_secure(&file_path, content).await?;
+        let read_content = std::fs::read_to_string(&file_path)?;
         assert_eq!(read_content, content);
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(&file_path).unwrap();
+            let metadata = std::fs::metadata(&file_path)?;
             let mode = metadata.permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
 
         // Test updating an existing file with insecure permissions
         let existing_path = temp_dir.path().join("existing.txt");
-        std::fs::write(&existing_path, "old content").unwrap();
+        std::fs::write(&existing_path, "old content")?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&existing_path, std::fs::Permissions::from_mode(0o644))
-                .unwrap();
-            let metadata = std::fs::metadata(&existing_path).unwrap();
+            std::fs::set_permissions(&existing_path, std::fs::Permissions::from_mode(0o644))?;
+            let metadata = std::fs::metadata(&existing_path)?;
             assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
         }
 
-        write_secure(&existing_path, "new content").await.unwrap();
-        let read_content = std::fs::read_to_string(&existing_path).unwrap();
+        write_secure(&existing_path, "new content").await?;
+        let read_content = std::fs::read_to_string(&existing_path)?;
         assert_eq!(read_content, "new content");
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(&existing_path).unwrap();
+            let metadata = std::fs::metadata(&existing_path)?;
             let mode = metadata.permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+
+        Ok(())
     }
 
     #[test]
