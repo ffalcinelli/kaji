@@ -931,24 +931,52 @@ mod tests {
     }
 
     #[test]
-    fn test_to_from_option_string() {
+    fn test_to_option_string() {
         let s = "test".to_string();
         assert_eq!(s.to_option_string(), Some("test"));
 
         let os: Option<String> = Some("test".to_string());
         assert_eq!(os.to_option_string(), Some("test"));
 
-        let mut s2 = "old".to_string();
-        s2.set_from_option_string(Some("new".to_string()));
-        assert_eq!(s2, "new");
-        s2.set_from_option_string(None);
-        assert_eq!(s2, "new");
+        let os_none: Option<String> = None;
+        assert_eq!(os_none.to_option_string(), None);
+    }
 
-        let mut os2: Option<String> = Some("old".to_string());
-        os2.set_from_option_string(Some("new".to_string()));
-        assert_eq!(os2, Some("new".to_string()));
-        os2.set_from_option_string(None);
-        assert_eq!(os2, Some("new".to_string()));
+    #[test]
+    fn test_from_option_string_for_string() {
+        let mut s = "old".to_string();
+
+        // Updating with Some should change the value
+        s.set_from_option_string(Some("new".to_string()));
+        assert_eq!(s, "new");
+
+        // Updating with None should keep the existing value
+        s.set_from_option_string(None);
+        assert_eq!(s, "new");
+    }
+
+    #[test]
+    fn test_from_option_string_for_option_string() {
+        let mut os: Option<String> = Some("old".to_string());
+
+        // Updating with Some should change the value
+        os.set_from_option_string(Some("new".to_string()));
+        assert_eq!(os, Some("new".to_string()));
+
+        // Updating with None should keep the existing value
+        os.set_from_option_string(None);
+        assert_eq!(os, Some("new".to_string()));
+
+        let mut os_none: Option<String> = None;
+
+        // Updating None with Some should set the value
+        os_none.set_from_option_string(Some("init".to_string()));
+        assert_eq!(os_none, Some("init".to_string()));
+
+        // Updating None with None should keep it None
+        let mut os_none2: Option<String> = None;
+        os_none2.set_from_option_string(None);
+        assert_eq!(os_none2, None);
     }
 
     #[test]
