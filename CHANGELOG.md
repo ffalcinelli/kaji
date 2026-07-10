@@ -3,9 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Calendar Versioning (CalVer)](https://calver.org/) in the format `YYMM.MICRO.MODIFIER`.
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2607.1.0] - 2026-07-08
+## [0.0.1] - 2026-07-10
 ### Changed
 - **Project Rebrand**: Renamed from `kcd` (Keycloak Configuration Drive) to `kaji` (舵, Japanese for *helm/rudder*). The new name reflects the tool's purpose — steering Keycloak configuration to a stable, declared state.
 - Binary renamed from `kcd` to `kaji`.
