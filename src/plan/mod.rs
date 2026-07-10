@@ -1,6 +1,19 @@
+#![allow(missing_docs)]
+//! Plan module for calculating diffs and detecting configuration drift.
+
 pub mod components;
 pub mod generic;
 pub mod realm;
+
+macro_rules! plan_generic_resources {
+    ($ctx:expr, $changed_files:expr, $summary:expr, [ $($t:ty),* ]) => {
+        $(
+            let (mut files, sum) = generic::plan_resources::<$t>($ctx).await?;
+            $changed_files.append(&mut files);
+            $summary.add(&sum);
+        )*
+    };
+}
 
 use crate::client::KeycloakClient;
 use crate::utils::secrets::{SecretResolver, obfuscate_secrets};
@@ -47,6 +60,10 @@ pub struct PlanContext<'a> {
     pub profile: Option<String>,
 }
 
+/// Calculates configuration drift and compiles a list of planned modifications.
+///
+/// # Errors
+/// Returns an error if directory read fails or Keycloak connection fails.
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     client: &KeycloakClient,
@@ -176,59 +193,39 @@ async fn plan_single_realm(
     changed_files: &mut Vec<PathBuf>,
     summary: &mut PlanSummary,
 ) -> Result<()> {
-    let (
-        (mut realm_changes, realm_summary),
-        (mut role_changes, role_summary),
-        (mut client_changes, client_summary),
-        (mut idp_changes, idp_summary),
-        (mut client_scope_changes, client_scope_summary),
-        (mut group_changes, group_summary),
-        (mut user_changes, user_summary),
-        (mut auth_flow_changes, auth_flow_summary),
-        (mut required_action_changes, required_action_summary),
-        (mut config_changes, config_summary),
-        (mut component_changes, component_summary),
-        (mut key_changes, key_summary),
-        _,
-    ) = tokio::try_join!(
-        realm::plan_realm(&ctx),
-        generic::plan_resources::<RoleRepresentation>(&ctx),
-        generic::plan_resources::<ClientRepresentation>(&ctx),
-        generic::plan_resources::<IdentityProviderRepresentation>(&ctx),
-        generic::plan_resources::<ClientScopeRepresentation>(&ctx),
-        generic::plan_resources::<GroupRepresentation>(&ctx),
-        generic::plan_resources::<UserRepresentation>(&ctx),
-        generic::plan_resources::<AuthenticationFlowRepresentation>(&ctx),
-        generic::plan_resources::<RequiredActionProviderRepresentation>(&ctx),
-        generic::plan_resources::<AuthenticatorConfigRepresentation>(&ctx),
+    // 1. Plan realm
+    let (mut realm_changes, realm_summary) = realm::plan_realm(&ctx).await?;
+    changed_files.append(&mut realm_changes);
+    summary.add(&realm_summary);
+
+    // 2. Plan generic resources
+    plan_generic_resources!(
+        &ctx,
+        changed_files,
+        summary,
+        [
+            RoleRepresentation,
+            ClientRepresentation,
+            IdentityProviderRepresentation,
+            ClientScopeRepresentation,
+            GroupRepresentation,
+            UserRepresentation,
+            AuthenticationFlowRepresentation,
+            RequiredActionProviderRepresentation,
+            AuthenticatorConfigRepresentation
+        ]
+    );
+
+    // 3. Plan custom components and keys
+    let ((mut component_changes, component_summary), (mut key_changes, key_summary), _) = tokio::try_join!(
         components::plan_components_or_keys(&ctx, "components"),
         components::plan_components_or_keys(&ctx, "keys"),
         components::check_keys_drift(ctx.client, ctx.options, ctx.realm_name),
     )?;
 
-    changed_files.append(&mut realm_changes);
-    changed_files.append(&mut role_changes);
-    changed_files.append(&mut client_changes);
-    changed_files.append(&mut idp_changes);
-    changed_files.append(&mut client_scope_changes);
-    changed_files.append(&mut group_changes);
-    changed_files.append(&mut user_changes);
-    changed_files.append(&mut auth_flow_changes);
-    changed_files.append(&mut required_action_changes);
-    changed_files.append(&mut config_changes);
     changed_files.append(&mut component_changes);
     changed_files.append(&mut key_changes);
 
-    summary.add(&realm_summary);
-    summary.add(&role_summary);
-    summary.add(&client_summary);
-    summary.add(&idp_summary);
-    summary.add(&client_scope_summary);
-    summary.add(&group_summary);
-    summary.add(&user_summary);
-    summary.add(&auth_flow_summary);
-    summary.add(&required_action_summary);
-    summary.add(&config_summary);
     summary.add(&component_summary);
     summary.add(&key_summary);
 

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 pub mod secrets;
 pub mod ui;
 pub mod yaml;

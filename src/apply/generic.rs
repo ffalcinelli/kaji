@@ -25,6 +25,7 @@ pub async fn apply_resources<T>(
 where
     T: KeycloakResource
         + ResourceMeta
+        + crate::client::KeycloakResourceMapping
         + serde::Serialize
         + for<'de> serde::Deserialize<'de>
         + Send

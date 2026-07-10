@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![allow(clippy::collapsible_if)]
 use crate::models::{
     AuthenticationExecutionExportRepresentation, AuthenticationFlowRepresentation,
@@ -7,20 +8,24 @@ use crate::models::{
     UserRepresentation,
 };
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use log::{debug, info};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// High-level client wrapper for the Keycloak Admin REST API.
 #[derive(Clone)]
 pub struct KeycloakClient {
     client: Client,
     base_url: String,
+    /// The target Keycloak realm being managed.
     pub target_realm: String, // The realm we are managing
     token: Option<String>,
 }
 
 impl KeycloakClient {
+    /// Creates a new `KeycloakClient` instance with the given Keycloak server base URL.
     pub fn new(base_url: String) -> Self {
         let target_realm = "".to_string();
         let base_url = base_url.trim_end_matches('/').to_string();
@@ -60,32 +65,12 @@ impl KeycloakClient {
         }
     }
 
-    pub async fn get_resources<T: KeycloakResource + for<'a> Deserialize<'a>>(
+    pub async fn get_resources<
+        T: KeycloakResource + KeycloakResourceMapping + for<'a> Deserialize<'a> + Send,
+    >(
         &self,
     ) -> Result<Vec<T>> {
-        if T::API_PATH == "authentication/config" {
-            let configs = self.get_authenticator_configs_internal().await?;
-            let json_val = serde_json::to_value(configs)?;
-            let result = serde_json::from_value(json_val)?;
-            Ok(result)
-        } else if T::API_PATH == "authentication/flows" {
-            let flows: Vec<AuthenticationFlowRepresentation> =
-                self.get(&self.resource_url::<T>()).await?;
-            let mut mapped_flows = Vec::new();
-            for mut flow in flows {
-                if let Some(alias) = &flow.alias {
-                    if let Ok(executions) = self.get_flow_executions(alias).await {
-                        flow.authentication_executions = Some(executions);
-                    }
-                }
-                mapped_flows.push(self.map_flow_executions(flow).await);
-            }
-            let json_val = serde_json::to_value(mapped_flows)?;
-            let result = serde_json::from_value(json_val)?;
-            Ok(result)
-        } else {
-            self.get(&self.resource_url::<T>()).await
-        }
+        T::fetch_all(self).await
     }
 
     pub async fn get_resource<T: KeycloakResource + for<'a> Deserialize<'a>>(
@@ -95,30 +80,25 @@ impl KeycloakClient {
         self.get(&self.object_url::<T>(id)).await
     }
 
-    pub async fn create_resource<T: KeycloakResource + Serialize>(&self, res: &T) -> Result<()> {
-        if T::API_PATH == "authentication/flows" {
-            let json_val = serde_json::to_value(res)?;
-            let flow: AuthenticationFlowRepresentation = serde_json::from_value(json_val)?;
-            let unmapped_flow = self.unmap_flow_executions(flow).await;
-            self.post(&self.resource_url::<T>(), &unmapped_flow).await
-        } else {
-            self.post(&self.resource_url::<T>(), res).await
-        }
+    pub async fn create_resource<
+        T: KeycloakResource + KeycloakResourceMapping + Serialize + Clone + Send,
+    >(
+        &self,
+        res: &T,
+    ) -> Result<()> {
+        let mapped = res.clone().pre_save(self).await?;
+        self.post(&self.resource_url::<T>(), &mapped).await
     }
 
-    pub async fn update_resource<T: KeycloakResource + Serialize>(
+    pub async fn update_resource<
+        T: KeycloakResource + KeycloakResourceMapping + Serialize + Clone + Send,
+    >(
         &self,
         id: &str,
         res: &T,
     ) -> Result<()> {
-        if T::API_PATH == "authentication/flows" {
-            let json_val = serde_json::to_value(res)?;
-            let flow: AuthenticationFlowRepresentation = serde_json::from_value(json_val)?;
-            let unmapped_flow = self.unmap_flow_executions(flow).await;
-            self.put(&self.object_url::<T>(id), &unmapped_flow).await
-        } else {
-            self.put(&self.object_url::<T>(id), res).await
-        }
+        let mapped = res.clone().pre_save(self).await?;
+        self.put(&self.object_url::<T>(id), &mapped).await
     }
 
     pub async fn delete_resource<T: KeycloakResource>(&self, id: &str) -> Result<()> {
@@ -640,6 +620,79 @@ impl KeycloakClient {
 
 fn is_uuid(s: &str) -> bool {
     s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// Trait for defining specialized resource-mapping behaviors for generic client operations.
+#[async_trait]
+pub trait KeycloakResourceMapping: Sized {
+    /// Fetches all remote resources of this type.
+    async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>>
+    where
+        Self: for<'a> Deserialize<'a> + KeycloakResource,
+    {
+        client.get(&client.resource_url::<Self>()).await
+    }
+
+    /// Pre-processes the resource before saving (creating or updating) it.
+    async fn pre_save(self, _client: &KeycloakClient) -> Result<Self> {
+        Ok(self)
+    }
+}
+
+#[async_trait]
+impl KeycloakResourceMapping for RealmRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for RoleRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for ClientRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for ClientScopeRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for UserRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for GroupRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for IdentityProviderRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for RequiredActionProviderRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for ComponentRepresentation {}
+
+#[async_trait]
+impl KeycloakResourceMapping for AuthenticatorConfigRepresentation {
+    async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>> {
+        client.get_authenticator_configs_internal().await
+    }
+}
+
+#[async_trait]
+impl KeycloakResourceMapping for AuthenticationFlowRepresentation {
+    async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>> {
+        let flows: Vec<AuthenticationFlowRepresentation> =
+            client.get(&client.resource_url::<Self>()).await?;
+        let mut mapped_flows = Vec::new();
+        for mut flow in flows {
+            if let Some(alias) = &flow.alias {
+                if let Ok(executions) = client.get_flow_executions(alias).await {
+                    flow.authentication_executions = Some(executions);
+                }
+            }
+            mapped_flows.push(client.map_flow_executions(flow).await);
+        }
+        Ok(mapped_flows)
+    }
+
+    async fn pre_save(self, client: &KeycloakClient) -> Result<Self> {
+        Ok(client.unmap_flow_executions(self).await)
+    }
 }
 
 #[cfg(test)]

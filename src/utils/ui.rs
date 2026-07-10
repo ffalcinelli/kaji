@@ -1,30 +1,53 @@
+//! Terminal user interface utilities, including progressive spinner outputs and confirm prompts.
+
 use console::Emoji;
 
+/// Emoji indicator for start action.
 pub static ACTION: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
+/// Emoji indicator for search/inspect action.
 pub static SEARCH: Emoji<'_, '_> = Emoji("🔍 ", "> ");
+/// Emoji indicator for checklist items.
 pub static CHECK: Emoji<'_, '_> = Emoji("✅ ", "√ ");
+/// Emoji indicator for generic success.
 pub static SUCCESS: Emoji<'_, '_> = Emoji("🎉 ", "* ");
+/// Emoji indicator for resource creation success.
 pub static SUCCESS_CREATE: Emoji<'_, '_> = Emoji("✨ ", "+ ");
+/// Emoji indicator for resource update success.
 pub static SUCCESS_UPDATE: Emoji<'_, '_> = Emoji("🔄 ", "~ ");
+/// Emoji indicator for warning messages.
 pub static WARN: Emoji<'_, '_> = Emoji("⚠️ ", "! ");
+/// Emoji indicator for error messages.
 pub static ERROR: Emoji<'_, '_> = Emoji("❌ ", "x ");
+/// Emoji indicator for info logs.
 pub static INFO: Emoji<'_, '_> = Emoji("💡 ", "i ");
+/// Sparkle emoji.
 pub static SPARKLE: Emoji<'_, '_> = Emoji("✨", "");
+/// Memo emoji.
 pub static MEMO: Emoji<'_, '_> = Emoji("📝", "");
 
 use anyhow::Result;
 
+/// Interface representing standard input/output terminal methods for user interaction.
 pub trait Ui: Send + Sync {
+    /// Prompts the user for a text input.
     fn input(&self, prompt: &str, default: Option<String>, allow_empty: bool) -> Result<String>;
+    /// Prompts the user for a yes/no confirmation.
     fn confirm(&self, prompt: &str, default: bool) -> Result<bool>;
+    /// Prompts the user for a hidden password input.
     fn password(&self, prompt: &str, confirm: Option<&str>) -> Result<String>;
+    /// Prompts the user to select an item from a list of options.
     fn select(&self, prompt: &str, items: &[&str], default: usize) -> Result<usize>;
+    /// Prints an informational message to the terminal.
     fn print_info(&self, msg: &str);
+    /// Prints a success message to the terminal.
     fn print_success(&self, msg: &str);
+    /// Prints an error message to the terminal.
     fn print_error(&self, msg: &str);
+    /// Prints a warning message to the terminal.
     fn print_warn(&self, msg: &str);
 }
 
+/// Helper function to create an indicatif ProgressBar styled for long-running reconciliations.
 pub fn create_progress_bar(len: u64, msg: &str) -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new(len);
     pb.set_style(
@@ -37,6 +60,7 @@ pub fn create_progress_bar(len: u64, msg: &str) -> indicatif::ProgressBar {
     pb
 }
 
+/// Helper function to create an indicatif spinner.
 pub fn create_spinner(msg: &str) -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(std::time::Duration::from_millis(120));
@@ -49,15 +73,19 @@ pub fn create_spinner(msg: &str) -> indicatif::ProgressBar {
     pb
 }
 
+/// Concrete `Ui` implementation that uses the `dialoguer` crate.
 pub struct DialoguerUi {
+    /// Console terminal output channel (optional).
     pub term: Option<console::Term>,
 }
 
 impl DialoguerUi {
+    /// Creates a new `DialoguerUi` using default terminal.
     pub fn new() -> Self {
         Self { term: None }
     }
 
+    /// Creates a new `DialoguerUi` using the specified console terminal.
     pub fn with_term(term: console::Term) -> Self {
         Self { term: Some(term) }
     }
@@ -144,10 +172,15 @@ impl Ui for DialoguerUi {
     }
 }
 
+/// Mock implementation of the `Ui` trait for automated testing.
 pub struct MockUi {
+    /// Queue of mock text inputs.
     pub inputs: std::sync::Mutex<Vec<String>>,
+    /// Queue of mock confirm inputs.
     pub confirms: std::sync::Mutex<Vec<bool>>,
+    /// Queue of mock selection inputs.
     pub selects: std::sync::Mutex<Vec<usize>>,
+    /// Queue of mock password inputs.
     pub passwords: std::sync::Mutex<Vec<String>>,
 }
 

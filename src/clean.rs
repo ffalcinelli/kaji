@@ -1,3 +1,5 @@
+//! Clean module for cleaning local workspace directories.
+
 use crate::utils::ui::{ACTION, ERROR, SUCCESS, WARN};
 use anyhow::{Context, Result};
 use console::style;
@@ -5,6 +7,10 @@ use dialoguer::{Confirm, theme::ColorfulTheme};
 use std::path::PathBuf;
 use tokio::fs;
 
+/// Cleans the local configuration files in the workspace directory.
+///
+/// # Errors
+/// Returns an error if file deletion fails.
 pub async fn run(workspace_dir: PathBuf, yes: bool, realms_to_clean: &[String]) -> Result<()> {
     if !workspace_dir.exists() {
         println!(

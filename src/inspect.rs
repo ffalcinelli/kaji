@@ -17,6 +17,10 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::Mutex;
 
+/// Exports/inspects remote Keycloak server configuration into local workspace files.
+///
+/// # Errors
+/// Returns an error if Keycloak server query or file writing fails.
 pub async fn run(
     client: &KeycloakClient,
     workspace_dir: PathBuf,
@@ -193,6 +197,7 @@ async fn inspect_resources<T>(
 where
     T: KeycloakResource
         + ResourceMeta
+        + crate::client::KeycloakResourceMapping
         + serde::Serialize
         + for<'de> serde::Deserialize<'de>
         + Send
@@ -416,6 +421,7 @@ fn spawn_inspect<T>(
 ) where
     T: KeycloakResource
         + ResourceMeta
+        + crate::client::KeycloakResourceMapping
         + serde::Serialize
         + for<'de> serde::Deserialize<'de>
         + Send

@@ -2,9 +2,11 @@ use clap::{Parser, Subcommand};
 use std::fmt;
 use std::path::PathBuf;
 
+/// The main CLI configuration for `kaji`.
 #[derive(Parser)]
 #[command(name = "kaji", author, version, about, long_about = None)]
 pub struct Cli {
+    /// The subcommand to execute.
     #[command(subcommand)]
     pub command: Commands,
 
@@ -68,6 +70,7 @@ impl fmt::Debug for Cli {
     }
 }
 
+/// List of subcommands supported by `kaji`.
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Inspect the current Keycloak configuration and dump to files
