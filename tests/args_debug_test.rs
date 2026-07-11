@@ -47,11 +47,30 @@ fn test_cli_env_parsing() {
     }
 
     // Parse from a dummy command line
-    let cli = Cli::parse_from(&["kaji", "--server", "http://localhost:8080", "clean", "-w", "workspace"]);
+    let cli = Cli::parse_from(&[
+        "kaji",
+        "--server",
+        "http://localhost:8080",
+        "clean",
+        "-w",
+        "workspace",
+    ]);
 
-    assert_eq!(cli.password.as_deref(), Some("test-env-password"), "Password was not parsed from environment");
-    assert_eq!(cli.client_secret.as_deref(), Some("test-env-client-secret"), "Client secret was not parsed from environment");
-    assert_eq!(cli.vault_token.as_deref(), Some("test-env-vault-token"), "Vault token was not parsed from environment");
+    assert_eq!(
+        cli.password.as_deref(),
+        Some("test-env-password"),
+        "Password was not parsed from environment"
+    );
+    assert_eq!(
+        cli.client_secret.as_deref(),
+        Some("test-env-client-secret"),
+        "Client secret was not parsed from environment"
+    );
+    assert_eq!(
+        cli.vault_token.as_deref(),
+        Some("test-env-vault-token"),
+        "Vault token was not parsed from environment"
+    );
 
     unsafe {
         // Clean up environment variables
