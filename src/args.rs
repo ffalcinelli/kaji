@@ -140,3 +140,37 @@ pub enum Commands {
         yes: bool,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_cli_env_parsing() {
+        unsafe {
+            std::env::set_var("KEYCLOAK_PASSWORD", "test-env-password");
+            std::env::set_var("KEYCLOAK_CLIENT_SECRET", "test-env-client-secret");
+            std::env::set_var("VAULT_TOKEN", "test-env-vault-token");
+        }
+
+        let cli = Cli::parse_from(&[
+            "kaji",
+            "--server",
+            "http://localhost:8080",
+            "clean",
+            "-w",
+            "workspace",
+        ]);
+
+        assert_eq!(cli.password.as_deref(), Some("test-env-password"));
+        assert_eq!(cli.client_secret.as_deref(), Some("test-env-client-secret"));
+        assert_eq!(cli.vault_token.as_deref(), Some("test-env-vault-token"));
+
+        unsafe {
+            std::env::remove_var("KEYCLOAK_PASSWORD");
+            std::env::remove_var("KEYCLOAK_CLIENT_SECRET");
+            std::env::remove_var("VAULT_TOKEN");
+        }
+    }
+}
