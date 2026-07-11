@@ -34,3 +34,29 @@ fn test_cli_debug_obfuscation() {
         "Server was exposed"
     );
 }
+
+#[test]
+fn test_cli_env_parsing() {
+    use clap::Parser;
+
+    unsafe {
+        // Set environment variables for testing
+        std::env::set_var("KEYCLOAK_PASSWORD", "test-env-password");
+        std::env::set_var("KEYCLOAK_CLIENT_SECRET", "test-env-client-secret");
+        std::env::set_var("VAULT_TOKEN", "test-env-vault-token");
+    }
+
+    // Parse from a dummy command line
+    let cli = Cli::parse_from(&["kaji", "--server", "http://localhost:8080", "clean", "-w", "workspace"]);
+
+    assert_eq!(cli.password.as_deref(), Some("test-env-password"), "Password was not parsed from environment");
+    assert_eq!(cli.client_secret.as_deref(), Some("test-env-client-secret"), "Client secret was not parsed from environment");
+    assert_eq!(cli.vault_token.as_deref(), Some("test-env-vault-token"), "Vault token was not parsed from environment");
+
+    unsafe {
+        // Clean up environment variables
+        std::env::remove_var("KEYCLOAK_PASSWORD");
+        std::env::remove_var("KEYCLOAK_CLIENT_SECRET");
+        std::env::remove_var("VAULT_TOKEN");
+    }
+}
