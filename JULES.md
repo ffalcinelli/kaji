@@ -14,8 +14,9 @@ Detailed guidelines are located under the `.jules/` directory:
 
 ## 🏗️ Architecture & Operations Summary
 
-*   **Diff Engine & Reconciler**: The workflow calculates differences between the desired local YAML state and the Keycloak Admin API state, generating a `.kajiplan` file, and applying it sequentially in stages (Stage 0: Realms; Stage 1: IDPs/Roles; Stage 2: Clients/Scopes/Flows/Groups; Stage 3: Users/Components/Keys).
+*   **Diff Engine & Reconciler**: The workflow calculates differences between the desired local YAML state and the Keycloak Admin API state, generating a `.kajiplan` file, and applying it sequentially in stages (Stage 0: Realms; Stage 1: IDPs/Roles; Stage 2: Clients/Scopes/Flows/Groups; Stage 3: Users/Authenticator Configs/Components/Keys).
 *   **Overlay Deep Merging**: Keycloak resources can be customized per-environment by applying overlays (e.g. `roles/admin.prod.yaml` over `roles/admin.yaml`).
+*   **Documentation Rule**: Always update [README.md](README.md), [AGENTS.md](AGENTS.md), [JULES.md](JULES.md), and [.jules/](.jules/) files when changing the codebase.
 *   **Quality Commands**:
     *   **Format Check**: `cargo fmt --all -- --check`
     *   **Linter Check**: `cargo clippy -- -D warnings`
