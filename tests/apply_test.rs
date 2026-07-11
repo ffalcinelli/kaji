@@ -392,7 +392,6 @@ async fn test_apply() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    // Run apply
     apply::run(
         &client,
         workspace_dir.clone(),
@@ -406,8 +405,13 @@ async fn test_apply() {
     .await
     .expect("Apply failed");
 
-    // Test with .kajiplan
     let plan_file = workspace_dir.join(".kajiplan");
+    assert!(
+        !plan_file.exists(),
+        ".kajiplan should not exist after apply"
+    );
+
+    // Test with .kajiplan
     let planned_files = vec![realm_dir.join("realm.yaml")];
     fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
 
@@ -424,6 +428,11 @@ async fn test_apply() {
     .await
     .expect("Apply with plan failed");
 
+    assert!(
+        !plan_file.exists(),
+        ".kajiplan should be deleted after apply with plan"
+    );
+
     // Test with empty plan
     fs::write(&plan_file, "[]").unwrap();
     apply::run(
@@ -438,6 +447,11 @@ async fn test_apply() {
     )
     .await
     .expect("Apply with empty plan failed");
+
+    assert!(
+        !plan_file.exists(),
+        ".kajiplan should be deleted after apply with empty plan"
+    );
 
     // 4. Test review mode (interactive)
     ui.confirms.lock().unwrap().push(false); // Reject first change
@@ -478,5 +492,9 @@ async fn test_apply() {
     .await
     .expect("Apply with review failed");
 
-    // If it was rejected, it shouldn't have failed, just skipped.
+    // Assert that the confirms queue was fully consumed
+    assert!(
+        ui.confirms.lock().unwrap().is_empty(),
+        "All confirms should be consumed during review apply"
+    );
 }

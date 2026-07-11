@@ -401,6 +401,30 @@ async fn test_plan() {
     .await
     .expect("Plan failed");
 
+    let plan_file = workspace_dir.join(".kajiplan");
+    assert!(plan_file.exists(), "Plan file .kajiplan should exist");
+    let plan_content = fs::read_to_string(&plan_file).unwrap();
+    let planned_paths: Vec<std::path::PathBuf> = serde_json::from_str(&plan_content).unwrap();
+
+    let planned_names: Vec<String> = planned_paths
+        .iter()
+        .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+        .collect();
+
+    assert!(planned_names.contains(&"new-role.yaml".to_string()));
+    assert!(planned_names.contains(&"new-client.yaml".to_string()));
+    assert!(planned_names.contains(&"new-idp.yaml".to_string()));
+    assert!(planned_names.contains(&"new-scope.yaml".to_string()));
+    assert!(planned_names.contains(&"new-group.yaml".to_string()));
+    assert!(planned_names.contains(&"new-user.yaml".to_string()));
+    assert!(planned_names.contains(&"new-flow.yaml".to_string()));
+    assert!(planned_names.contains(&"new-action.yaml".to_string()));
+    assert!(planned_names.contains(&"new-component.yaml".to_string()));
+
+    assert!(!planned_names.contains(&"role-1.yaml".to_string()));
+    assert!(!planned_names.contains(&"user-1.yaml".to_string()));
+    assert!(!planned_names.contains(&"group-1.yaml".to_string()));
+
     // Test with changes_only=true
     plan::run(
         &client,

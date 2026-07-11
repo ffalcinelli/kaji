@@ -64,7 +64,8 @@ pub struct Profile {
 /// Returns an error if the profile file fails to load or parse as YAML.
 pub async fn load_profile(workspace: &std::path::Path, name: &str) -> Result<Profile> {
     let profile_path = workspace.join("profiles").join(format!("{}.yaml", name));
-    let content = std::fs::read_to_string(&profile_path)
+    let content = tokio::fs::read_to_string(&profile_path)
+        .await
         .with_context(|| format!("Failed to read profile file: {:?}", profile_path))?;
     let profile: Profile = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse profile file: {:?}", profile_path))?;
