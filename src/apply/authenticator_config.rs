@@ -156,10 +156,12 @@ pub async fn apply_authenticator_configs(
             let remote_exec = remote_executions
                 .into_iter()
                 .find(|e| e.authenticator.as_deref() == Some(&provider_id))
-                .with_context(|| format!(
-                    "Could not find remote execution with provider '{}' in flow '{}'",
-                    provider_id, flow_alias
-                ))?;
+                .with_context(|| {
+                    format!(
+                        "Could not find remote execution with provider '{}' in flow '{}'",
+                        provider_id, flow_alias
+                    )
+                })?;
 
             let execution_id = remote_exec.id.context("Remote execution is missing 'id'")?;
 
