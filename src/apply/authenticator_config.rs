@@ -146,7 +146,7 @@ pub async fn apply_authenticator_configs(
                 }
             }
 
-            let (flow_alias, provider_id) = referencing_execution.context(format!(
+            let (flow_alias, provider_id) = referencing_execution.with_context(|| format!(
                 "Could not find any local authentication execution referencing authenticator config '{}'",
                 alias
             ))?;
@@ -156,7 +156,7 @@ pub async fn apply_authenticator_configs(
             let remote_exec = remote_executions
                 .into_iter()
                 .find(|e| e.authenticator.as_deref() == Some(&provider_id))
-                .context(format!(
+                .with_context(|| format!(
                     "Could not find remote execution with provider '{}' in flow '{}'",
                     provider_id, flow_alias
                 ))?;
