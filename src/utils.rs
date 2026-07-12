@@ -380,6 +380,18 @@ mod tests {
     }
 
     #[test]
+    fn test_to_sorted_yaml_error() {
+        struct FailingStruct;
+        impl serde::Serialize for FailingStruct {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("Simulated serialization error"))
+            }
+        }
+        let result = to_sorted_yaml(&FailingStruct);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_to_sorted_yaml_simple() -> anyhow::Result<()> {
         let val = serde_json::json!({ "b": 2, "a": 1 });
         let yaml = to_sorted_yaml(&val)?;

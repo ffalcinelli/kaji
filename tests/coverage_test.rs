@@ -348,22 +348,39 @@ async fn test_inspect_edge_cases() {
 async fn test_clean_edge_cases() {
     let dir = tempdir().unwrap();
     let workspace_dir = dir.path().to_path_buf();
+    let ui = MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
 
     // 1. Test run with non-existent directory
-    let res = clean::run(workspace_dir.join("non-existent"), true, &[]).await;
+    let res = clean::run(workspace_dir.join("non-existent"), true, &[], &ui).await;
     assert!(res.is_ok());
 
     // 2. Test run with realms that don't exist
-    let res = clean::run(workspace_dir.clone(), true, &["non-existent".to_string()]).await;
+    let res = clean::run(
+        workspace_dir.clone(),
+        true,
+        &["non-existent".to_string()],
+        &ui,
+    )
+    .await;
     assert!(res.is_ok());
 
     // 3. Test cleaning a file instead of a directory
     fs::create_dir_all(&workspace_dir).unwrap();
     let file_path = workspace_dir.join("some_file.txt");
     fs::write(&file_path, "test").unwrap();
-    clean::run(workspace_dir.clone(), true, &["some_file.txt".to_string()])
-        .await
-        .unwrap();
+    clean::run(
+        workspace_dir.clone(),
+        true,
+        &["some_file.txt".to_string()],
+        &ui,
+    )
+    .await
+    .unwrap();
     assert!(!file_path.exists());
 }
 

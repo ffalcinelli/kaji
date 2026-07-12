@@ -97,6 +97,7 @@ impl Default for DialoguerUi {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 impl Ui for DialoguerUi {
     fn input(&self, prompt: &str, default: Option<String>, allow_empty: bool) -> Result<String> {
         let input = dialoguer::Input::<String>::new()
