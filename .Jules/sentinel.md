@@ -1,0 +1,4 @@
+## 2025-02-14 - Prevent clap from leaking secrets in help menus
+**Vulnerability:** The CLI exposed sensitive environment variables (e.g., `KEYCLOAK_PASSWORD`, `VAULT_TOKEN`) in the `--help` output because `clap` natively prints the current values of `env` fallback arguments when they are populated.
+**Learning:** `clap` parses and caches environment variable values dynamically. If an argument uses `env = "SECRET_NAME"` without explicit configuration, running `--help` will print `[env: SECRET_NAME=actual_secret_value]` directly to standard output, risking exposure in CI logs or terminal scrollback.
+**Prevention:** Always use `hide_env_values = true` (e.g., `#[arg(env = "SECRET_NAME", hide_env_values = true)]`) when binding sensitive environment variables to `clap` structs to suppress value rendering in help menus while retaining native parsing.
