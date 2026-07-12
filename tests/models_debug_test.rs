@@ -71,3 +71,22 @@ fn test_component_debug() {
     assert!(!debug_str.contains("other")); // Config is completely redacted now
     assert!(!debug_str.contains("secret_val"));
 }
+
+#[test]
+fn test_authenticator_config_debug() {
+    let mut config = HashMap::new();
+    config.insert("mySecretField".to_string(), json!("secret_value"));
+
+    let auth_config = AuthenticatorConfigRepresentation {
+        id: Some("id1".to_string()),
+        alias: Some("alias1".to_string()),
+        config: Some(config),
+        extra: HashMap::new(),
+    };
+
+    let debug_str = format!("{:?}", auth_config);
+    assert!(debug_str.contains("alias: Some(\"alias1\")"));
+    assert!(debug_str.contains("config: Some(\"********\")"));
+    assert!(!debug_str.contains("mySecretField"));
+    assert!(!debug_str.contains("secret_value"));
+}

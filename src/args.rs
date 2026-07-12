@@ -11,7 +11,7 @@ pub struct Cli {
     pub command: Commands,
 
     /// Keycloak Server URL
-    #[arg(long, env = "KEYCLOAK_URL", required_unless_present = "profile")]
+    #[arg(long, env = "KEYCLOAK_URL")]
     pub server: Option<String>,
 
     /// Keycloak Realms to consider. If empty, all realms are considered.
@@ -27,8 +27,8 @@ pub struct Cli {
     pub password: Option<String>,
 
     /// Keycloak Client ID (for client credentials grant)
-    #[arg(long, env = "KEYCLOAK_CLIENT_ID", default_value = "admin-cli")]
-    pub client_id: String,
+    #[arg(long, env = "KEYCLOAK_CLIENT_ID")]
+    pub client_id: Option<String>,
 
     /// Keycloak Client Secret (for client credentials grant)
     #[arg(skip)]
@@ -45,6 +45,10 @@ pub struct Cli {
     /// HashiCorp Vault Token
     #[arg(long, env = "VAULT_TOKEN")]
     pub vault_token: Option<String>,
+
+    /// Path to a custom TOML configuration file
+    #[arg(long, env = "KAJI_CONFIG")]
+    pub config: Option<PathBuf>,
 }
 
 impl fmt::Debug for Cli {
@@ -71,13 +75,13 @@ impl fmt::Debug for Cli {
 }
 
 /// List of subcommands supported by `kaji`.
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Inspect the current Keycloak configuration and dump to files
     Inspect {
         /// Workspace directory for configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
 
         /// Skip confirmation prompt when overwriting local files
         #[arg(long, short = 'y', default_value = "false")]
@@ -86,14 +90,14 @@ pub enum Commands {
     /// Validate the local Keycloak configuration files
     Validate {
         /// Workspace directory containing configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
     },
     /// Apply the local Keycloak configuration to the server
     Apply {
         /// Workspace directory containing configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
 
         /// Skip confirmation prompt
         #[arg(long, short = 'y', default_value = "false")]
@@ -106,8 +110,8 @@ pub enum Commands {
     /// Plan the application of the local Keycloak configuration
     Plan {
         /// Workspace directory containing configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
 
         /// Show only changes, suppressing "No changes" messages
         #[arg(long, short = 'c')]
@@ -120,23 +124,44 @@ pub enum Commands {
     /// Check for drift between local configuration and server
     Drift {
         /// Workspace directory containing configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
     },
     /// Interactive CLI mode to generate local configuration
     Cli {
         /// Workspace directory for configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
     },
     /// Clean the local configuration files
     Clean {
         /// Workspace directory containing configuration files
-        #[arg(long, short = 'w', default_value = "workspace")]
-        workspace: PathBuf,
+        #[arg(long, short = 'w')]
+        workspace: Option<PathBuf>,
 
         /// Skip confirmation prompt
         #[arg(long, short = 'y', default_value = "false")]
         yes: bool,
     },
+}
+
+/// The schema of `.kaji.toml` / `kaji.toml` configuration file.
+#[derive(serde::Deserialize, Debug, Default, Clone)]
+pub struct Config {
+    /// Keycloak Server URL
+    pub server: Option<String>,
+    /// Keycloak Realms to steer
+    pub realms: Option<Vec<String>>,
+    /// Keycloak Admin User
+    pub user: Option<String>,
+    /// Keycloak Client ID
+    pub client_id: Option<String>,
+    /// Environment Profile Name
+    pub profile: Option<String>,
+    /// HashiCorp Vault URL
+    pub vault_addr: Option<String>,
+    /// HashiCorp Vault Token
+    pub vault_token: Option<String>,
+    /// Workspace directory
+    pub workspace: Option<PathBuf>,
 }

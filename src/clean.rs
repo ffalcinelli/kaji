@@ -1,9 +1,8 @@
 //! Clean module for cleaning local workspace directories.
 
-use crate::utils::ui::{ACTION, ERROR, SUCCESS, WARN};
+use crate::utils::ui::{ACTION, ERROR, SUCCESS, Ui, WARN};
 use anyhow::{Context, Result};
 use console::style;
-use dialoguer::{Confirm, theme::ColorfulTheme};
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -11,7 +10,12 @@ use tokio::fs;
 ///
 /// # Errors
 /// Returns an error if file deletion fails.
-pub async fn run(workspace_dir: PathBuf, yes: bool, realms_to_clean: &[String]) -> Result<()> {
+pub async fn run(
+    workspace_dir: PathBuf,
+    yes: bool,
+    realms_to_clean: &[String],
+    ui: &dyn Ui,
+) -> Result<()> {
     if !workspace_dir.exists() {
         println!(
             "{} {}",
@@ -54,11 +58,7 @@ pub async fn run(workspace_dir: PathBuf, yes: bool, realms_to_clean: &[String]) 
             )
         };
 
-        if !Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(msg)
-            .default(false)
-            .interact()?
-        {
+        if !ui.confirm(&msg, false)? {
             println!("{} {}", ERROR, style("Aborted.").red());
             return Ok(());
         }
@@ -125,6 +125,8 @@ pub async fn run(workspace_dir: PathBuf, yes: bool, realms_to_clean: &[String]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::ui::MockUi;
+    use std::sync::Mutex;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -140,7 +142,14 @@ mod tests {
             .await
             .unwrap();
 
-        run(workspace_dir.clone(), true, &[]).await.unwrap();
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(workspace_dir.clone(), true, &[], &ui).await.unwrap();
 
         assert!(workspace_dir.exists());
         let mut entries = fs::read_dir(&workspace_dir).await.unwrap();
@@ -155,7 +164,14 @@ mod tests {
         fs::create_dir(workspace_dir.join("realm1")).await.unwrap();
         fs::create_dir(workspace_dir.join("realm2")).await.unwrap();
 
-        run(workspace_dir.clone(), true, &["realm1".to_string()])
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(workspace_dir.clone(), true, &["realm1".to_string()], &ui)
             .await
             .unwrap();
 
@@ -168,17 +184,68 @@ mod tests {
     async fn test_clean_non_existent_workspace() {
         let dir = tempdir().unwrap();
         let workspace_dir = dir.path().join("non-existent");
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
         // Should not fail, just print a warning
-        run(workspace_dir, true, &[]).await.unwrap();
+        run(workspace_dir, true, &[], &ui).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_clean_empty_targets() {
         let dir = tempdir().unwrap();
         let workspace_dir = dir.path().to_path_buf();
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
         // workspace exists but we specify a realm that doesn't exist
-        run(workspace_dir, true, &["non-existent-realm".to_string()])
-            .await
-            .unwrap();
+        run(
+            workspace_dir,
+            true,
+            &["non-existent-realm".to_string()],
+            &ui,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_clean_confirm_yes() {
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().to_path_buf();
+        fs::create_dir(workspace_dir.join("realm1")).await.unwrap();
+
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![true]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(workspace_dir.clone(), false, &[], &ui).await.unwrap();
+        assert!(!workspace_dir.join("realm1").exists());
+    }
+
+    #[tokio::test]
+    async fn test_clean_confirm_abort() {
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().to_path_buf();
+        fs::create_dir(workspace_dir.join("realm1")).await.unwrap();
+
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![false]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(workspace_dir.clone(), false, &[], &ui).await.unwrap();
+        assert!(workspace_dir.join("realm1").exists());
     }
 }

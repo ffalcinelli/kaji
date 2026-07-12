@@ -639,30 +639,39 @@ pub trait KeycloakResourceMapping: Sized {
     }
 }
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for RealmRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for RoleRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for ClientRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for ClientScopeRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for UserRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for GroupRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for IdentityProviderRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for RequiredActionProviderRepresentation {}
 
+#[cfg(not(tarpaulin_include))]
 #[async_trait]
 impl KeycloakResourceMapping for ComponentRepresentation {}
 

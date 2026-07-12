@@ -26,7 +26,7 @@ pub mod utils;
 pub mod validate;
 
 use anyhow::{Context, Result};
-use args::{Cli, Commands};
+use args::{Cli, Commands, Config};
 use client::KeycloakClient;
 use console::{Emoji, style};
 use std::collections::HashMap;
@@ -72,6 +72,41 @@ pub async fn load_profile(workspace: &std::path::Path, name: &str) -> Result<Pro
     Ok(profile)
 }
 
+/// Loads configuration settings from `kaji.toml` / `.kaji.toml` if present in current directory,
+/// or from a custom configuration path.
+///
+/// # Errors
+/// Returns an error if the config file fails to read or parse as TOML.
+pub async fn load_config_file(custom_path: Option<&std::path::Path>) -> Result<Config> {
+    let path = if let Some(p) = custom_path {
+        Some(p.to_path_buf())
+    } else {
+        let cwd = std::env::current_dir()?;
+        let kaji_toml = cwd.join("kaji.toml");
+        if kaji_toml.exists() {
+            Some(kaji_toml)
+        } else {
+            let dot_kaji_toml = cwd.join(".kaji.toml");
+            if dot_kaji_toml.exists() {
+                Some(dot_kaji_toml)
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(config_path) = path {
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .with_context(|| format!("Failed to read config file: {:?}", config_path))?;
+        let config: Config = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse config file: {:?}", config_path))?;
+        Ok(config)
+    } else {
+        Ok(Config::default())
+    }
+}
+
 /// Initializes a `KeycloakClient` by logging in using credentials from the CLI or active profile.
 ///
 /// # Errors
@@ -84,7 +119,8 @@ pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<Keycloa
 
     let client_id = profile
         .and_then(|p| p.client_id.clone())
-        .unwrap_or_else(|| cli.client_id.clone());
+        .or_else(|| cli.client_id.clone())
+        .unwrap_or_else(|| "admin-cli".to_string());
 
     let client_secret = profile
         .and_then(|p| p.client_secret.clone())
@@ -304,7 +340,13 @@ async fn handle_clean(cli: &Cli, workspace: &std::path::Path, yes: bool) -> Resu
         .cyan()
         .bold()
     );
-    clean::run(workspace.to_path_buf(), yes, &cli.realms).await?;
+    clean::run(
+        workspace.to_path_buf(),
+        yes,
+        &cli.realms,
+        &crate::utils::ui::DialoguerUi::new(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -313,58 +355,92 @@ async fn handle_clean(cli: &Cli, workspace: &std::path::Path, yes: bool) -> Resu
 /// # Errors
 /// Returns an error if command execution or network request fails.
 pub async fn run_app(cli: Cli) -> Result<()> {
-    let workspace = match &cli.command {
-        Commands::Inspect { workspace, .. } => workspace,
-        Commands::Validate { workspace } => workspace,
-        Commands::Apply { workspace, .. } => workspace,
-        Commands::Plan { workspace, .. } => workspace,
-        Commands::Drift { workspace } => workspace,
-        Commands::Cli { workspace } => workspace,
-        Commands::Clean { workspace, .. } => workspace,
-    };
+    // 1. Load configuration file
+    let config = load_config_file(cli.config.as_deref()).await?;
 
+    // 2. Merge config file settings into Cli
+    let mut cli = cli;
+    if cli.server.is_none() {
+        cli.server = config.server.clone();
+    }
+    if cli.realms.is_empty() && config.realms.is_some() {
+        cli.realms = config.realms.clone().unwrap();
+    }
+    if cli.user.is_none() {
+        cli.user = config.user.clone();
+    }
+    if cli.client_id.is_none() {
+        cli.client_id = config.client_id.clone();
+    }
+    if cli.profile.is_none() {
+        cli.profile = config.profile.clone();
+    }
+    if cli.vault_addr.is_none() {
+        cli.vault_addr = config.vault_addr.clone();
+    }
+    if cli.vault_token.is_none() {
+        cli.vault_token = config.vault_token.clone();
+    }
+
+    // 3. Fallback default for client_id
+    if cli.client_id.is_none() {
+        cli.client_id = Some("admin-cli".to_string());
+    }
+
+    // 4. Resolve workspace directory
+    let raw_workspace = match &cli.command {
+        Commands::Inspect { workspace, .. } => workspace.clone(),
+        Commands::Validate { workspace } => workspace.clone(),
+        Commands::Apply { workspace, .. } => workspace.clone(),
+        Commands::Plan { workspace, .. } => workspace.clone(),
+        Commands::Drift { workspace } => workspace.clone(),
+        Commands::Cli { workspace } => workspace.clone(),
+        Commands::Clean { workspace, .. } => workspace.clone(),
+    };
+    let workspace = raw_workspace
+        .or(config.workspace.clone())
+        .unwrap_or_else(|| std::path::PathBuf::from("workspace"));
+
+    // 5. Load profile if requested
     let profile = if let Some(p) = &cli.profile {
-        Some(load_profile(workspace, p).await?)
+        Some(load_profile(&workspace, p).await?)
     } else {
         None
     };
 
+    // 6. Execute subcommand handlers
     match &cli.command {
-        Commands::Inspect { workspace, yes } => {
-            handle_inspect(&cli, profile.as_ref(), workspace, *yes).await?;
+        Commands::Inspect { yes, .. } => {
+            handle_inspect(&cli, profile.as_ref(), &workspace, *yes).await?;
         }
-        Commands::Validate { workspace } => {
-            handle_validate(&cli, workspace).await?;
+        Commands::Validate { .. } => {
+            handle_validate(&cli, &workspace).await?;
         }
-        Commands::Apply {
-            workspace,
-            yes,
-            review,
-        } => {
-            handle_apply(&cli, profile.as_ref(), workspace, *yes, *review).await?;
+        Commands::Apply { yes, review, .. } => {
+            handle_apply(&cli, profile.as_ref(), &workspace, *yes, *review).await?;
         }
         Commands::Plan {
-            workspace,
             changes_only,
             interactive,
+            ..
         } => {
             handle_plan(
                 &cli,
                 profile.as_ref(),
-                workspace,
+                &workspace,
                 *changes_only,
                 *interactive,
             )
             .await?;
         }
-        Commands::Drift { workspace } => {
-            handle_drift(&cli, profile.as_ref(), workspace).await?;
+        Commands::Drift { .. } => {
+            handle_drift(&cli, profile.as_ref(), &workspace).await?;
         }
-        Commands::Cli { workspace } => {
-            handle_cli(workspace).await?;
+        Commands::Cli { .. } => {
+            handle_cli(&workspace).await?;
         }
-        Commands::Clean { workspace, yes } => {
-            handle_clean(&cli, workspace, *yes).await?;
+        Commands::Clean { yes, .. } => {
+            handle_clean(&cli, &workspace, *yes).await?;
         }
     }
 
@@ -421,5 +497,61 @@ client_id: "test-client"
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("Failed to parse profile file:"));
+    }
+
+    #[tokio::test]
+    async fn test_load_config_file_success() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("kaji.toml");
+        let toml_content = r#"
+server = "http://localhost:8080"
+realms = ["master"]
+client_id = "test-client-id"
+workspace = "test-ws"
+"#;
+        std::fs::write(&config_path, toml_content).unwrap();
+
+        let config = load_config_file(Some(&config_path)).await.unwrap();
+        assert_eq!(config.server, Some("http://localhost:8080".to_string()));
+        assert_eq!(config.realms, Some(vec!["master".to_string()]));
+        assert_eq!(config.client_id, Some("test-client-id".to_string()));
+        assert_eq!(config.workspace, Some(std::path::PathBuf::from("test-ws")));
+    }
+
+    #[tokio::test]
+    async fn test_load_config_file_missing() {
+        let config = load_config_file(None).await.unwrap();
+        assert!(config.server.is_none());
+        assert!(config.realms.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_load_config_file_explicit_missing_error() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("non_existent.toml");
+        let result = load_config_file(Some(&config_path)).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to read config file:")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_config_file_invalid() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("invalid.toml");
+        std::fs::write(&config_path, "server = [invalid").unwrap();
+
+        let result = load_config_file(Some(&config_path)).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to parse config file:")
+        );
     }
 }
