@@ -5,6 +5,7 @@ use kaji::plan;
 use kaji::utils::secrets::{EnvResolver, SecretResolver};
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -841,4 +842,166 @@ description: ${KEYCLOAK_ROLE_MISSING_SECRET}
             .to_string()
             .contains("Missing required secret or environment variable")
     );
+}
+
+#[tokio::test]
+async fn test_plan_resources_interactive() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client.set_token("mock".to_string());
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    fs::create_dir_all(&realm_dir).unwrap();
+
+    let roles_dir = realm_dir.join("roles");
+    fs::create_dir_all(&roles_dir).unwrap();
+
+    // Create a new role
+    let role1 = kaji::models::RoleRepresentation {
+        id: None,
+        name: "interactive-role-1".to_string(),
+        description: None,
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        roles_dir.join("role-1.yaml"),
+        serde_yaml::to_string(&role1).unwrap(),
+    )
+    .unwrap();
+
+    let role2 = kaji::models::RoleRepresentation {
+        id: None,
+        name: "interactive-role-2".to_string(),
+        description: None,
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        roles_dir.join("role-2.yaml"),
+        serde_yaml::to_string(&role2).unwrap(),
+    )
+    .unwrap();
+
+    // We have 2 roles. Let's say yes (true) to include the first one, and no (false) to exclude the second one.
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true, false]),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    let res = plan::run(
+        &client,
+        workspace_dir.clone(),
+        false, // changes_only = false
+        true,  // interactive = true
+        &["test-realm".to_string()],
+        ui.clone(),
+        resolver,
+        None,
+    )
+    .await;
+
+    assert!(res.is_ok());
+
+    // The plan file should only contain one role (the one we included)
+    let plan_file = workspace_dir.join(".kajiplan");
+    assert!(plan_file.exists());
+    let content = fs::read_to_string(&plan_file).unwrap();
+    let planned: Vec<PathBuf> = serde_json::from_str(&content).unwrap();
+    assert_eq!(planned.len(), 1);
+}
+
+#[tokio::test]
+async fn test_plan_resources_filter_skips() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client.set_token("mock".to_string());
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    fs::create_dir_all(&realm_dir).unwrap();
+
+    let roles_dir = realm_dir.join("roles");
+    fs::create_dir_all(&roles_dir).unwrap();
+
+    // 1. Role 1 in planned files
+    let role1 = kaji::models::RoleRepresentation {
+        id: None,
+        name: "role-1".to_string(),
+        description: None,
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: std::collections::HashMap::new(),
+    };
+    let role1_path = roles_dir.join("role-1.yaml");
+    fs::write(&role1_path, serde_yaml::to_string(&role1).unwrap()).unwrap();
+
+    // 2. Role 2 not in planned files
+    let role2 = kaji::models::RoleRepresentation {
+        id: None,
+        name: "role-2".to_string(),
+        description: None,
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: std::collections::HashMap::new(),
+    };
+    let role2_path = roles_dir.join("role-2.yaml");
+    fs::write(&role2_path, serde_yaml::to_string(&role2).unwrap()).unwrap();
+
+    // 3. Overlay file
+    let role_overlay_path = roles_dir.join("role-1.prod.yaml");
+    fs::write(&role_overlay_path, "description: overlay").unwrap();
+
+    // 4. Non-yaml file
+    let txt_path = roles_dir.join("role.txt");
+    fs::write(&txt_path, "not yaml").unwrap();
+
+    // Write a .kajiplan that ONLY lists role-1.yaml
+    let plan_file = workspace_dir.join(".kajiplan");
+    let planned_paths = vec![role1_path.clone()];
+    fs::write(&plan_file, serde_json::to_string(&planned_paths).unwrap()).unwrap();
+
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    // Run planning
+    let res = plan::run(
+        &client,
+        workspace_dir.clone(),
+        false, // changes_only
+        false, // interactive
+        &["test-realm".to_string()],
+        ui.clone(),
+        resolver,
+        Some("prod".to_string()), // profile = prod (so role-1.prod.yaml is overlay)
+    )
+    .await;
+
+    assert!(res.is_ok());
+
+    // The .kajiplan should still exist and contain only role-1
+    assert!(plan_file.exists());
+    let content = fs::read_to_string(&plan_file).unwrap();
+    let planned: Vec<PathBuf> = serde_json::from_str(&content).unwrap();
+    assert_eq!(planned.len(), 1);
+    assert_eq!(planned[0], role1_path);
 }

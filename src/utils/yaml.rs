@@ -181,4 +181,22 @@ mod tests {
         assert!(!is_overlay_file(Path::new(".."), Some("prod")));
         assert!(!is_overlay_file(Path::new(""), Some("prod")));
     }
+
+    #[tokio::test]
+    async fn test_load_yaml_with_invalid_overlay() {
+        let dir = tempdir().unwrap();
+        let base_path = dir.path().join("resource.yaml");
+        fs::write(&base_path, "name: base").unwrap();
+
+        let overlay_path = dir.path().join("resource.prod.yaml");
+        fs::write(&overlay_path, "invalid yaml: { :").unwrap();
+
+        let res = load_yaml_with_overlay(&base_path, Some("prod")).await;
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Failed to parse overlay YAML file")
+        );
+    }
 }

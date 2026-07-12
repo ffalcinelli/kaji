@@ -159,6 +159,43 @@ When running with `--profile prod`, `kaji` deep-merges the overlay onto the base
 | `VAULT_ADDR` | HashiCorp Vault URL | |
 | `VAULT_TOKEN` | HashiCorp Vault Token | |
 
+### Configuration File (`kaji.toml` / `.kaji.toml`)
+
+`kaji` supports persisting connection and workspace settings in a TOML configuration file. By default, it searches for `kaji.toml` and then `.kaji.toml` in the current working directory. You can also specify a custom configuration file path using the global `--config` flag or the `KAJI_CONFIG` environment variable.
+
+#### Example: `kaji.toml`
+```toml
+# Keycloak Server URL
+server = "http://localhost:8080"
+
+# Target realms (if empty, all realms are considered)
+realms = ["master", "myrealm"]
+
+# Admin User
+user = "admin"
+
+# Client ID used for auth
+client_id = "kaji-cli"
+
+# Default environment profile to load
+profile = "dev"
+
+# Workspace directory containing configuration files (defaults to "workspace")
+workspace = "kaji-workspace"
+
+# HashiCorp Vault Settings
+vault_addr = "http://vault:8200"
+vault_token = "my-vault-token"
+```
+
+#### Precedence / Priority Rules
+When resolving settings, `kaji` merges settings from different sources in the following priority order (highest to lowest):
+1. **CLI Flags** (explicitly passed on command line, e.g. `--server` or `--workspace`)
+2. **Profile Configuration** (loaded from `profiles/` directory when `--profile` or `profile` is specified)
+3. **Environment Variables** (e.g. `KEYCLOAK_URL`, `KEYCLOAK_CLIENT_ID`)
+4. **Config File** (`kaji.toml` / `.kaji.toml`)
+5. **Fallback Defaults** (e.g., `"admin-cli"` for client ID, `"workspace"` for workspace)
+
 ### Workspace Structure
 
 ```text

@@ -223,4 +223,70 @@ mod tests {
             assert!(e.to_string().contains("relative URL without a base"));
         }
     }
+
+    #[tokio::test]
+    async fn test_vault_resolver_non_string_field() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/secret/data/mysecret")
+            .match_header("X-Vault-Token", "mock-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "data": {
+                        "data": {
+                            "port": 8080
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+        let res = resolver
+            .resolve("vault:secret/mysecret#port")
+            .await
+            .unwrap();
+
+        assert_eq!(res, Some("8080".to_string()));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_missing_field() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/secret/data/mysecret")
+            .match_header("X-Vault-Token", "mock-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "data": {
+                        "data": {
+                            "password": "supersecret"
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+        let res = resolver
+            .resolve("vault:secret/mysecret#missing_field")
+            .await;
+
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Field 'missing_field' not found")
+        );
+        mock.assert_async().await;
+    }
 }

@@ -498,3 +498,204 @@ async fn test_apply() {
         "All confirms should be consumed during review apply"
     );
 }
+
+#[tokio::test]
+async fn test_apply_aborted_by_user() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client.set_token("mock_token".to_string());
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+
+    // Write empty .kajiplan
+    let plan_file = workspace_dir.join(".kajiplan");
+    std::fs::write(&plan_file, "[]").unwrap();
+
+    let ui = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![false]), // User aborts when prompted to apply everything
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    let res = apply::run(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        false, // yes = false
+        false, // review = false
+        ui.clone(),
+        resolver,
+        None,
+    )
+    .await;
+
+    assert!(res.is_ok());
+    // Since it aborted, the plan_file should NOT be deleted
+    assert!(plan_file.exists());
+}
+
+#[tokio::test]
+async fn test_apply_component_no_id_no_name() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client.set_token("mock_token".to_string());
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(realm_dir.join("components")).unwrap();
+
+    // Component without name and without id (only providerId)
+    std::fs::write(
+        realm_dir.join("components").join("empty.yaml"),
+        "providerId: ldap\nproviderType: org.keycloak.storage.UserStorageProvider\n",
+    )
+    .unwrap();
+
+    let ui = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    let res = apply::run(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        true, // yes = true
+        false,
+        ui.clone(),
+        resolver,
+        None,
+    )
+    .await;
+
+    assert!(res.is_ok());
+}
+
+#[tokio::test]
+async fn test_apply_authenticator_configs_review() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client.set_token("mock_token".to_string());
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let configs_dir = workspace_dir.join("authenticator-configs");
+    std::fs::create_dir_all(&configs_dir).unwrap();
+
+    // Create a local config file representing an update to an existing config
+    let config_update = kaji::models::AuthenticatorConfigRepresentation {
+        id: Some("config-1".to_string()),
+        alias: Some("review profile config".to_string()),
+        config: Some(HashMap::from([(
+            "loa-condition-level".to_string(),
+            serde_json::json!("5"),
+        )])),
+        extra: HashMap::new(),
+    };
+    std::fs::write(
+        configs_dir.join("config-update.yaml"),
+        serde_yaml::to_string(&config_update).unwrap(),
+    )
+    .unwrap();
+
+    // Create a local config file representing a new config
+    let config_new = kaji::models::AuthenticatorConfigRepresentation {
+        id: None,
+        alias: Some("new config".to_string()),
+        config: Some(HashMap::from([(
+            "param".to_string(),
+            serde_json::json!("val"),
+        )])),
+        extra: HashMap::new(),
+    };
+    std::fs::write(
+        configs_dir.join("config-new.yaml"),
+        serde_yaml::to_string(&config_new).unwrap(),
+    )
+    .unwrap();
+
+    // We also need local authentication flow execution referencing "new config"
+    let flows_dir = workspace_dir.join("authentication-flows");
+    std::fs::create_dir_all(&flows_dir).unwrap();
+    let flow = kaji::models::AuthenticationFlowRepresentation {
+        id: Some("f1".to_string()),
+        alias: Some("flow-1".to_string()),
+        description: None,
+        provider_id: Some("basic-flow".to_string()),
+        top_level: Some(true),
+        built_in: Some(false),
+        authentication_executions: Some(vec![
+            kaji::models::AuthenticationExecutionExportRepresentation {
+                id: Some("exec-1".to_string()),
+                authenticator: Some("review-profile".to_string()),
+                authenticator_config: Some("new config".to_string()),
+                requirement: Some("REQUIRED".to_string()),
+                priority: Some(1),
+                user_setup_allowed: None,
+                authenticator_flow: None,
+                flow_alias: None,
+                extra: HashMap::new(),
+            },
+        ]),
+        extra: HashMap::new(),
+    };
+    std::fs::write(
+        flows_dir.join("flow-1.yaml"),
+        serde_yaml::to_string(&flow).unwrap(),
+    )
+    .unwrap();
+
+    // 1. Run review mode where we reject both update and create
+    let ui_reject = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![false, false]), // Reject first, reject second
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    let res = apply::authenticator_config::apply_authenticator_configs(
+        &client,
+        &workspace_dir,
+        resolver.clone(),
+        Arc::new(None),
+        "test-realm",
+        None,
+        true, // review = true
+        ui_reject.clone(),
+    )
+    .await;
+    assert!(res.is_ok());
+
+    // 2. Run review mode where we accept both update and create
+    let ui_accept = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true, true]), // Accept first, accept second
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+    let res2 = apply::authenticator_config::apply_authenticator_configs(
+        &client,
+        &workspace_dir,
+        resolver.clone(),
+        Arc::new(None),
+        "test-realm",
+        None,
+        true, // review = true
+        ui_accept.clone(),
+    )
+    .await;
+    assert!(res2.is_ok());
+}

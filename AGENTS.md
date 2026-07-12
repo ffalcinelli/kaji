@@ -55,6 +55,19 @@ Multi-environment configurations are managed using the `--profile` (`-p`) flag:
 
 ---
 
+## ⚙️ Project Configuration File (`kaji.toml` / `.kaji.toml`)
+
+Project connection defaults and workspace parameters can be declared inside `kaji.toml` or `.kaji.toml` files in the current working directory. The configuration file is parsed at startup and merged with command-line inputs.
+
+Settings are resolved in the following precedence order:
+1. **CLI Flags** (highest)
+2. **Profile Configuration**
+3. **Environment Variables**
+4. **TOML Configuration**
+5. **Fallback Defaults** (lowest)
+
+---
+
 ## 🔐 Secret Management & Resolution
 
 Secrets are managed via the `SecretResolver` trait using three resolution strategies:
