@@ -157,19 +157,19 @@ impl Ui for DialoguerUi {
     }
 
     fn print_info(&self, msg: &str) {
-        println!("{} {}", INFO, msg);
+        eprintln!("{} {}", INFO, msg);
     }
 
     fn print_success(&self, msg: &str) {
-        println!("{} {}", SUCCESS, msg);
+        eprintln!("{} {}", SUCCESS, msg);
     }
 
     fn print_error(&self, msg: &str) {
-        println!("{} {}", ERROR, msg);
+        eprintln!("{} {}", ERROR, msg);
     }
 
     fn print_warn(&self, msg: &str) {
-        println!("{} {}", WARN, msg);
+        eprintln!("{} {}", WARN, msg);
     }
 }
 
