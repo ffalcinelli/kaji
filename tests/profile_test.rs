@@ -53,17 +53,18 @@ client_secret: "secret"
 
     let cli = Cli {
         command: Commands::Drift {
-            workspace: workspace.to_path_buf(),
+            workspace: Some(workspace.to_path_buf()),
         },
         server: None, // Required unless profile is present
         realms: vec![],
         user: None,
         password: None,
-        client_id: "ignored".to_string(),
+        client_id: Some("ignored".to_string()),
         client_secret: None,
         profile: Some("test".to_string()),
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     let profile = load_profile(workspace, "test").await?;
@@ -97,17 +98,18 @@ async fn test_init_secrets_with_profile() -> Result<()> {
 
     let cli = Cli {
         command: Commands::Validate {
-            workspace: workspace.to_path_buf(),
+            workspace: Some(workspace.to_path_buf()),
         },
         server: None,
         realms: vec![],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: None,
         profile: Some("prod".to_string()),
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     let resolver = init_secrets(&cli, workspace, Some(&profile)).await?;

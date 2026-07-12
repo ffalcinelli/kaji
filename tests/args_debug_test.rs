@@ -4,18 +4,19 @@ use kaji::args::Cli;
 fn test_cli_debug_obfuscation() {
     let cli = Cli {
         command: kaji::args::Commands::Clean {
-            workspace: std::path::PathBuf::from("workspace"),
+            workspace: Some(std::path::PathBuf::from("workspace")),
             yes: false,
         },
         server: Some("http://localhost:8080".to_string()),
         realms: vec![],
         user: Some("admin".to_string()),
         password: Some("secret123".to_string()),
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: Some("secret_client".to_string()),
         profile: None,
         vault_addr: None,
         vault_token: Some("secret_vault".to_string()),
+        config: None,
     };
 
     let debug_str = format!("{:?}", cli);
