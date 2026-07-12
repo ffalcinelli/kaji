@@ -61,6 +61,41 @@ pub async fn apply_authenticator_configs(
         return Ok(());
     }
 
+    // Pre-parse local flows
+    let local_flows_dir = workspace_dir.join("authentication-flows");
+    let mut local_flows_map: HashMap<
+        String,
+        Vec<crate::models::AuthenticationExecutionExportRepresentation>,
+    > = HashMap::new();
+    if async_fs::try_exists(&local_flows_dir).await? {
+        let mut flow_entries = async_fs::read_dir(&local_flows_dir).await?;
+        while let Some(flow_entry) = flow_entries.next_entry().await? {
+            let flow_path = flow_entry.path();
+            if flow_path.extension().is_some_and(|ext| ext == "yaml") {
+                if is_overlay_file(&flow_path, profile.as_deref()) {
+                    continue;
+                }
+                if let Ok(flow_val) = load_yaml_with_overlay(&flow_path, profile.as_deref()).await {
+                    if let Ok(flow) =
+                        serde_json::from_value::<AuthenticationFlowRepresentation>(flow_val)
+                    {
+                        if let (Some(flow_alias), Some(executions)) =
+                            (flow.alias, flow.authentication_executions)
+                        {
+                            local_flows_map.insert(flow_alias, executions);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut remote_executions_cache: HashMap<
+        String,
+        Vec<crate::models::AuthenticationExecutionExportRepresentation>,
+    > = HashMap::new();
+    let remote_flows = client.get_authentication_flows_raw().await?;
+
     let pb = create_progress_bar(files.len() as u64, "Applying authenticator configs");
 
     // 3. Process each config
@@ -108,41 +143,18 @@ pub async fn apply_authenticator_configs(
             }
 
             // Find an execution in local flows referencing this alias
-            let local_flows_dir = workspace_dir.join("authentication-flows");
             let mut referencing_execution = None; // (flow_alias, provider_id)
-            if async_fs::try_exists(&local_flows_dir).await? {
-                let mut flow_entries = async_fs::read_dir(&local_flows_dir).await?;
-                while let Some(flow_entry) = flow_entries.next_entry().await? {
-                    let flow_path = flow_entry.path();
-                    if flow_path.extension().is_some_and(|ext| ext == "yaml") {
-                        if is_overlay_file(&flow_path, profile.as_deref()) {
-                            continue;
-                        }
-                        if let Ok(flow_val) =
-                            load_yaml_with_overlay(&flow_path, profile.as_deref()).await
-                        {
-                            if let Ok(flow) =
-                                serde_json::from_value::<AuthenticationFlowRepresentation>(flow_val)
-                            {
-                                if let (Some(flow_alias), Some(executions)) =
-                                    (&flow.alias, &flow.authentication_executions)
-                                {
-                                    for exec in executions {
-                                        if exec.authenticator_config.as_deref() == Some(&alias) {
-                                            if let Some(provider_id) = &exec.authenticator {
-                                                referencing_execution =
-                                                    Some((flow_alias.clone(), provider_id.clone()));
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+            for (flow_alias, executions) in &local_flows_map {
+                for exec in executions {
+                    if exec.authenticator_config.as_deref() == Some(&alias) {
+                        if let Some(provider_id) = &exec.authenticator {
+                            referencing_execution = Some((flow_alias.clone(), provider_id.clone()));
+                            break;
                         }
                     }
-                    if referencing_execution.is_some() {
-                        break;
-                    }
+                }
+                if referencing_execution.is_some() {
+                    break;
                 }
             }
 
@@ -152,7 +164,13 @@ pub async fn apply_authenticator_configs(
             ))?;
 
             // Fetch remote executions for this flow to get the execution ID
-            let remote_executions = client.get_flow_executions(&flow_alias).await?;
+            let remote_executions = if let Some(execs) = remote_executions_cache.get(&flow_alias) {
+                execs.clone()
+            } else {
+                let execs = client.get_flow_executions(&flow_alias).await?;
+                remote_executions_cache.insert(flow_alias.clone(), execs.clone());
+                execs
+            };
             let remote_exec = remote_executions
                 .into_iter()
                 .find(|e| e.authenticator.as_deref() == Some(&provider_id))
@@ -176,70 +194,50 @@ pub async fn apply_authenticator_configs(
                 SUCCESS_CREATE, alias, execution_id
             ));
 
+            // Invalidate cache for this flow since we updated it by associating it with a new config
+            remote_executions_cache.remove(&flow_alias);
+
             // Link this config to all other referencing executions
             // Scan all remote flows & executions
-            let remote_flows = client.get_authentication_flows_raw().await?;
-            for remote_flow in remote_flows {
+            for remote_flow in &remote_flows {
                 if let Some(r_flow_alias) = &remote_flow.alias {
-                    if let Ok(executions) = client.get_flow_executions(r_flow_alias).await {
-                        for mut exec in executions {
-                            // Check if this execution is supposed to be linked locally
-                            // (we find it in local flows by flow_alias and provider_id)
-                            let mut should_link = false;
-                            // Search local flows
-                            if async_fs::try_exists(&local_flows_dir).await? {
-                                let mut flow_entries = async_fs::read_dir(&local_flows_dir).await?;
-                                while let Some(flow_entry) = flow_entries.next_entry().await? {
-                                    let flow_path = flow_entry.path();
-                                    if flow_path.extension().is_some_and(|ext| ext == "yaml") {
-                                        if is_overlay_file(&flow_path, profile.as_deref()) {
-                                            continue;
-                                        }
-                                        if let Ok(flow_val) =
-                                            load_yaml_with_overlay(&flow_path, profile.as_deref())
-                                                .await
-                                        {
-                                            if let Ok(flow) = serde_json::from_value::<
-                                                AuthenticationFlowRepresentation,
-                                            >(
-                                                flow_val
-                                            ) {
-                                                if flow.alias.as_ref() == Some(r_flow_alias) {
-                                                    if let Some(loc_execs) =
-                                                        &flow.authentication_executions
-                                                    {
-                                                        for loc_exec in loc_execs {
-                                                            if loc_exec.authenticator
-                                                                == exec.authenticator
-                                                            {
-                                                                if loc_exec
-                                                                    .authenticator_config
-                                                                    .as_deref()
-                                                                    == Some(&alias)
-                                                                {
-                                                                    should_link = true;
-                                                                    break;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if should_link {
+                    let executions = if let Some(execs) = remote_executions_cache.get(r_flow_alias)
+                    {
+                        execs.clone()
+                    } else {
+                        if let Ok(execs) = client.get_flow_executions(r_flow_alias).await {
+                            remote_executions_cache.insert(r_flow_alias.clone(), execs.clone());
+                            execs
+                        } else {
+                            continue;
+                        }
+                    };
+
+                    for mut exec in executions {
+                        // Check if this execution is supposed to be linked locally
+                        // (we find it in local flows by flow_alias and provider_id)
+                        let mut should_link = false;
+
+                        // Search local flows
+                        if let Some(loc_execs) = local_flows_map.get(r_flow_alias) {
+                            for loc_exec in loc_execs {
+                                if loc_exec.authenticator == exec.authenticator {
+                                    if loc_exec.authenticator_config.as_deref() == Some(&alias) {
+                                        should_link = true;
                                         break;
                                     }
                                 }
                             }
+                        }
 
-                            // If it should link, and is not already linked to this config ID:
-                            if should_link
-                                && exec.authenticator_config.as_ref() != Some(&new_config_id)
-                            {
-                                exec.authenticator_config = Some(new_config_id.clone());
-                                client.update_flow_execution(r_flow_alias, &exec).await?;
-                            }
+                        // If it should link, and is not already linked to this config ID:
+                        if should_link && exec.authenticator_config.as_ref() != Some(&new_config_id)
+                        {
+                            exec.authenticator_config = Some(new_config_id.clone());
+                            client.update_flow_execution(r_flow_alias, &exec).await?;
+
+                            // Invalidate cache for this flow since we updated it
+                            remote_executions_cache.remove(r_flow_alias);
                         }
                     }
                 }
