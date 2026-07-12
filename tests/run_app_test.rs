@@ -10,16 +10,19 @@ async fn test_run_app_validate() -> Result<()> {
     let workspace = dir.path().to_path_buf();
 
     let cli = Cli {
-        command: Commands::Validate { workspace },
+        command: Commands::Validate {
+            workspace: Some(workspace),
+        },
         server: Some("http://localhost:8080".to_string()),
         realms: vec![],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: None,
         profile: None,
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     run_app(cli).await?;
@@ -36,18 +39,19 @@ async fn test_run_app_inspect() -> Result<()> {
 
     let cli = Cli {
         command: Commands::Inspect {
-            workspace,
+            workspace: Some(workspace),
             yes: true,
         },
         server: Some(mock_url),
         realms: vec!["test-realm".to_string()],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: Some("secret".to_string()),
         profile: None,
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     run_app(cli).await?;
@@ -67,7 +71,7 @@ async fn test_run_app_apply() -> Result<()> {
 
     let cli = Cli {
         command: Commands::Apply {
-            workspace,
+            workspace: Some(workspace),
             yes: true,
             review: false,
         },
@@ -75,11 +79,12 @@ async fn test_run_app_apply() -> Result<()> {
         realms: vec!["test-realm".to_string()],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: Some("secret".to_string()),
         profile: None,
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     run_app(cli).await?;
@@ -96,7 +101,7 @@ async fn test_run_app_plan() -> Result<()> {
 
     let cli = Cli {
         command: Commands::Plan {
-            workspace,
+            workspace: Some(workspace),
             changes_only: false,
             interactive: false,
         },
@@ -104,11 +109,12 @@ async fn test_run_app_plan() -> Result<()> {
         realms: vec![],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: Some("secret".to_string()),
         profile: None,
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     run_app(cli).await?;
@@ -122,18 +128,19 @@ async fn test_run_app_clean() -> Result<()> {
 
     let cli = Cli {
         command: Commands::Clean {
-            workspace,
+            workspace: Some(workspace),
             yes: true,
         },
         server: Some("http://localhost:8080".to_string()),
         realms: vec![],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: None,
         profile: None,
         vault_addr: None,
         vault_token: None,
+        config: None,
     };
 
     run_app(cli).await?;
@@ -150,16 +157,60 @@ async fn test_run_app_drift() -> Result<()> {
     let workspace = dir.path().to_path_buf();
 
     let cli = Cli {
-        command: Commands::Drift { workspace },
+        command: Commands::Drift {
+            workspace: Some(workspace),
+        },
         server: Some(mock_url),
         realms: vec![],
         user: None,
         password: None,
-        client_id: "admin-cli".to_string(),
+        client_id: Some("admin-cli".to_string()),
         client_secret: Some("secret".to_string()),
         profile: None,
         vault_addr: None,
         vault_token: None,
+        config: None,
+    };
+
+    run_app(cli).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_run_app_with_config_toml() -> Result<()> {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path().to_path_buf();
+
+    // Write a custom config toml file
+    let config_path = dir.path().join("my_config.toml");
+    let toml_content = format!(
+        r#"
+workspace = {:?}
+server = "http://localhost:8080"
+realms = ["master"]
+client_id = "toml-client-id"
+"#,
+        workspace.to_string_lossy()
+    );
+    std::fs::write(&config_path, toml_content)?;
+
+    // We pass None for workspace, server, and client_id,
+    // and let them resolve from the configuration file.
+    let cli = Cli {
+        command: Commands::Clean {
+            workspace: None,
+            yes: true,
+        },
+        server: None,
+        realms: vec![],
+        user: None,
+        password: None,
+        client_id: None,
+        client_secret: None,
+        profile: None,
+        vault_addr: None,
+        vault_token: None,
+        config: Some(config_path),
     };
 
     run_app(cli).await?;

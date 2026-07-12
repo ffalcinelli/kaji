@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use kaji::args::Cli;
 
+#[cfg(not(tarpaulin_include))]
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();

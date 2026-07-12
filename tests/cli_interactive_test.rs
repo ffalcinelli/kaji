@@ -256,3 +256,127 @@ async fn test_rotate_keys_interactive() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn test_rotate_keys_interactive_no_keys() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let ui = MockUi {
+        inputs: Mutex::new(vec!["master".to_string()]),
+        confirms: Mutex::new(vec![]),
+        selects: Mutex::new(vec![]),
+        passwords: Mutex::new(vec![]),
+    };
+
+    cli::keys::rotate_keys_interactive(&workspace_dir, &ui)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_create_role_interactive_empty_desc_and_realm_role() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let ui = MockUi {
+        inputs: Mutex::new(vec![
+            "master".to_string(),
+            "realm-role".to_string(),
+            "".to_string(), // Empty description
+        ]),
+        confirms: Mutex::new(vec![false]), // Not a client role
+        selects: Mutex::new(vec![]),
+        passwords: Mutex::new(vec![]),
+    };
+
+    cli::role::create_role_interactive(&workspace_dir, &ui)
+        .await
+        .unwrap();
+    assert!(
+        workspace_dir
+            .join("master")
+            .join("roles")
+            .join("realm-role.yaml")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn test_create_user_interactive_empty_names() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let ui = MockUi {
+        inputs: Mutex::new(vec![
+            "master".to_string(),
+            "nonameuser".to_string(),
+            "".to_string(), // Empty email
+            "".to_string(), // Empty first name
+            "".to_string(), // Empty last name
+        ]),
+        confirms: Mutex::new(vec![]),
+        selects: Mutex::new(vec![]),
+        passwords: Mutex::new(vec![]),
+    };
+
+    cli::user::create_user_interactive(&workspace_dir, &ui)
+        .await
+        .unwrap();
+    assert!(
+        workspace_dir
+            .join("master")
+            .join("users")
+            .join("nonameuser.yaml")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn test_cli_run_full_loop() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let ui = MockUi {
+        inputs: Mutex::new(vec![
+            // 0. Create User
+            "master".to_string(),
+            "newuser".to_string(),
+            "user@example.com".to_string(),
+            "John".to_string(),
+            "Doe".to_string(),
+            // 1. Change Password
+            "master".to_string(),
+            "newuser".to_string(),
+            // 2. Create Client
+            "master".to_string(),
+            "newclient".to_string(),
+            // 3. Create Role
+            "master".to_string(),
+            "newrole".to_string(),
+            "desc".to_string(),
+            "newclient".to_string(),
+            // 4. Create Group
+            "master".to_string(),
+            "newgroup".to_string(),
+            // 5. Create Identity Provider
+            "master".to_string(),
+            "google".to_string(),
+            "google".to_string(),
+            // 6. Create Client Scope
+            "master".to_string(),
+            "myscope".to_string(),
+            "openid-connect".to_string(),
+            // 7. Rotate Keys
+            "master".to_string(),
+        ]),
+        confirms: Mutex::new(vec![
+            true, // Create Client: is public?
+            true, // Create Role: is client role?
+        ]),
+        selects: Mutex::new(vec![0, 1, 2, 3, 4, 5, 6, 7, 8]), // Run options 0 to 7 then exit (8)
+        passwords: Mutex::new(vec!["secret123".to_string()]),
+    };
+
+    cli::run(workspace_dir, &ui).await.unwrap();
+}
