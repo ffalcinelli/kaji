@@ -120,12 +120,20 @@ pub enum Commands {
         /// Ask interactively whether to include each change in the plan
         #[arg(long, short = 'i', default_value = "false")]
         interactive: bool,
+
+        /// Show full resource diff instead of unified diff of changes
+        #[arg(long, short = 'v', default_value = "false")]
+        verbose: bool,
     },
     /// Check for drift between local configuration and server
     Drift {
         /// Workspace directory containing configuration files
         #[arg(long, short = 'w')]
         workspace: Option<PathBuf>,
+
+        /// Show full resource diff instead of unified diff of changes
+        #[arg(long, short = 'v', default_value = "false")]
+        verbose: bool,
     },
     /// Interactive CLI mode to generate local configuration
     Cli {

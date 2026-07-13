@@ -104,6 +104,7 @@ async fn test_run_app_plan() -> Result<()> {
             workspace: Some(workspace),
             changes_only: false,
             interactive: false,
+            verbose: false,
         },
         server: Some(mock_url),
         realms: vec![],
@@ -159,6 +160,7 @@ async fn test_run_app_drift() -> Result<()> {
     let cli = Cli {
         command: Commands::Drift {
             workspace: Some(workspace),
+            verbose: false,
         },
         server: Some(mock_url),
         realms: vec![],

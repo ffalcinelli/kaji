@@ -84,6 +84,22 @@ To support a new Keycloak resource (e.g., "Event Listeners"):
 
 ---
 
+## 📺 Terminal UI & Diff Viewer Enhancements
+
+### 1. Minimal Unified Diffs (Collapsed by Default)
+To reduce terminal clutter, `kaji plan` and `kaji drift` default to showing collapsed unified diffs (with 3 context lines around changes). A `--verbose` or `-v` flag allows users to output full file diffs.
+
+### 2. Interactive Diff Expansion
+During `kaji plan --interactive`, the prompt is a selection menu with `Yes` (include change), `No` (skip change), and `Show Full Diff` (expand to full verbose diff). Selecting `Show Full Diff` displays the complete diff and prompts the user again.
+
+### 3. Styled Fuzzy Scaffolding Menu
+The interactive menu (`kaji cli`) utilizes `dialoguer::theme::ColorfulTheme` for polished, colorful CLI prompts. It replaces standard selects with `dialoguer::FuzzySelect`, allowing users to type to search and filter options instantly.
+
+### 4. Workspace Realm Auto-Discovery
+All scaffolding prompts dynamically scan the workspace to discover existing realms. The user is presented with a `FuzzySelect` list of discovered realms plus a `<Create New Realm...>` option, avoiding manual typing for existing projects.
+
+---
+
 ## 🧪 Testing Strategy
 
 `kaji` employs a multi-layered testing strategy:

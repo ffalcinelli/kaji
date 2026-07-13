@@ -262,6 +262,7 @@ async fn handle_plan(
     workspace: &std::path::Path,
     changes_only: bool,
     interactive: bool,
+    verbose: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -275,6 +276,7 @@ async fn handle_plan(
         .cyan()
         .bold()
     );
+    plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
     plan::run(
         &client,
         workspace.to_path_buf(),
@@ -293,6 +295,7 @@ async fn handle_drift(
     cli: &Cli,
     profile: Option<&Profile>,
     workspace: &std::path::Path,
+    verbose: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -306,6 +309,7 @@ async fn handle_drift(
         .cyan()
         .bold()
     );
+    plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
     plan::run(
         &client,
         workspace.to_path_buf(),
@@ -393,7 +397,7 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Validate { workspace } => workspace.clone(),
         Commands::Apply { workspace, .. } => workspace.clone(),
         Commands::Plan { workspace, .. } => workspace.clone(),
-        Commands::Drift { workspace } => workspace.clone(),
+        Commands::Drift { workspace, .. } => workspace.clone(),
         Commands::Cli { workspace } => workspace.clone(),
         Commands::Clean { workspace, .. } => workspace.clone(),
     };
@@ -422,6 +426,7 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Plan {
             changes_only,
             interactive,
+            verbose,
             ..
         } => {
             handle_plan(
@@ -430,11 +435,12 @@ pub async fn run_app(cli: Cli) -> Result<()> {
                 &workspace,
                 *changes_only,
                 *interactive,
+                *verbose,
             )
             .await?;
         }
-        Commands::Drift { .. } => {
-            handle_drift(&cli, profile.as_ref(), &workspace).await?;
+        Commands::Drift { verbose, .. } => {
+            handle_drift(&cli, profile.as_ref(), &workspace, *verbose).await?;
         }
         Commands::Cli { .. } => {
             handle_cli(&workspace).await?;

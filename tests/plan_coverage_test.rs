@@ -459,8 +459,8 @@ async fn test_plan_interactive_include() {
 
     let ui = Arc::new(MockUi {
         inputs: Mutex::new(vec![]),
-        confirms: Mutex::new(vec![true]), // Confirm inclusion
-        selects: Mutex::new(vec![]),
+        confirms: Mutex::new(vec![]),
+        selects: Mutex::new(vec![0]), // Select 0 (Yes)
         passwords: Mutex::new(vec![]),
     });
 
@@ -515,8 +515,8 @@ async fn test_plan_interactive_exclude() {
 
     let ui = Arc::new(MockUi {
         inputs: Mutex::new(vec![]),
-        confirms: Mutex::new(vec![false]), // Reject inclusion
-        selects: Mutex::new(vec![]),
+        confirms: Mutex::new(vec![]),
+        selects: Mutex::new(vec![1]), // Select 1 (No)
         passwords: Mutex::new(vec![]),
     });
 
@@ -665,7 +665,7 @@ fn test_print_diff_delete() {
         extra: HashMap::new(),
     };
 
-    let res = print_diff("test", Some(&old), &new, false, "role").unwrap();
+    let res = print_diff("test", Some(&old), &new, false, false, "role").unwrap();
     assert!(res);
 }
 
@@ -893,8 +893,8 @@ async fn test_plan_resources_interactive() {
     // We have 2 roles. Let's say yes (true) to include the first one, and no (false) to exclude the second one.
     let ui = Arc::new(MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
-        confirms: std::sync::Mutex::new(vec![true, false]),
-        selects: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(vec![0, 1]), // Yes, then No
         passwords: std::sync::Mutex::new(Vec::new()),
     });
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
@@ -1004,4 +1004,153 @@ async fn test_plan_resources_filter_skips() {
     let planned: Vec<PathBuf> = serde_json::from_str(&content).unwrap();
     assert_eq!(planned.len(), 1);
     assert_eq!(planned[0], role1_path);
+}
+
+#[test]
+fn test_print_diff_verbose() {
+    use kaji::models::RoleRepresentation;
+    use kaji::plan::print_diff;
+    use std::collections::HashMap;
+
+    let old = RoleRepresentation {
+        id: Some("1".to_string()),
+        name: "role".to_string(),
+        description: Some("old description\nwith multiple lines\nto show hunk support".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+    let new = RoleRepresentation {
+        id: Some("1".to_string()),
+        name: "role".to_string(),
+        description: Some("new description\nwith multiple lines\nto show hunk support".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+
+    // Verbose = false (unified diff)
+    let res_unified = print_diff("test", Some(&old), &new, false, false, "role").unwrap();
+    assert!(res_unified);
+
+    // Verbose = true (full diff)
+    let res_full = print_diff("test", Some(&old), &new, false, true, "role").unwrap();
+    assert!(res_full);
+}
+
+#[test]
+fn test_prompt_interactive_change() {
+    use kaji::models::RoleRepresentation;
+    use kaji::plan::prompt_interactive_change;
+    use kaji::utils::ui::MockUi;
+    use std::collections::HashMap;
+
+    let old = RoleRepresentation {
+        id: Some("1".to_string()),
+        name: "role".to_string(),
+        description: Some("old".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+    let new = RoleRepresentation {
+        id: Some("1".to_string()),
+        name: "role".to_string(),
+        description: Some("new".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+
+    // Test selection of Yes (idx 0)
+    let ui_yes = MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![0]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
+    let include = prompt_interactive_change(&ui_yes, "test", Some(&old), &new, "role").unwrap();
+    assert!(include);
+
+    // Test selection of No (idx 1)
+    let ui_no = MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![1]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
+    let include = prompt_interactive_change(&ui_no, "test", Some(&old), &new, "role").unwrap();
+    assert!(!include);
+
+    // Test selection of Show Full (idx 2) then Yes (idx 0)
+    let ui_show_full = MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![2, 0]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
+    let include =
+        prompt_interactive_change(&ui_show_full, "test", Some(&old), &new, "role").unwrap();
+    assert!(include);
+}
+
+#[tokio::test]
+async fn test_cli_prompt_realm() {
+    use kaji::cli::{get_realms, prompt_realm};
+    use kaji::utils::ui::MockUi;
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+
+    // Directory empty -> fallback to input
+    let ui_input = MockUi {
+        inputs: std::sync::Mutex::new(vec!["master".to_string()]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
+    let realm = prompt_realm(workspace, &ui_input).await.unwrap();
+    assert_eq!(realm, "master");
+
+    // Add some realms
+    tokio::fs::create_dir_all(workspace.join("realm-a"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(workspace.join("realm-b"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(workspace.join(".hidden"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(workspace.join("profiles"))
+        .await
+        .unwrap();
+
+    let realms = get_realms(workspace).await.unwrap();
+    assert_eq!(realms, vec!["realm-a", "realm-b"]);
+
+    // Test selecting realm-a (idx 0)
+    let ui_select = MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![0]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
+    let realm = prompt_realm(workspace, &ui_select).await.unwrap();
+    assert_eq!(realm, "realm-a");
+
+    // Test selecting Create New Realm (idx 2)
+    let ui_create_new = MockUi {
+        inputs: std::sync::Mutex::new(vec!["realm-c".to_string()]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![2]),
+        passwords: std::sync::Mutex::new(vec![]),
+    };
+    let realm = prompt_realm(workspace, &ui_create_new).await.unwrap();
+    assert_eq!(realm, "realm-c");
 }

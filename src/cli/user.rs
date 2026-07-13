@@ -7,7 +7,7 @@ use std::path::Path;
 use tokio::fs;
 
 pub async fn change_user_password_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let username = ui.input("Username", None, false)?;
     let new_password = ui.password("New Password", Some("Confirm Password"))?;
 
@@ -72,7 +72,7 @@ pub async fn change_user_password_yaml(
 }
 
 pub async fn create_user_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let username = ui.input("Username", None, false)?;
     let email = ui.input("Email", None, true)?;
     let first_name = ui.input("First Name", None, true)?;

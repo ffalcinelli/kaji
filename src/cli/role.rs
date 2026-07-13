@@ -7,7 +7,7 @@ use std::path::Path;
 use tokio::fs;
 
 pub async fn create_role_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let name = ui.input("Role Name", None, false)?;
     let description = ui.input("Description", None, true)?;
     let is_client_role = ui.confirm("Is this a client role?", false)?;

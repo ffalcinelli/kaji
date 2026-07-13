@@ -7,7 +7,7 @@ use std::path::Path;
 use tokio::fs;
 
 pub async fn create_client_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let client_id = ui.input("Client ID", None, false)?;
     let is_public = ui.confirm("Is this a public client? (No for confidential)", true)?;
 
@@ -57,7 +57,7 @@ pub async fn create_client_yaml(
 }
 
 pub async fn create_client_scope_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let name = ui.input("Scope Name", None, false)?;
     let protocol = ui.input("Protocol", Some("openid-connect".to_string()), false)?;
 

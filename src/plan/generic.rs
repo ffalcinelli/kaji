@@ -86,19 +86,23 @@ where
         let (local, path, remote) = res;
 
         let is_update = remote.is_some();
-        let changed = if let Some(remote) = remote {
-            let mut remote_clone = remote.clone();
-            // If local doesn't have an ID, clear it from remote clone for diffing
+        let mut remote_clone = None;
+        let changed = if let Some(r) = remote {
+            let mut rc = r.clone();
             if !local.has_id() {
-                remote_clone.clear_metadata();
+                rc.clear_metadata();
             }
-            print_diff(
-                &format!("{} {}", T::LABEL, local.get_name()),
-                Some(&remote_clone),
+            let diff_name = format!("{} {}", T::LABEL, local.get_name());
+            let ch = print_diff(
+                &diff_name,
+                Some(&rc),
                 &local,
                 ctx.options.changes_only,
+                ctx.options.verbose,
                 T::SECRET_PREFIX,
-            )?
+            )?;
+            remote_clone = Some(rc);
+            ch
         } else {
             println!("\n{} Will create {}", SPARKLE, T::LABEL);
             print_diff(
@@ -106,6 +110,7 @@ where
                 None::<&T>,
                 &local,
                 ctx.options.changes_only,
+                ctx.options.verbose,
                 T::SECRET_PREFIX,
             )?
         };
@@ -113,7 +118,13 @@ where
         if changed {
             let mut include = true;
             if ctx.options.interactive {
-                include = ctx.ui.confirm("Include this change in the plan?", true)?;
+                include = super::prompt_interactive_change(
+                    ctx.ui,
+                    &format!("{} {}", T::LABEL, local.get_name()),
+                    remote_clone.as_ref(),
+                    &local,
+                    T::SECRET_PREFIX,
+                )?;
             }
             if include {
                 changed_files.push(path);

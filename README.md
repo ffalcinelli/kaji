@@ -230,12 +230,16 @@ kaji validate
 ```
 
 ### `plan`
-Calculates the "diff" between local files and the remote server.
+Calculates the "diff" between local files and the remote server. By default, it shows a minimal, clean unified diff (collapsed with 3 lines of context).
 ```bash
 # Plan for a specific profile
 kaji plan --profile prod
 
-# Interactive: decide for each change whether to include it in the plan
+# Show full resource diffs instead of collapsed unified diffs
+kaji plan --verbose
+
+# Interactive: decide for each change whether to include it.
+# Prompts you with: Yes (include), No (skip), Show Full Diff (to expand)
 kaji plan --interactive
 ```
 
@@ -250,9 +254,12 @@ kaji apply --profile prod --review
 ```
 
 ### `drift`
-A shortcut for `plan --changes-only`.
+A shortcut for `plan --changes-only`. By default, it prints collapsed unified diffs.
 ```bash
 kaji drift --profile prod
+
+# Show full resource diffs for configuration drift
+kaji drift --verbose
 ```
 
 ### `clean`

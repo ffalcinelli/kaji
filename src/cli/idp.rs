@@ -7,7 +7,7 @@ use std::path::Path;
 use tokio::fs;
 
 pub async fn create_idp_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let alias = ui.input("IDP Alias (e.g. google, github)", None, false)?;
     let provider_id = ui.input(
         "Provider ID (e.g. oidc, saml, google)",

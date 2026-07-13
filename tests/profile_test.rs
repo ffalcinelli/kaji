@@ -54,6 +54,7 @@ client_secret: "secret"
     let cli = Cli {
         command: Commands::Drift {
             workspace: Some(workspace.to_path_buf()),
+            verbose: false,
         },
         server: None, // Required unless profile is present
         realms: vec![],

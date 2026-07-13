@@ -125,7 +125,7 @@ async fn test_ultimate_flow() {
     )
     .unwrap();
 
-    ui.confirms.lock().unwrap().push(false); // Say 'no' to including change in plan
+    ui.selects.lock().unwrap().push(1); // Say 'no' (index 1) to including change in plan
 
     plan::run(
         &client,

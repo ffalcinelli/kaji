@@ -108,23 +108,28 @@ pub async fn plan_components_or_keys(
             let (local_component, path, remote) = res;
 
             let is_update = remote.is_some();
-            let changed = if let Some(remote) = remote {
-                let mut remote_clone = remote.clone();
+            let mut remote_clone = None;
+            let changed = if let Some(r) = remote {
+                let mut rc = r.clone();
                 if local_component.id.is_none() {
-                    remote_clone.id = None;
+                    rc.id = None;
                 }
                 let prefix = if dir_name == "keys" {
                     "key"
                 } else {
                     "component"
                 };
-                print_diff(
-                    &format!("Component {}", local_component.get_name()),
-                    Some(&remote_clone),
+                let diff_name = format!("Component {}", local_component.get_name());
+                let ch = print_diff(
+                    &diff_name,
+                    Some(&rc),
                     &local_component,
                     ctx.options.changes_only,
+                    ctx.options.verbose,
                     prefix,
-                )?
+                )?;
+                remote_clone = Some(rc);
+                ch
             } else {
                 println!(
                     "\n{} Will create Component: {}",
@@ -136,11 +141,13 @@ pub async fn plan_components_or_keys(
                 } else {
                     "component"
                 };
+                let diff_name = format!("Component {}", local_component.get_name());
                 print_diff(
-                    &format!("Component {}", local_component.get_name()),
+                    &diff_name,
                     None::<&ComponentRepresentation>,
                     &local_component,
                     ctx.options.changes_only,
+                    ctx.options.verbose,
                     prefix,
                 )?
             };
@@ -148,7 +155,18 @@ pub async fn plan_components_or_keys(
             if changed {
                 let mut include = true;
                 if ctx.options.interactive {
-                    include = ctx.ui.confirm("Include this change in the plan?", true)?;
+                    let prefix = if dir_name == "keys" {
+                        "key"
+                    } else {
+                        "component"
+                    };
+                    include = super::prompt_interactive_change(
+                        ctx.ui,
+                        &format!("Component {}", local_component.get_name()),
+                        remote_clone.as_ref(),
+                        &local_component,
+                        prefix,
+                    )?;
                 }
                 if include {
                     changed_files.push(path);
