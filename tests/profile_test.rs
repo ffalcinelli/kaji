@@ -54,6 +54,7 @@ client_secret: "secret"
     let cli = Cli {
         command: Commands::Drift {
             workspace: Some(workspace.to_path_buf()),
+            verbose: false,
         },
         server: None, // Required unless profile is present
         realms: vec![],
@@ -115,6 +116,44 @@ async fn test_init_secrets_with_profile() -> Result<()> {
     let resolver = init_secrets(&cli, workspace, Some(&profile)).await?;
     let resolved = resolver.resolve("KEYCLOAK_PROD_API_KEY").await?;
     assert_eq!(resolved, Some("supersecret".to_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_init_secrets_with_vault() -> Result<()> {
+    let dir = tempdir().unwrap();
+    let workspace = dir.path();
+
+    let profile = kaji::Profile {
+        server_url: "http://localhost:8080".to_string(),
+        client_id: None,
+        client_secret: None,
+        user: None,
+        password: None,
+        secrets_file: None,
+        vault_addr: Some("http://127.0.0.1:8200".to_string()),
+        vault_token: Some("root-token".to_string()),
+    };
+
+    let cli = Cli {
+        command: Commands::Validate {
+            workspace: Some(workspace.to_path_buf()),
+        },
+        server: None,
+        realms: vec![],
+        user: None,
+        password: None,
+        client_id: Some("admin-cli".to_string()),
+        client_secret: None,
+        profile: Some("prod".to_string()),
+        vault_addr: None,
+        vault_token: None,
+        config: None,
+    };
+
+    let resolver = init_secrets(&cli, workspace, Some(&profile)).await?;
+    assert!(resolver.resolve("ANY_VAR").await.is_ok());
 
     Ok(())
 }

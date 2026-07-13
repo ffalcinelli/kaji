@@ -7,7 +7,7 @@ use std::path::Path;
 use tokio::fs;
 
 pub async fn create_group_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
     let name = ui.input("Group Name", None, false)?;
 
     create_group_yaml(workspace_dir, &realm, &name).await?;

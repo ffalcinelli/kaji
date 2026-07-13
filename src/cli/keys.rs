@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
 pub async fn rotate_keys_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Result<()> {
-    let realm = ui.input("Target Realm", None, false)?;
+    let realm = crate::cli::prompt_realm(workspace_dir, ui).await?;
 
     let rotated_count = rotate_keys_yaml(workspace_dir, &realm).await?;
 

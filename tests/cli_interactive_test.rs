@@ -75,9 +75,9 @@ async fn test_change_password_interactive() {
         .unwrap();
 
     let ui = MockUi {
-        inputs: Mutex::new(vec!["master".to_string(), "testuser".to_string()]),
+        inputs: Mutex::new(vec!["testuser".to_string()]),
         confirms: Mutex::new(vec![]),
-        selects: Mutex::new(vec![]),
+        selects: Mutex::new(vec![0]), // Select master realm
         passwords: Mutex::new(vec!["newpassword".to_string()]),
     };
 
@@ -246,9 +246,9 @@ async fn test_rotate_keys_interactive() {
     .unwrap();
 
     let ui = MockUi {
-        inputs: Mutex::new(vec!["master".to_string()]),
+        inputs: Mutex::new(vec![]),
         confirms: Mutex::new(vec![]),
-        selects: Mutex::new(vec![]),
+        selects: Mutex::new(vec![0]), // Select master realm
         passwords: Mutex::new(vec![]),
     };
 
@@ -339,42 +339,52 @@ async fn test_cli_run_full_loop() {
 
     let ui = MockUi {
         inputs: Mutex::new(vec![
-            // 0. Create User
+            // 0. Create User (workspace empty -> input realm)
             "master".to_string(),
             "newuser".to_string(),
             "user@example.com".to_string(),
             "John".to_string(),
             "Doe".to_string(),
-            // 1. Change Password
-            "master".to_string(),
+            // 1. Change Password (workspace has master -> select master (0))
             "newuser".to_string(),
-            // 2. Create Client
-            "master".to_string(),
+            // 2. Create Client (workspace has master -> select master (0))
             "newclient".to_string(),
-            // 3. Create Role
-            "master".to_string(),
+            // 3. Create Role (workspace has master -> select master (0))
             "newrole".to_string(),
             "desc".to_string(),
             "newclient".to_string(),
-            // 4. Create Group
-            "master".to_string(),
+            // 4. Create Group (workspace has master -> select master (0))
             "newgroup".to_string(),
-            // 5. Create Identity Provider
-            "master".to_string(),
+            // 5. Create Identity Provider (workspace has master -> select master (0))
             "google".to_string(),
             "google".to_string(),
-            // 6. Create Client Scope
-            "master".to_string(),
+            // 6. Create Client Scope (workspace has master -> select master (0))
             "myscope".to_string(),
             "openid-connect".to_string(),
-            // 7. Rotate Keys
-            "master".to_string(),
+            // 7. Rotate Keys (workspace has master -> select master (0))
         ]),
         confirms: Mutex::new(vec![
             true, // Create Client: is public?
             true, // Create Role: is client role?
         ]),
-        selects: Mutex::new(vec![0, 1, 2, 3, 4, 5, 6, 7, 8]), // Run options 0 to 7 then exit (8)
+        selects: Mutex::new(vec![
+            0, // Menu: Create User
+            1, // Menu: Change Password
+            0, // Sub: Select master realm
+            2, // Menu: Create Client
+            0, // Sub: Select master realm
+            3, // Menu: Create Role
+            0, // Sub: Select master realm
+            4, // Menu: Create Group
+            0, // Sub: Select master realm
+            5, // Menu: Create Identity Provider
+            0, // Sub: Select master realm
+            6, // Menu: Create Client Scope
+            0, // Sub: Select master realm
+            7, // Menu: Rotate Keys
+            0, // Sub: Select master realm
+            8, // Menu: Exit
+        ]),
         passwords: Mutex::new(vec!["secret123".to_string()]),
     };
 

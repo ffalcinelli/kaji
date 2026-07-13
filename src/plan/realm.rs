@@ -39,11 +39,18 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
             remote_realm.as_ref(),
             &local_realm,
             ctx.options.changes_only,
+            ctx.options.verbose,
             "realm",
         )? {
             let mut include = true;
             if ctx.options.interactive {
-                include = ctx.ui.confirm("Include this change in the plan?", true)?;
+                include = super::prompt_interactive_change(
+                    ctx.ui,
+                    "Realm",
+                    remote_realm.as_ref(),
+                    &local_realm,
+                    "realm",
+                )?;
             }
             if include {
                 changed_files.push(realm_path);

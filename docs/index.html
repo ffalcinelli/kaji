@@ -79,18 +79,19 @@
           <span class="t-title">kaji plan</span>
         </div>
         <pre class="terminal-body"><code><span class="t-dim">$</span> <span class="t-cmd">kaji plan --interactive</span>
-<span class="t-info">// Calculating diff for realm 'master'...</span>
+<span class="t-info">🚀 Planning changes for realm: master</span>
 
-<span class="t-section">  Clients:</span>
-<span class="t-add">    [+] my-new-app</span>         <span class="t-tag">Create</span>
-<span class="t-mod">    [~] admin-cli</span>           <span class="t-tag-mod">Update</span>
-<span class="t-dim">        root_url: "http://localhost" &#x2192; "https://idp.example.com"</span>
-<span class="t-del">    [-] legacy-app</span>          <span class="t-tag-del">Delete</span>
+<span class="t-section">📝 Changes for Client admin-cli:</span>
+<span class="t-info">@@ -15,5 +15,5 @@</span>
+<span class="t-dim">   protocol: openid-connect</span>
+<span class="t-del">-  rootUrl: "http://localhost"</span>
+<span class="t-add">+  rootUrl: "https://idp.example.com"</span>
+<span class="t-dim">   publicClient: false</span>
 
-<span class="t-section">  Roles:</span>
-<span class="t-add">    [+] billing-manager</span>    <span class="t-tag">Create</span>
-
-<span class="t-prompt">? Apply change to client 'my-new-app'?</span> <span class="t-cursor">&#x2588;</span></code></pre>
+<span class="t-prompt">? Include this change in the plan?</span>
+<span class="t-add">> Yes</span>
+<span class="t-dim">  No</span>
+<span class="t-dim">  Show Full Diff</span> <span class="t-cursor">&#x2588;</span></code></pre>
       </div>
     </div>
     <div class="hero-scroll-hint" aria-hidden="true">
@@ -292,9 +293,18 @@ sudo cp target/release/kaji /usr/local/bin/</code></pre>
     <div class="container">
       <div class="section-header">
         <span class="section-eyebrow">Command Reference</span>
-        <h2 class="section-title">Six commands to <span class="gradient-text">rule your realm</span></h2>
+        <h2 class="section-title">Seven commands to <span class="gradient-text">rule your realm</span></h2>
       </div>
       <div class="commands-grid">
+        <article class="command-card" id="cmd-init">
+          <div class="command-header">
+            <code class="command-name">kaji init</code>
+            <span class="command-badge command-badge--blue">Scaffold</span>
+          </div>
+          <p class="command-desc">Scaffold an initial kaji.toml project configuration. Prefills values from your environment variables automatically.</p>
+          <pre class="command-example"><code>kaji init --interactive</code></pre>
+        </article>
+
         <article class="command-card" id="cmd-inspect">
           <div class="command-header">
             <code class="command-name">kaji inspect</code>

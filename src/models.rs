@@ -149,6 +149,12 @@ impl_keycloak_resource!(
     name = |self| self.realm.as_str()
 );
 
+impl_resource_meta!(
+    RealmRepresentation,
+    label = "realm",
+    secret_prefix = "realm"
+);
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct IdentityProviderRepresentation {
     #[serde(rename = "internalId", skip_serializing_if = "Option::is_none")]

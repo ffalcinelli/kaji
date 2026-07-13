@@ -27,10 +27,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
+pub static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Debug, Clone, Copy)]
 pub struct PlanOptions {
     pub changes_only: bool,
     pub interactive: bool,
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -125,6 +128,7 @@ pub async fn run(
             let options = PlanOptions {
                 changes_only,
                 interactive,
+                verbose: VERBOSE.load(std::sync::atomic::Ordering::Relaxed),
             };
             let ctx = PlanContext {
                 client: &realm_client,
@@ -232,11 +236,33 @@ async fn plan_single_realm(
     Ok(())
 }
 
+pub fn prompt_interactive_change<T: Serialize>(
+    ui: &dyn Ui,
+    name: &str,
+    old: Option<&T>,
+    new: &T,
+    prefix: &str,
+) -> Result<bool> {
+    let selections = &["Yes", "No", "Show Full Diff"];
+    loop {
+        let selection = ui.select("Include this change in the plan?", selections, 0)?;
+        match selection {
+            0 => return Ok(true),
+            1 => return Ok(false),
+            2 => {
+                print_diff(name, old, new, false, true, prefix)?;
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn print_diff<T: Serialize>(
     name: &str,
     old: Option<&T>,
     new: &T,
     changes_only: bool,
+    verbose: bool,
     prefix: &str,
 ) -> Result<bool> {
     let old_yaml = if let Some(o) = old {
@@ -256,13 +282,54 @@ pub fn print_diff<T: Serialize>(
 
     if changed {
         println!("\n{} Changes for {}:", MEMO, name);
-        for change in diff.iter_all_changes() {
-            let (sign, style) = match change.tag() {
-                ChangeTag::Delete => ("-", Style::new().red()),
-                ChangeTag::Insert => ("+", Style::new().green()),
-                ChangeTag::Equal => (" ", Style::new().dim()),
-            };
-            print!("{}{}", style.apply_to(sign).bold(), style.apply_to(change));
+        if verbose {
+            for change in diff.iter_all_changes() {
+                let (sign, style) = match change.tag() {
+                    ChangeTag::Delete => ("-", Style::new().red()),
+                    ChangeTag::Insert => ("+", Style::new().green()),
+                    ChangeTag::Equal => (" ", Style::new().dim()),
+                };
+                print!("{}{}", style.apply_to(sign).bold(), style.apply_to(change));
+            }
+        } else {
+            for (idx, hunk) in diff.grouped_ops(3).iter().enumerate() {
+                if idx > 0 {
+                    println!("{}", style("...").dim());
+                }
+
+                let old_start = hunk.first().map(|op| op.old_range().start).unwrap_or(0);
+                let old_end = hunk.last().map(|op| op.old_range().end).unwrap_or(0);
+                let new_start = hunk.first().map(|op| op.new_range().start).unwrap_or(0);
+                let new_end = hunk.last().map(|op| op.new_range().end).unwrap_or(0);
+
+                let old_len = old_end - old_start;
+                let new_len = new_end - new_start;
+
+                let mut header = String::from("@@");
+                if old_len == 1 {
+                    header.push_str(&format!(" -{}", old_start + 1));
+                } else {
+                    header.push_str(&format!(" -{},{}", old_start + 1, old_len));
+                }
+                if new_len == 1 {
+                    header.push_str(&format!(" +{}", new_start + 1));
+                } else {
+                    header.push_str(&format!(" +{},{}", new_start + 1, new_len));
+                }
+                header.push_str(" @@");
+                println!("{}", style(header).cyan());
+
+                for op in hunk {
+                    for change in diff.iter_changes(op) {
+                        let (sign, style) = match change.tag() {
+                            ChangeTag::Delete => ("-", Style::new().red()),
+                            ChangeTag::Insert => ("+", Style::new().green()),
+                            ChangeTag::Equal => (" ", Style::new().dim()),
+                        };
+                        print!("{}{}", style.apply_to(sign).bold(), style.apply_to(change));
+                    }
+                }
+            }
         }
     } else if !changes_only {
         println!("{} No changes for {}", CHECK, name);

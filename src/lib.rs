@@ -14,6 +14,8 @@ pub mod clean;
 pub mod cli;
 /// Keycloak Admin REST API HTTP client wrapper.
 pub mod client;
+/// Scaffolding for project configuration.
+pub mod init;
 /// Inspection pipeline to bootstrap local configuration files.
 pub mod inspect;
 /// Strongly-typed representations of Keycloak resources.
@@ -262,6 +264,7 @@ async fn handle_plan(
     workspace: &std::path::Path,
     changes_only: bool,
     interactive: bool,
+    verbose: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -275,6 +278,7 @@ async fn handle_plan(
         .cyan()
         .bold()
     );
+    plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
     plan::run(
         &client,
         workspace.to_path_buf(),
@@ -293,6 +297,7 @@ async fn handle_drift(
     cli: &Cli,
     profile: Option<&Profile>,
     workspace: &std::path::Path,
+    verbose: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -306,6 +311,7 @@ async fn handle_drift(
         .cyan()
         .bold()
     );
+    plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
     plan::run(
         &client,
         workspace.to_path_buf(),
@@ -393,9 +399,10 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Validate { workspace } => workspace.clone(),
         Commands::Apply { workspace, .. } => workspace.clone(),
         Commands::Plan { workspace, .. } => workspace.clone(),
-        Commands::Drift { workspace } => workspace.clone(),
+        Commands::Drift { workspace, .. } => workspace.clone(),
         Commands::Cli { workspace } => workspace.clone(),
         Commands::Clean { workspace, .. } => workspace.clone(),
+        Commands::Init { .. } => None,
     };
     let workspace = raw_workspace
         .or(config.workspace.clone())
@@ -422,6 +429,7 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Plan {
             changes_only,
             interactive,
+            verbose,
             ..
         } => {
             handle_plan(
@@ -430,17 +438,29 @@ pub async fn run_app(cli: Cli) -> Result<()> {
                 &workspace,
                 *changes_only,
                 *interactive,
+                *verbose,
             )
             .await?;
         }
-        Commands::Drift { .. } => {
-            handle_drift(&cli, profile.as_ref(), &workspace).await?;
+        Commands::Drift { verbose, .. } => {
+            handle_drift(&cli, profile.as_ref(), &workspace, *verbose).await?;
         }
         Commands::Cli { .. } => {
             handle_cli(&workspace).await?;
         }
         Commands::Clean { yes, .. } => {
             handle_clean(&cli, &workspace, *yes).await?;
+        }
+        Commands::Init {
+            interactive,
+            output,
+        } => {
+            init::run(
+                *interactive,
+                output.clone(),
+                &crate::utils::ui::DialoguerUi::new(),
+            )
+            .await?;
         }
     }
 

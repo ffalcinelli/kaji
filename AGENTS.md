@@ -22,14 +22,15 @@ All business logic is located in the `src/` directory:
 *   [`src/client.rs`](src/client.rs): Wrapper around the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for resources.
 *   [`src/models.rs`](src/models.rs): Strongly-typed Serde representations of Keycloak resources. Implements the `KeycloakResource` and `ResourceMeta` traits.
 *   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline.
-*   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`.
+*   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation.
 *   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules.
 *   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints.
 *   [`src/clean.rs`](src/clean.rs): Removes unreferenced or invalid configuration files from the workspace.
-*   [`src/cli/`](src/cli/): Interactive CLI scaffolding menu.
+*   [`src/init.rs`](src/init.rs): Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.
+*   [`src/cli/`](src/cli/): Interactive CLI scaffolding menu. Styled with `dialoguer`'s `ColorfulTheme` and uses `FuzzySelect` for real-time query filtering. Auto-discovers existing realms in the workspace directory.
 *   [`src/utils/secrets/`](src/utils/secrets/): Manages secret resolution (Env, HashiCorp Vault).
 *   [`src/utils/yaml.rs`](src/utils/yaml.rs): Handles YAML serialization, sorting, and profile-specific deep-merging.
-*   [`src/utils/ui.rs`](src/utils/ui.rs): CLI visual formatting, progress bars, emojis, and styling.
+*   [`src/utils/ui.rs`](src/utils/ui.rs): CLI visual formatting, progress bars, emojis, and styling. Contains DialoguerUi which maps console prompts to ColorfulTheme and FuzzySelect.
 
 ---
 
@@ -43,6 +44,14 @@ To prevent race conditions, resources are reconciled sequentially across stages:
 | **Stage 1** | Identity Providers, Roles | Infrastructure |
 | **Stage 2** | Clients, Client Scopes, Authentication Flows, Required Actions, Groups | Structure |
 | **Stage 3** | Users, Authenticator Configs, Components, Keys | Data & Final Config |
+
+## 🔄 Keycloak Resource Enrichment
+
+During the reconciliation (`apply`) process, Keycloak may enrich resources with default values, read-only system attributes, or server-assigned identifiers (IDs). When `kaji` detects differences between the local representation and the enriched one returned by Keycloak:
+1. It recursively maps any user-defined secret placeholders (e.g. `${VAR_NAME}`) from the original local file to the enriched representation to prevent them from being lost or overwritten by redacted/actual secret values.
+2. It prompts the user (defaulting to Yes) to update the local representation to match the enriched Keycloak representation.
+3. If the `--yes` (`-y`) option flag is passed, the update is accepted automatically without prompting.
+4. Any newly generated secrets (such as client secrets) are extracted and appended to the secrets file.
 
 ---
 

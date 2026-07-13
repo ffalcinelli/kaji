@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::collapsible_if)]
 use crate::client::KeycloakClient;
 use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::{SecretResolver, substitute_secrets};
@@ -15,12 +16,14 @@ use tokio::task::JoinSet;
 pub async fn apply_resources<T>(
     client: &KeycloakClient,
     workspace_dir: &std::path::Path,
+    secrets_path: Arc<PathBuf>,
     resolver: Arc<dyn SecretResolver>,
     planned_files: Arc<Option<HashSet<PathBuf>>>,
     realm_name: &str,
     profile: Option<String>,
     review: bool,
     ui: Arc<dyn Ui>,
+    yes: bool,
 ) -> Result<()>
 where
     T: KeycloakResource
@@ -93,9 +96,11 @@ where
         let profile = profile.clone();
         let ui = Arc::clone(&ui);
         let pb = pb.clone();
+        let secrets_path = Arc::clone(&secrets_path);
 
         set.spawn(async move {
             let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+            let local_val_before_sub = val.clone();
             substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
             let mut rep: T = serde_json::from_value(val)
                 .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
@@ -123,6 +128,7 @@ where
                 }
             }
 
+            let mut final_id = None;
             if let Some(id) = id_opt {
                 rep.set_id(Some(id.clone()));
                 client.update_resource(id, &rep).await.with_context(|| {
@@ -139,6 +145,7 @@ where
                     T::LABEL,
                     rep.get_name()
                 ));
+                final_id = Some(id.clone());
             } else {
                 rep.set_id(None);
                 client.create_resource(&rep).await.with_context(|| {
@@ -155,7 +162,35 @@ where
                     T::LABEL,
                     rep.get_name()
                 ));
+
+                // Fetch resources to get the generated ID of the created resource
+                let fresh_resources = client.get_resources::<T>().await?;
+                if let Some(fresh) = fresh_resources
+                    .into_iter()
+                    .find(|r| r.get_identity() == Some(identity.clone()))
+                {
+                    if let Some(id) = fresh.get_id() {
+                        final_id = Some(id.to_string());
+                    }
+                }
             }
+
+            if let Some(id) = final_id {
+                if let Ok(enriched) = client.get_resource::<T>(&id).await {
+                    check_and_update_enrichment(
+                        &client,
+                        &path,
+                        &local_val_before_sub,
+                        &enriched,
+                        &realm_name,
+                        &secrets_path,
+                        &*ui,
+                        yes,
+                    )
+                    .await?;
+                }
+            }
+
             pb.inc(1);
             Ok::<(), anyhow::Error>(())
         });
@@ -164,4 +199,297 @@ where
     crate::utils::join_all_tasks(set, None).await?;
     pb.finish_with_message(format!("Applied {}", T::LABEL));
     Ok(())
+}
+
+pub async fn check_and_update_enrichment<T>(
+    _client: &KeycloakClient,
+    path: &std::path::Path,
+    local_val_before_sub: &serde_json::Value,
+    enriched: &T,
+    realm_name: &str,
+    secrets_path: &std::path::Path,
+    ui: &dyn Ui,
+    yes: bool,
+) -> Result<()>
+where
+    T: KeycloakResource
+        + ResourceMeta
+        + serde::Serialize
+        + for<'de> serde::Deserialize<'de>
+        + Clone,
+{
+    let mut placeholders = std::collections::HashMap::new();
+    find_placeholders(local_val_before_sub, "", &mut placeholders);
+
+    let mut enriched_val = serde_json::to_value(enriched.clone())?;
+
+    let mut new_secrets = std::collections::BTreeMap::new();
+    let prefix = format!("realm_{}_{}", realm_name, T::SECRET_PREFIX);
+    crate::utils::secrets::extract_secrets(&mut enriched_val, &prefix, &mut new_secrets);
+
+    for (path_str, placeholder) in &placeholders {
+        set_value_at_path(
+            &mut enriched_val,
+            path_str,
+            serde_json::Value::String(placeholder.clone()),
+        );
+    }
+
+    let mut sorted_local_val = local_val_before_sub.clone();
+    crate::utils::recursive_sort(&mut sorted_local_val);
+    let local_yaml = serde_yaml::to_string(&sorted_local_val)?;
+
+    crate::utils::recursive_sort(&mut enriched_val);
+    let enriched_yaml = serde_yaml::to_string(&enriched_val)?;
+
+    if local_yaml != enriched_yaml {
+        let proceed = if yes {
+            true
+        } else {
+            ui.confirm(
+                &format!(
+                    "Keycloak enriched the representation of {} '{}'. Update the local file?",
+                    T::LABEL,
+                    enriched.get_name()
+                ),
+                true,
+            )?
+        };
+
+        if proceed {
+            crate::utils::write_secure(path, &enriched_yaml).await?;
+            append_secrets(secrets_path, &new_secrets).await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn find_placeholders(
+    val: &serde_json::Value,
+    path: &str,
+    placeholders: &mut std::collections::HashMap<String, String>,
+) {
+    match val {
+        serde_json::Value::String(s) => {
+            if s.starts_with("${") && s.ends_with('}') {
+                placeholders.insert(path.to_string(), s.clone());
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                let next_path = if path.is_empty() {
+                    format!("/{}", k)
+                } else {
+                    format!("{}/{}", path, k)
+                };
+                find_placeholders(v, &next_path, placeholders);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for (i, v) in arr.iter().enumerate() {
+                let next_path = format!("{}/{}", path, i);
+                find_placeholders(v, &next_path, placeholders);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn set_value_at_path(val: &mut serde_json::Value, path: &str, new_val: serde_json::Value) {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    set_value_at_path_rec(val, &segments, new_val);
+}
+
+fn set_value_at_path_rec(
+    val: &mut serde_json::Value,
+    segments: &[&str],
+    new_val: serde_json::Value,
+) {
+    if segments.is_empty() {
+        return;
+    }
+    let seg = segments[0];
+    if segments.len() == 1 {
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert(seg.to_string(), new_val);
+        } else if let Some(arr) = val.as_array_mut() {
+            if let Ok(idx) = seg.parse::<usize>() {
+                if idx < arr.len() {
+                    arr[idx] = new_val;
+                }
+            }
+        }
+    } else {
+        if let Some(obj) = val.as_object_mut() {
+            if let Some(next) = obj.get_mut(seg) {
+                set_value_at_path_rec(next, &segments[1..], new_val);
+            }
+        } else if let Some(arr) = val.as_array_mut() {
+            if let Ok(idx) = seg.parse::<usize>() {
+                if idx < arr.len() {
+                    set_value_at_path_rec(&mut arr[idx], &segments[1..], new_val);
+                }
+            }
+        }
+    }
+}
+
+pub async fn append_secrets(
+    secrets_path: &std::path::Path,
+    new_secrets: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    if new_secrets.is_empty() {
+        return Ok(());
+    }
+    let mut existing = std::collections::HashMap::new();
+    if tokio::fs::try_exists(secrets_path).await.unwrap_or(false) {
+        if let Ok(content) = tokio::fs::read_to_string(secrets_path).await {
+            for line in content.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    existing.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
+    }
+
+    let mut to_append = String::new();
+    for (k, v) in new_secrets {
+        if !existing.contains_key(k) {
+            to_append.push_str(&format!("{}={}\n", k, v));
+        }
+    }
+
+    if !to_append.is_empty() {
+        let mut content = if tokio::fs::try_exists(secrets_path).await.unwrap_or(false) {
+            tokio::fs::read_to_string(secrets_path)
+                .await
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&to_append);
+        crate::utils::write_secure(secrets_path, &content).await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ClientRepresentation;
+    use crate::utils::ui::MockUi;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_check_and_update_enrichment_unit() -> Result<()> {
+        let temp = tempdir()?;
+        let client_path = temp.path().join("client.yaml");
+        let secrets_path = temp.path().join(".secrets");
+
+        // Write pre-existing secrets
+        fs::write(&secrets_path, "EXISTING_KEY=old_val\n")?;
+
+        // 1. Write a local YAML value containing secret placeholders inside object and array
+        let local_yaml = serde_json::json!({
+            "id": null,
+            "clientId": "test-client",
+            "name": "Initial Name",
+            "secret": "${CLIENT_SECRET}",
+            "redirectUris": [
+                "http://localhost",
+                "${REDIRECT_URI_PLACEHOLDER}"
+            ]
+        });
+        fs::write(&client_path, serde_yaml::to_string(&local_yaml)?)?;
+
+        // 2. Prepare an enriched representation returned from keycloak.
+        // It has a secret value "my-new-secret" (which will be extracted),
+        // and some new client fields.
+        let enriched_client = ClientRepresentation {
+            id: Some("generated-id-123".to_string()),
+            client_id: Some("test-client".to_string()),
+            name: Some("Enriched Name from Keycloak".to_string()),
+            description: None,
+            enabled: Some(true),
+            protocol: None,
+            redirect_uris: Some(vec![
+                "http://localhost".to_string(),
+                "enriched-redirect-uri".to_string(),
+            ]),
+            web_origins: None,
+            public_client: None,
+            bearer_only: None,
+            service_accounts_enabled: None,
+            extra: [("secret".to_string(), serde_json::json!("my-new-secret"))]
+                .into_iter()
+                .collect(),
+        };
+
+        // UI confirms update
+        let ui = MockUi {
+            inputs: std::sync::Mutex::new(Vec::new()),
+            confirms: std::sync::Mutex::new(vec![true]),
+            selects: std::sync::Mutex::new(Vec::new()),
+            passwords: std::sync::Mutex::new(Vec::new()),
+        };
+
+        let client = KeycloakClient::new("http://dummy".to_string());
+
+        // Call check_and_update_enrichment with yes = false, confirm = true
+        check_and_update_enrichment(
+            &client,
+            &client_path,
+            &local_yaml,
+            &enriched_client,
+            "test-realm",
+            &secrets_path,
+            &ui,
+            false,
+        )
+        .await?;
+
+        // 3. Verify that:
+        // A. The local file was updated with enriched fields
+        let content = fs::read_to_string(&client_path)?;
+        let parsed: serde_json::Value = serde_yaml::from_str(&content)?;
+
+        // - ID is updated
+        assert_eq!(
+            parsed.get("id").and_then(|v| v.as_str()),
+            Some("generated-id-123")
+        );
+        // - Name is updated
+        assert_eq!(
+            parsed.get("name").and_then(|v| v.as_str()),
+            Some("Enriched Name from Keycloak")
+        );
+        // - Placeholders are preserved!
+        assert_eq!(
+            parsed.get("secret").and_then(|v| v.as_str()),
+            Some("${CLIENT_SECRET}")
+        );
+        let redirect_uris = parsed
+            .get("redirectUris")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(
+            redirect_uris[0].as_str(),
+            Some("${REDIRECT_URI_PLACEHOLDER}")
+        );
+
+        // B. New secret was appended to .secrets, while preserving the existing one!
+        let secrets_content = fs::read_to_string(&secrets_path)?;
+        assert!(secrets_content.contains("EXISTING_KEY=old_val"));
+        assert!(
+            secrets_content
+                .contains("KEYCLOAK_REALM_TEST_REALM_CLIENT_TEST_CLIENT_SECRET=my-new-secret")
+        );
+
+        Ok(())
+    }
 }

@@ -20,6 +20,7 @@ async fn test_plan_components_no_dir() {
     let options = PlanOptions {
         changes_only: false,
         interactive: false,
+        verbose: false,
     };
 
     let ctx = PlanContext {
@@ -44,6 +45,7 @@ async fn test_check_keys_drift_fail() {
     let options = PlanOptions {
         changes_only: true,
         interactive: false,
+        verbose: false,
     };
     let res = check_keys_drift(&client, options, "master").await;
     // check_keys_drift ignores error if not available
@@ -69,6 +71,7 @@ async fn test_plan_components_with_invalid_yaml() {
     let options = PlanOptions {
         changes_only: false,
         interactive: false,
+        verbose: false,
     };
 
     let ctx = PlanContext {
@@ -94,6 +97,7 @@ async fn test_check_keys_drift_warning() {
     let options = PlanOptions {
         changes_only: true,
         interactive: false,
+        verbose: false,
     };
 
     // This should run and print a warning (we can't easily assert on stdout here without more effort,
@@ -115,6 +119,7 @@ async fn test_plan_components_no_identity() {
     let options = PlanOptions {
         changes_only: false,
         interactive: false,
+        verbose: false,
     };
 
     let ctx = PlanContext {

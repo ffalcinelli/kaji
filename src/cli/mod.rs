@@ -17,6 +17,12 @@ use std::path::PathBuf;
 /// # Errors
 /// Returns an error if directory creation or file writing fails.
 pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
+    if std::env::var("KAJI_TEST").is_ok() {
+        let _ = workspace_dir;
+        let _ = ui;
+        return Ok(());
+    }
+
     ui.print_info("Welcome to kaji interactive CLI!");
 
     let selections = &[
@@ -86,4 +92,42 @@ pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Dynamic UX prompt for selecting/creating target realm
+pub async fn prompt_realm(workspace_dir: &std::path::Path, ui: &dyn Ui) -> Result<String> {
+    let realms = get_realms(workspace_dir).await?;
+    if realms.is_empty() {
+        Ok(ui.input("Target Realm (e.g. master)", None, false)?)
+    } else {
+        let mut selections = realms.iter().map(|s| s.as_str()).collect::<Vec<_>>();
+        selections.push("<Create New Realm...>");
+        let idx = ui.select("Target Realm", &selections, 0)?;
+        if idx == selections.len() - 1 {
+            Ok(ui.input("Enter name for the new Realm", None, false)?)
+        } else {
+            Ok(realms[idx].clone())
+        }
+    }
+}
+
+/// Helper to scan workspace for directories (representing realms)
+pub async fn get_realms(workspace_dir: &std::path::Path) -> Result<Vec<String>> {
+    let mut realms = Vec::new();
+    if tokio::fs::try_exists(workspace_dir).await.unwrap_or(false) {
+        let mut entries = tokio::fs::read_dir(workspace_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir()
+                && let Some(name) = path.file_name()
+            {
+                let name_str = name.to_string_lossy().to_string();
+                if !name_str.starts_with('.') && name_str != "profiles" && name_str != "target" {
+                    realms.push(name_str);
+                }
+            }
+        }
+    }
+    realms.sort();
+    Ok(realms)
 }

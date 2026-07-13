@@ -21,6 +21,7 @@ This document serves as the internal developer guide for `kaji`. It explains the
 -   `src/utils/secrets/`: Manages secret resolution (Env, Vault, etc.).
 -   `src/utils/yaml.rs`: Handles YAML deep-merging and profile-specific overlays.
 -   `src/utils/ui.rs`: Centralized module for CLI output formatting, emoji management, and **indicatif progress bars**.
+-   `src/init.rs`: Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.
 
 ---
 
@@ -32,6 +33,14 @@ To prevent race conditions and ensure correct dependency handling, `apply` is ex
 2.  **Stage 1**: Identity Providers, Roles (Infrastructure).
 3.  **Stage 2**: Clients, Client Scopes, Authentication Flows, Required Actions, Groups (Structure).
 4.  **Stage 3**: Users, Authenticator Configs, Components, Keys (Data & Final Config).
+
+## 🔄 Keycloak Resource Enrichment
+
+During the reconciliation (`apply`) process, Keycloak may enrich resources with default values, read-only system attributes, or server-assigned identifiers (IDs). When `kaji` detects differences between the local representation and the enriched one returned by Keycloak:
+1. It recursively maps any user-defined secret placeholders (e.g. `${VAR_NAME}`) from the original local file to the enriched representation to prevent them from being lost or overwritten by redacted/actual secret values.
+2. It prompts the user (defaulting to Yes) to update the local representation to match the enriched Keycloak representation.
+3. If the `--yes` (`-y`) option flag is passed, the update is accepted automatically without prompting.
+4. Any newly generated secrets (such as client secrets) are extracted and appended to the secrets file.
 
 ---
 
@@ -81,6 +90,22 @@ To support a new Keycloak resource (e.g., "Event Listeners"):
 4.  **Update `apply/mod.rs`**: Add the new resource to the appropriate stage in `apply_single_realm` using `generic::apply_resources`.
 5.  **Update `validate.rs`**: (Optional) Add specific validation rules.
 6.  **Update `cli/`**: (Optional) Add interactive scaffolding for the new resource.
+
+---
+
+## 📺 Terminal UI & Diff Viewer Enhancements
+
+### 1. Minimal Unified Diffs (Collapsed by Default)
+To reduce terminal clutter, `kaji plan` and `kaji drift` default to showing collapsed unified diffs (with 3 context lines around changes). A `--verbose` or `-v` flag allows users to output full file diffs.
+
+### 2. Interactive Diff Expansion
+During `kaji plan --interactive`, the prompt is a selection menu with `Yes` (include change), `No` (skip change), and `Show Full Diff` (expand to full verbose diff). Selecting `Show Full Diff` displays the complete diff and prompts the user again.
+
+### 3. Styled Fuzzy Scaffolding Menu
+The interactive menu (`kaji cli`) utilizes `dialoguer::theme::ColorfulTheme` for polished, colorful CLI prompts. It replaces standard selects with `dialoguer::FuzzySelect`, allowing users to type to search and filter options instantly.
+
+### 4. Workspace Realm Auto-Discovery
+All scaffolding prompts dynamically scan the workspace to discover existing realms. The user is presented with a `FuzzySelect` list of discovered realms plus a `<Create New Realm...>` option, avoiding manual typing for existing projects.
 
 ---
 
