@@ -160,6 +160,8 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::tempdir;
 
+    static INIT_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test]
     async fn test_run_non_interactive_empty() {
         let dir = tempdir().unwrap();
@@ -450,5 +452,41 @@ mod tests {
         let config: Config = toml::from_str(&content).unwrap();
         assert_eq!(config.server, Some("http://myhost".to_string()));
         assert_eq!(config.realms, Some(vec!["r1".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn test_run_non_interactive_default_path() {
+        let _lock = INIT_TEST_MUTEX.lock().await;
+        let dir = tempdir().unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(false, None, &ui).await.unwrap();
+
+        let expected_file = dir.path().join("kaji.toml");
+        assert!(expected_file.exists());
+
+        std::env::set_current_dir(original_cwd).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_run_non_interactive_write_error() {
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        let invalid_path = PathBuf::from("/invalid_dir_path_that_does_not_exist/kaji.toml");
+        let result = run(false, Some(invalid_path), &ui).await;
+        assert!(result.is_err());
     }
 }

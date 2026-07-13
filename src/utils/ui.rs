@@ -100,6 +100,9 @@ impl Default for DialoguerUi {
 #[cfg(not(tarpaulin_include))]
 impl Ui for DialoguerUi {
     fn input(&self, prompt: &str, default: Option<String>, allow_empty: bool) -> Result<String> {
+        if std::env::var("KAJI_TEST").is_ok() {
+            anyhow::bail!("Non-interactive test mode");
+        }
         let theme = dialoguer::theme::ColorfulTheme::default();
         let input = dialoguer::Input::<String>::with_theme(&theme)
             .with_prompt(prompt)
@@ -118,6 +121,9 @@ impl Ui for DialoguerUi {
     }
 
     fn confirm(&self, prompt: &str, default: bool) -> Result<bool> {
+        if std::env::var("KAJI_TEST").is_ok() {
+            anyhow::bail!("Non-interactive test mode");
+        }
         let theme = dialoguer::theme::ColorfulTheme::default();
         let confirm = dialoguer::Confirm::with_theme(&theme)
             .with_prompt(prompt)
@@ -131,6 +137,9 @@ impl Ui for DialoguerUi {
     }
 
     fn password(&self, prompt: &str, confirm: Option<&str>) -> Result<String> {
+        if std::env::var("KAJI_TEST").is_ok() {
+            anyhow::bail!("Non-interactive test mode");
+        }
         let theme = dialoguer::theme::ColorfulTheme::default();
         let p = dialoguer::Password::with_theme(&theme).with_prompt(prompt);
         let p = if let Some(c) = confirm {
@@ -147,6 +156,9 @@ impl Ui for DialoguerUi {
     }
 
     fn select(&self, prompt: &str, items: &[&str], default: usize) -> Result<usize> {
+        if std::env::var("KAJI_TEST").is_ok() {
+            anyhow::bail!("Non-interactive test mode");
+        }
         let theme = dialoguer::theme::ColorfulTheme::default();
         let select = dialoguer::FuzzySelect::with_theme(&theme)
             .with_prompt(prompt)
