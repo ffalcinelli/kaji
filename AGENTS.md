@@ -45,6 +45,14 @@ To prevent race conditions, resources are reconciled sequentially across stages:
 | **Stage 2** | Clients, Client Scopes, Authentication Flows, Required Actions, Groups | Structure |
 | **Stage 3** | Users, Authenticator Configs, Components, Keys | Data & Final Config |
 
+## 🔄 Keycloak Resource Enrichment
+
+During the reconciliation (`apply`) process, Keycloak may enrich resources with default values, read-only system attributes, or server-assigned identifiers (IDs). When `kaji` detects differences between the local representation and the enriched one returned by Keycloak:
+1. It recursively maps any user-defined secret placeholders (e.g. `${VAR_NAME}`) from the original local file to the enriched representation to prevent them from being lost or overwritten by redacted/actual secret values.
+2. It prompts the user (defaulting to Yes) to update the local representation to match the enriched Keycloak representation.
+3. If the `--yes` (`-y`) option flag is passed, the update is accepted automatically without prompting.
+4. Any newly generated secrets (such as client secrets) are extracted and appended to the secrets file.
+
 ---
 
 ## 🌍 Environment Profiles & Overlays

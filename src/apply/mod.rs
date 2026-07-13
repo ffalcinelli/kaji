@@ -7,26 +7,30 @@ pub mod generic;
 pub mod realm;
 
 macro_rules! spawn_apply_stage {
-    ($set:expr, $client:expr, $dir:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, [ $($t:ty),* ]) => {
+    ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, [ $($t:ty),* ]) => {
         $(
             let client_clone = $client.clone();
             let dir_clone = $dir.clone();
+            let secrets_path_clone = Arc::clone(&$secrets_path);
             let resolver_clone = Arc::clone(&$resolver);
             let planned_files_clone = Arc::clone(&$planned_files);
             let realm_name_clone = $realm_name.to_string();
             let profile_clone = $profile.clone();
             let ui_clone = Arc::clone(&$ui);
             let review_clone = $review;
+            let yes_clone = $yes;
             $set.spawn(async move {
                 generic::apply_resources::<$t>(
                     &client_clone,
                     &dir_clone,
+                    secrets_path_clone,
                     resolver_clone,
                     planned_files_clone,
                     &realm_name_clone,
                     profile_clone,
                     review_clone,
                     ui_clone,
+                    yes_clone,
                 )
                 .await
             });
@@ -123,6 +127,20 @@ pub async fn run(
         anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
     }
 
+    let secrets_file = if let Some(p) = &profile {
+        if let Ok(profile_obj) = crate::load_profile(&workspace_dir, p).await {
+            profile_obj
+                .secrets_file
+                .clone()
+                .unwrap_or_else(|| ".secrets".to_string())
+        } else {
+            ".secrets".to_string()
+        }
+    } else {
+        ".secrets".to_string()
+    };
+    let secrets_path = Arc::new(workspace_dir.join(secrets_file));
+
     // Check for .kajiplan
     let plan_path = workspace_dir.join(".kajiplan");
     let planned_files = if plan_path.exists() {
@@ -191,6 +209,7 @@ pub async fn run(
         let planned_files = Arc::clone(&planned_files);
         let profile = profile.clone();
         let ui = Arc::clone(&ui);
+        let secrets_path = Arc::clone(&secrets_path);
 
         set.spawn(async move {
             println!(
@@ -204,12 +223,14 @@ pub async fn run(
             apply_single_realm(
                 &realm_client,
                 realm_dir,
+                secrets_path,
                 resolver,
                 planned_files,
                 &realm_name,
                 profile,
                 review,
                 ui,
+                yes,
             )
             .await
         });
@@ -229,21 +250,26 @@ pub async fn run(
 async fn apply_single_realm(
     client: &KeycloakClient,
     workspace_dir: PathBuf,
+    secrets_path: Arc<PathBuf>,
     resolver: Arc<dyn SecretResolver>,
     planned_files: Arc<Option<HashSet<PathBuf>>>,
     realm_name: &str,
     profile: Option<String>,
     review: bool,
     ui: Arc<dyn Ui>,
+    yes: bool,
 ) -> Result<()> {
     // Stage 0: Realms
     realm::apply_realm(
         client,
         &workspace_dir,
+        Arc::clone(&secrets_path),
         Arc::clone(&resolver),
         Arc::clone(&planned_files),
         realm_name,
         profile.clone(),
+        Arc::clone(&ui),
+        yes,
     )
     .await?;
 
@@ -254,12 +280,14 @@ async fn apply_single_realm(
             set,
             client,
             workspace_dir,
+            secrets_path,
             resolver,
             planned_files,
             realm_name,
             profile,
             review,
             ui,
+            yes,
             [IdentityProviderRepresentation, RoleRepresentation]
         );
         crate::utils::join_all_tasks(set, None).await?;
@@ -272,12 +300,14 @@ async fn apply_single_realm(
             set,
             client,
             workspace_dir,
+            secrets_path,
             resolver,
             planned_files,
             realm_name,
             profile,
             review,
             ui,
+            yes,
             [
                 ClientRepresentation,
                 ClientScopeRepresentation,
@@ -296,17 +326,20 @@ async fn apply_single_realm(
             set,
             client,
             workspace_dir,
+            secrets_path,
             resolver,
             planned_files,
             realm_name,
             profile,
             review,
             ui,
+            yes,
             [UserRepresentation]
         );
 
         let client_ac = client.clone();
         let dir_ac = workspace_dir.clone();
+        let secrets_path_ac = Arc::clone(&secrets_path);
         let res_ac = Arc::clone(&resolver);
         let plan_ac = Arc::clone(&planned_files);
         let rn_ac = realm_name.to_string();
@@ -314,39 +347,64 @@ async fn apply_single_realm(
         let ui_ac = Arc::clone(&ui);
         set.spawn(async move {
             authenticator_config::apply_authenticator_configs(
-                &client_ac, &dir_ac, res_ac, plan_ac, &rn_ac, p_ac, review, ui_ac,
+                &client_ac,
+                &dir_ac,
+                secrets_path_ac,
+                res_ac,
+                plan_ac,
+                &rn_ac,
+                p_ac,
+                review,
+                ui_ac,
+                yes,
             )
             .await
         });
 
         let client_co = client.clone();
         let dir_co = workspace_dir.clone();
+        let secrets_path_co = Arc::clone(&secrets_path);
         let res_co = Arc::clone(&resolver);
         let plan_co = Arc::clone(&planned_files);
         let rn_co = realm_name.to_string();
         let p_co = profile.clone();
+        let ui_co = Arc::clone(&ui);
         set.spawn(async move {
             components::apply_components_or_keys(
                 &client_co,
                 &dir_co,
                 "components",
+                secrets_path_co,
                 res_co,
                 plan_co,
                 &rn_co,
                 p_co,
+                ui_co,
+                yes,
             )
             .await
         });
 
         let client_ke = client.clone();
         let dir_ke = workspace_dir.clone();
+        let secrets_path_ke = Arc::clone(&secrets_path);
         let res_ke = Arc::clone(&resolver);
         let plan_ke = Arc::clone(&planned_files);
         let rn_ke = realm_name.to_string();
         let p_ke = profile.clone();
+        let ui_ke = Arc::clone(&ui);
         set.spawn(async move {
             components::apply_components_or_keys(
-                &client_ke, &dir_ke, "keys", res_ke, plan_ke, &rn_ke, p_ke,
+                &client_ke,
+                &dir_ke,
+                "keys",
+                secrets_path_ke,
+                res_ke,
+                plan_ke,
+                &rn_ke,
+                p_ke,
+                ui_ke,
+                yes,
             )
             .await
         });

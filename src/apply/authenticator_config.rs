@@ -17,12 +17,14 @@ use tokio::fs as async_fs;
 pub async fn apply_authenticator_configs(
     client: &KeycloakClient,
     workspace_dir: &std::path::Path,
+    secrets_path: Arc<PathBuf>,
     resolver: Arc<dyn SecretResolver>,
     planned_files: Arc<Option<HashSet<PathBuf>>>,
-    _realm_name: &str,
+    realm_name: &str,
     profile: Option<String>,
     review: bool,
     ui: Arc<dyn Ui>,
+    yes: bool,
 ) -> Result<()> {
     let resources_dir = workspace_dir.join(AuthenticatorConfigRepresentation::DIR_NAME);
     if !async_fs::try_exists(&resources_dir).await? {
@@ -101,6 +103,7 @@ pub async fn apply_authenticator_configs(
     // 3. Process each config
     for path in files {
         let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+        let local_val_before_sub = val.clone();
         substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
         let mut local_config: AuthenticatorConfigRepresentation = serde_json::from_value(val)
             .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
@@ -109,6 +112,8 @@ pub async fn apply_authenticator_configs(
             .alias
             .clone()
             .context("Config is missing 'alias'")?;
+
+        let final_id;
 
         if let Some(remote) = remote_map.get(&alias) {
             // Config exists! Update it
@@ -129,6 +134,7 @@ pub async fn apply_authenticator_configs(
                 "  {} Updated authenticator config {}",
                 SUCCESS_UPDATE, alias
             ));
+            final_id = remote_id;
         } else {
             // New config! Create it
             if review {
@@ -244,7 +250,26 @@ pub async fn apply_authenticator_configs(
                     }
                 }
             }
+            final_id = new_config_id;
         }
+
+        if let Ok(enriched) = client
+            .get_resource::<AuthenticatorConfigRepresentation>(&final_id)
+            .await
+        {
+            crate::apply::generic::check_and_update_enrichment(
+                client,
+                &path,
+                &local_val_before_sub,
+                &enriched,
+                realm_name,
+                &secrets_path,
+                &*ui,
+                yes,
+            )
+            .await?;
+        }
+
         pb.inc(1);
     }
     pb.finish_with_message("Applied authenticator configs");

@@ -411,6 +411,20 @@ async fn test_apply() {
         ".kajiplan should not exist after apply"
     );
 
+    // Load secrets for subsequent runs
+    let mut secrets_map = HashMap::new();
+    let secrets_file = workspace_dir.join(".secrets");
+    if secrets_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&secrets_file) {
+            for line in content.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    secrets_map.insert(k.trim().to_string(), v.trim().to_string());
+                }
+            }
+        }
+    }
+    let resolver_with_secrets: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(secrets_map));
+
     // Test with .kajiplan
     let planned_files = vec![realm_dir.join("realm.yaml")];
     fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
@@ -422,7 +436,7 @@ async fn test_apply() {
         true,
         false,
         ui.clone(),
-        resolver.clone(),
+        resolver_with_secrets.clone(),
         None,
     )
     .await
@@ -442,7 +456,7 @@ async fn test_apply() {
         true,
         false,
         ui.clone(),
-        resolver.clone(),
+        resolver_with_secrets.clone(),
         None,
     )
     .await
@@ -666,15 +680,18 @@ async fn test_apply_authenticator_configs_review() {
     });
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
+    let secrets_path = Arc::new(workspace_dir.join(".secrets"));
     let res = apply::authenticator_config::apply_authenticator_configs(
         &client,
         &workspace_dir,
+        secrets_path.clone(),
         resolver.clone(),
         Arc::new(None),
         "test-realm",
         None,
         true, // review = true
         ui_reject.clone(),
+        true, // yes = true
     )
     .await;
     assert!(res.is_ok());
@@ -689,13 +706,138 @@ async fn test_apply_authenticator_configs_review() {
     let res2 = apply::authenticator_config::apply_authenticator_configs(
         &client,
         &workspace_dir,
+        secrets_path.clone(),
         resolver.clone(),
         Arc::new(None),
         "test-realm",
         None,
         true, // review = true
         ui_accept.clone(),
+        true, // yes = true
     )
     .await;
     assert!(res2.is_ok());
+}
+
+#[tokio::test]
+async fn test_apply_enrichment() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+
+    let resolver: Arc<dyn SecretResolver> =
+        Arc::new(EnvResolver::new(std::collections::HashMap::new()));
+
+    // Create a clients directory and a client.yaml
+    let clients_dir = realm_dir.join("clients");
+    std::fs::create_dir(&clients_dir).unwrap();
+
+    let client_file = clients_dir.join("client-1.yaml");
+    let client_rep = ClientRepresentation {
+        id: None,
+        client_id: Some("client-1".to_string()),
+        name: Some("Initial Name".to_string()),
+        description: None,
+        enabled: Some(true),
+        protocol: None,
+        redirect_uris: None,
+        web_origins: None,
+        public_client: None,
+        bearer_only: None,
+        service_accounts_enabled: None,
+        extra: std::collections::HashMap::new(),
+    };
+    std::fs::write(&client_file, serde_yaml::to_string(&client_rep).unwrap()).unwrap();
+
+    // We expect Keycloak to return "Enriched Client 1" as the name, and id "1" (since get_single_client_handler mocks this).
+    // Let's test with yes=true (auto-accept).
+    let ui_yes = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    apply::run(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        true, // yes = true (auto-accept enrichment)
+        false,
+        ui_yes,
+        resolver.clone(),
+        None,
+    )
+    .await
+    .expect("Apply enrichment yes failed");
+
+    // Read client-1.yaml back and verify it was updated with the enriched fields!
+    let content = std::fs::read_to_string(&client_file).unwrap();
+    let updated_client: ClientRepresentation = serde_yaml::from_str(&content).unwrap();
+    assert_eq!(updated_client.id, Some("1".to_string()));
+    assert_eq!(updated_client.name, Some("Enriched Client 1".to_string()));
+
+    // Also verify that the newly generated secret was written to .secrets!
+    let secrets_content = std::fs::read_to_string(workspace_dir.join(".secrets")).unwrap();
+    assert!(
+        secrets_content
+            .contains("KEYCLOAK_REALM_TEST_REALM_CLIENT_CLIENT_1_SECRET=enriched-client-secret")
+    );
+
+    // Now test with yes=false, confirm=false (user rejects enrichment)
+    let client_file_2 = clients_dir.join("client-2.yaml");
+    let client_rep_2 = ClientRepresentation {
+        id: None,
+        client_id: Some("client-2".to_string()),
+        name: Some("Initial Name 2".to_string()),
+        description: None,
+        enabled: Some(true),
+        protocol: None,
+        redirect_uris: None,
+        web_origins: None,
+        public_client: None,
+        bearer_only: None,
+        service_accounts_enabled: None,
+        extra: std::collections::HashMap::new(),
+    };
+    std::fs::write(
+        &client_file_2,
+        serde_yaml::to_string(&client_rep_2).unwrap(),
+    )
+    .unwrap();
+
+    let ui_no = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![false]), // Reject enrichment prompt
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    apply::run(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        false, // yes = false (prompt)
+        false,
+        ui_no,
+        resolver.clone(),
+        None,
+    )
+    .await
+    .expect("Apply enrichment no failed");
+
+    // Verify client-2.yaml was NOT updated
+    let content_2 = std::fs::read_to_string(&client_file_2).unwrap();
+    let updated_client_2: ClientRepresentation = serde_yaml::from_str(&content_2).unwrap();
+    assert_eq!(updated_client_2.id, None);
+    assert_eq!(updated_client_2.name, Some("Initial Name 2".to_string()));
 }

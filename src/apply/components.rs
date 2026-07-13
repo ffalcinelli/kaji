@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::collapsible_if)]
 use crate::client::KeycloakClient;
 use crate::models::{ComponentRepresentation, KeycloakResource};
 use crate::utils::secrets::{SecretResolver, substitute_secrets};
@@ -46,11 +47,15 @@ pub async fn process_component_file(
     client: KeycloakClient,
     by_identity: Arc<HashMap<String, ComponentRepresentation>>,
     by_details: Arc<HashMap<ComponentKey, ComponentRepresentation>>,
+    secrets_path: Arc<PathBuf>,
     resolver: Arc<dyn SecretResolver>,
     realm_name: String,
     profile: Option<String>,
+    ui: Arc<dyn Ui>,
+    yes: bool,
 ) -> Result<()> {
     let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+    let local_val_before_sub = val.clone();
     substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
     let mut component_rep: ComponentRepresentation = serde_json::from_value(val)?;
 
@@ -74,27 +79,68 @@ pub async fn process_component_file(
         by_details.get(&key)
     };
 
+    let id_opt = existing.and_then(|e| e.id.as_ref());
     crate::handle_upsert! {
         client: client,
         realm: realm_name,
         rep: component_rep,
-        id_opt: existing.and_then(|e| e.id.as_ref()),
+        id_opt: id_opt,
         id_field: id,
         resource_name: "component",
         update_call: |id, rep| client.update_component(id, rep),
         create_call: |rep| client.create_component(rep)
     }
+
+    let mut final_id = None;
+    if let Some(id) = id_opt {
+        final_id = Some(id.clone());
+    } else {
+        if let Ok(fresh_comps) = client.get_components().await {
+            if let Some(fresh) = fresh_comps.into_iter().find(|c| {
+                c.name == component_rep.name
+                    && c.parent_id == component_rep.parent_id
+                    && c.provider_id == component_rep.provider_id
+            }) {
+                if let Some(id) = fresh.id {
+                    final_id = Some(id);
+                }
+            }
+        }
+    }
+
+    if let Some(id) = final_id {
+        if let Ok(enriched) = client.get_resource::<ComponentRepresentation>(&id).await {
+            crate::apply::generic::check_and_update_enrichment(
+                &client,
+                &path,
+                &local_val_before_sub,
+                &enriched,
+                &realm_name,
+                &secrets_path,
+                &*ui,
+                yes,
+            )
+            .await?;
+        }
+    }
+
     Ok(())
 }
 
+use crate::utils::ui::Ui;
+
+#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
 pub async fn apply_components_or_keys(
     client: &KeycloakClient,
     workspace_dir: &std::path::Path,
     dir_name: &str,
+    secrets_path: Arc<PathBuf>,
     resolver: Arc<dyn SecretResolver>,
     planned_files: Arc<Option<HashSet<PathBuf>>>,
     realm_name: &str,
     profile: Option<String>,
+    ui: Arc<dyn Ui>,
+    yes: bool,
 ) -> Result<()> {
     let components_dir = workspace_dir.join(dir_name);
     if !async_fs::try_exists(&components_dir).await? {
@@ -134,15 +180,20 @@ pub async fn apply_components_or_keys(
         let resolver = Arc::clone(&resolver);
         let realm_name = realm_name.to_string();
         let profile = profile.clone();
+        let secrets_path = Arc::clone(&secrets_path);
+        let ui = Arc::clone(&ui);
         set.spawn(async move {
             process_component_file(
                 path,
                 client,
                 by_identity,
                 by_details,
+                secrets_path,
                 resolver,
                 realm_name,
                 profile,
+                ui,
+                yes,
             )
             .await
         });
@@ -225,6 +276,13 @@ mod tests {
         let components_dir = temp.path().join("components");
         fs::create_dir(&components_dir)?;
         let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let secrets_path = Arc::new(temp.path().join(".secrets"));
+        let ui = Arc::new(crate::utils::ui::MockUi {
+            inputs: std::sync::Mutex::new(Vec::new()),
+            confirms: std::sync::Mutex::new(Vec::new()),
+            selects: std::sync::Mutex::new(Vec::new()),
+            passwords: std::sync::Mutex::new(Vec::new()),
+        });
 
         // 1. Test update failure
         call_count.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -235,10 +293,13 @@ mod tests {
             &client,
             temp.path(),
             "components",
+            secrets_path.clone(),
             Arc::clone(&resolver) as Arc<dyn SecretResolver>,
             Arc::new(None),
             "test",
             None,
+            ui.clone(),
+            true,
         )
         .await;
         assert!(res.is_err());
@@ -259,10 +320,13 @@ mod tests {
             &client,
             temp.path(),
             "components",
+            secrets_path.clone(),
             Arc::clone(&resolver) as Arc<dyn SecretResolver>,
             Arc::new(None),
             "test",
             None,
+            ui.clone(),
+            true,
         )
         .await;
         assert!(res.is_err());

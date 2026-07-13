@@ -286,15 +286,25 @@ async fn test_apply_components_gaps() {
 
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
     let planned_files = Arc::new(None);
+    let secrets_path = Arc::new(workspace_dir.join(".secrets"));
+    let ui = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
 
     let _ = apply::components::apply_components_or_keys(
         &client,
         &workspace_dir.join("test-realm"),
         "components",
+        secrets_path,
         resolver,
         planned_files,
         "test-realm",
         None,
+        ui,
+        true,
     )
     .await;
 }

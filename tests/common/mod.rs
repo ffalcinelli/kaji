@@ -42,7 +42,9 @@ pub async fn start_mock_server() -> String {
         )
         .route(
             "/admin/realms/{realm}/clients/{id}",
-            axum::routing::put(generic_handler).delete(generic_handler),
+            axum::routing::get(get_single_client_handler)
+                .put(generic_handler)
+                .delete(generic_handler),
         )
         .route(
             "/admin/realms/{realm}/roles-by-id/{id}",
@@ -537,4 +539,19 @@ async fn create_config_handler(
             Json(serde_json::json!({"error": "bad request"})),
         )
     }
+}
+
+async fn get_single_client_handler(
+    axum::extract::Path((_realm, id)): axum::extract::Path<(String, String)>,
+) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": id,
+            "clientId": format!("client-{}", id),
+            "name": format!("Enriched Client {}", id),
+            "enabled": true,
+            "secret": "enriched-client-secret"
+        })),
+    )
 }
