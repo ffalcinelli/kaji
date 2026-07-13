@@ -100,7 +100,9 @@ pub async fn start_mock_server() -> String {
         )
         .route(
             "/admin/realms/{realm}/components/{id}",
-            axum::routing::put(generic_handler).delete(generic_handler),
+            axum::routing::get(get_single_component_handler)
+                .put(generic_handler)
+                .delete(generic_handler),
         )
         .route(
             "/admin/realms/{realm}/keys",
@@ -377,7 +379,9 @@ async fn get_components_handler(
         (
             StatusCode::OK,
             Json(serde_json::json!([
-                { "id": "c1", "name": "component-1", "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider" }
+                { "id": "c1", "name": "component-1", "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider", "parentId": "test-realm" },
+                { "id": "new-component-id", "name": "new-component", "providerId": "ldap", "providerType": "org.keycloak.storage.UserStorageProvider", "parentId": "test-realm" },
+                { "id": "rsa-generated-id", "name": "rsa-generated", "providerId": "rsa-generated", "providerType": "org.keycloak.keys.KeyProvider", "parentId": "test-realm" }
             ])),
         )
     } else {
@@ -552,6 +556,24 @@ async fn get_single_client_handler(
             "name": format!("Enriched Client {}", id),
             "enabled": true,
             "secret": "enriched-client-secret"
+        })),
+    )
+}
+
+async fn get_single_component_handler(
+    axum::extract::Path((_realm, id)): axum::extract::Path<(String, String)>,
+) -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": id,
+            "name": id,
+            "providerId": "ldap",
+            "providerType": "org.keycloak.storage.UserStorageProvider",
+            "parentId": "test-realm",
+            "config": {
+                "priority": ["1"]
+            }
         })),
     )
 }

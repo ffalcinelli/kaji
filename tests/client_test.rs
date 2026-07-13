@@ -435,7 +435,7 @@ async fn test_components() {
         .get_components()
         .await
         .expect("Failed to get components");
-    assert_eq!(components.len(), 1);
+    assert_eq!(components.len(), 3);
 
     let component = kaji::models::ComponentRepresentation {
         id: None,
