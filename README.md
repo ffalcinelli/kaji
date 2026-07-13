@@ -60,6 +60,7 @@ $ kaji cli
 - **Declarative State**: Define your desired Keycloak state in human-readable YAML files.
 - **Environment Profiles & Overlays**: Manage multiple environments (Dev, Staging, Prod) with zero configuration duplication.
 - **Dependency-Aware Reconciliation**: Guaranteed correct application order through staged reconciliation (e.g., Realms -> Roles -> Users).
+- **Bootstrapping & Scaffolding**: Easily initialize new project configurations (`kaji.toml` / `.kaji.toml`) with the `init` command.
 - **Inspect & Export**: Bootstrap your project by exporting existing Keycloak configurations to local files.
 - **Dry-Run Planning**: Preview exactly what changes will be applied with detailed diffs and summaries.
 - **Interactive Review**: Confirm individual changes before they are applied to the server using the `--review` flag.
@@ -272,6 +273,16 @@ kaji clean --yes
 An interactive menu to generate resource scaffolds or perform quick actions.
 ```bash
 kaji cli
+```
+
+### `init`
+Scaffolds an initial `kaji.toml` / `.kaji.toml` project configuration. Automatically pre-fills settings from the environment where available.
+```bash
+# Non-interactive mode (uses environment variables to pre-fill, otherwise writes empty/default configuration)
+kaji init
+
+# Interactive mode (asks you for configuration parameters step-by-step)
+kaji init --interactive
 ```
 
 ---

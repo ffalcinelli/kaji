@@ -293,9 +293,18 @@ sudo cp target/release/kaji /usr/local/bin/</code></pre>
     <div class="container">
       <div class="section-header">
         <span class="section-eyebrow">Command Reference</span>
-        <h2 class="section-title">Six commands to <span class="gradient-text">rule your realm</span></h2>
+        <h2 class="section-title">Seven commands to <span class="gradient-text">rule your realm</span></h2>
       </div>
       <div class="commands-grid">
+        <article class="command-card" id="cmd-init">
+          <div class="command-header">
+            <code class="command-name">kaji init</code>
+            <span class="command-badge command-badge--blue">Scaffold</span>
+          </div>
+          <p class="command-desc">Scaffold an initial kaji.toml project configuration. Prefills values from your environment variables automatically.</p>
+          <pre class="command-example"><code>kaji init --interactive</code></pre>
+        </article>
+
         <article class="command-card" id="cmd-inspect">
           <div class="command-header">
             <code class="command-name">kaji inspect</code>

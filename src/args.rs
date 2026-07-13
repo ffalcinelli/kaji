@@ -151,10 +151,20 @@ pub enum Commands {
         #[arg(long, short = 'y', default_value = "false")]
         yes: bool,
     },
+    /// Scaffold an initial kaji.toml / .kaji.toml configuration file
+    Init {
+        /// Use interactive mode to prompt for configuration values
+        #[arg(long, short = 'i', default_value = "false")]
+        interactive: bool,
+
+        /// Path to write the configuration file (defaults to kaji.toml)
+        #[arg(long, short = 'o')]
+        output: Option<PathBuf>,
+    },
 }
 
 /// The schema of `.kaji.toml` / `kaji.toml` configuration file.
-#[derive(serde::Deserialize, Debug, Default, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default, Clone)]
 pub struct Config {
     /// Keycloak Server URL
     pub server: Option<String>,

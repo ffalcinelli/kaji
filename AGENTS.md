@@ -26,6 +26,7 @@ All business logic is located in the `src/` directory:
 *   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules.
 *   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints.
 *   [`src/clean.rs`](src/clean.rs): Removes unreferenced or invalid configuration files from the workspace.
+*   [`src/init.rs`](src/init.rs): Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.
 *   [`src/cli/`](src/cli/): Interactive CLI scaffolding menu. Styled with `dialoguer`'s `ColorfulTheme` and uses `FuzzySelect` for real-time query filtering. Auto-discovers existing realms in the workspace directory.
 *   [`src/utils/secrets/`](src/utils/secrets/): Manages secret resolution (Env, HashiCorp Vault).
 *   [`src/utils/yaml.rs`](src/utils/yaml.rs): Handles YAML serialization, sorting, and profile-specific deep-merging.

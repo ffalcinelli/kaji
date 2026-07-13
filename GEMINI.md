@@ -21,6 +21,7 @@ This document serves as the internal developer guide for `kaji`. It explains the
 -   `src/utils/secrets/`: Manages secret resolution (Env, Vault, etc.).
 -   `src/utils/yaml.rs`: Handles YAML deep-merging and profile-specific overlays.
 -   `src/utils/ui.rs`: Centralized module for CLI output formatting, emoji management, and **indicatif progress bars**.
+-   `src/init.rs`: Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.
 
 ---
 

@@ -14,6 +14,8 @@ pub mod clean;
 pub mod cli;
 /// Keycloak Admin REST API HTTP client wrapper.
 pub mod client;
+/// Scaffolding for project configuration.
+pub mod init;
 /// Inspection pipeline to bootstrap local configuration files.
 pub mod inspect;
 /// Strongly-typed representations of Keycloak resources.
@@ -400,6 +402,7 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Drift { workspace, .. } => workspace.clone(),
         Commands::Cli { workspace } => workspace.clone(),
         Commands::Clean { workspace, .. } => workspace.clone(),
+        Commands::Init { .. } => None,
     };
     let workspace = raw_workspace
         .or(config.workspace.clone())
@@ -447,6 +450,17 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         }
         Commands::Clean { yes, .. } => {
             handle_clean(&cli, &workspace, *yes).await?;
+        }
+        Commands::Init {
+            interactive,
+            output,
+        } => {
+            init::run(
+                *interactive,
+                output.clone(),
+                &crate::utils::ui::DialoguerUi::new(),
+            )
+            .await?;
         }
     }
 

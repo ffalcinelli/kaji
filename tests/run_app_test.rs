@@ -218,3 +218,43 @@ client_id = "toml-client-id"
     run_app(cli).await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_run_app_init() -> Result<()> {
+    let dir = tempdir().unwrap();
+    let config_path = dir.path().join("my_scaffolded_kaji.toml");
+
+    unsafe {
+        std::env::set_var("KEYCLOAK_URL", "http://myhost:8080");
+    }
+
+    let cli = Cli {
+        command: Commands::Init {
+            interactive: false,
+            output: Some(config_path.clone()),
+        },
+        server: None,
+        realms: vec![],
+        user: None,
+        password: None,
+        client_id: None,
+        client_secret: None,
+        profile: None,
+        vault_addr: None,
+        vault_token: None,
+        config: None,
+    };
+
+    let res = run_app(cli).await;
+
+    unsafe {
+        std::env::remove_var("KEYCLOAK_URL");
+    }
+
+    res?;
+
+    assert!(config_path.exists());
+    let content = std::fs::read_to_string(&config_path)?;
+    assert!(content.contains("server = \"http://myhost:8080\""));
+    Ok(())
+}
