@@ -29,12 +29,25 @@ impl KeycloakClient {
     pub fn new(base_url: String) -> Self {
         let target_realm = "".to_string();
         let base_url = base_url.trim_end_matches('/').to_string();
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
-            client: Client::new(),
+            client,
             base_url,
             target_realm,
             token: None,
         }
+    }
+
+    /// Sets the timeout for the internal HTTP client.
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.client = Client::builder()
+            .timeout(timeout)
+            .build()
+            .unwrap_or_else(|_| Client::new());
+        self
     }
 
     pub fn set_target_realm(&mut self, target_realm: String) {

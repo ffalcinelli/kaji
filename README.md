@@ -123,6 +123,7 @@ server_url: "https://keycloak.prod.example.com"
 client_id: "kaji-cli"
 client_secret: "${PROD_KAJI_SECRET}"
 secrets_file: ".secrets.prod"  # Load environment secrets from this file
+timeout: 30                    # Keycloak request timeout in seconds (optional)
 ```
 
 ### 2. Use Overlays
@@ -159,6 +160,7 @@ When running with `--profile prod`, `kaji` deep-merges the overlay onto the base
 | `KEYCLOAK_CLIENT_SECRET` | Client Secret (if using client credentials) | |
 | `VAULT_ADDR` | HashiCorp Vault URL | |
 | `VAULT_TOKEN` | HashiCorp Vault Token | |
+| `KEYCLOAK_TIMEOUT` | Keycloak request timeout in seconds | `10` |
 
 ### Configuration File (`kaji.toml` / `.kaji.toml`)
 
@@ -187,6 +189,9 @@ workspace = "kaji-workspace"
 # HashiCorp Vault Settings
 vault_addr = "http://vault:8200"
 vault_token = "my-vault-token"
+
+# Keycloak request timeout in seconds (optional)
+timeout = 10
 ```
 
 #### Precedence / Priority Rules

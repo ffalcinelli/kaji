@@ -13,6 +13,7 @@ async fn test_init_client_fail() {
         password: Some("password".to_string()),
         realms: vec![],
         profile: None,
+        timeout: None,
         command: Commands::Validate {
             workspace: Some(PathBuf::from(".")),
         },
@@ -35,6 +36,7 @@ async fn test_run_app_validate_non_existent() {
         password: None,
         realms: vec![],
         profile: None,
+        timeout: None,
         command: Commands::Validate {
             workspace: Some(PathBuf::from("non-existent-dir-123")),
         },

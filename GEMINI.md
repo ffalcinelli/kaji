@@ -67,7 +67,7 @@ For any resource `resource.yaml`, `kaji` looks for `resource.{profile}.yaml` and
 `kaji` supports project-level settings to override defaults and connection variables persistently. 
 
 ### Architecture & Pipeline
-1. **Schema Definition**: The `Config` struct is defined in [src/args.rs](src/args.rs). It represents optional fields for Keycloak connection credentials, vault parameters, and the workspace folder.
+1. **Schema Definition**: The `Config` struct is defined in [src/args.rs](src/args.rs). It represents optional fields for Keycloak connection credentials, vault parameters, the workspace folder, and request timeouts.
 2. **File Lookup**: In [src/lib.rs](src/lib.rs), `load_config_file` checks for:
    * A custom config path specified via `--config` CLI flag or `KAJI_CONFIG` env var.
    * `kaji.toml` in the current working directory.

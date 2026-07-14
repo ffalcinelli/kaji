@@ -19,7 +19,7 @@ This document provides context and guidelines for Google Jules when writing, ref
 2.  **Tokio for Async Tests**:
     *   Use `#[tokio::test]` for asynchronous test cases.
 3.  **Mockito**:
-    *   Optionally used in older tests to mock external HTTP responses (though Axum is preferred for Keycloak API mocking).
+    *   Optionally used in older tests to mock external HTTP responses (though Axum is preferred for Keycloak API mocking). Can also be used to test request timeout scenarios by using `with_chunked_body` to introduce simulated response delays.
 4.  **Tempfile**:
     *   Use `tempfile::tempdir()` to create temporary workspaces for reading/writing configuration files during tests to avoid polluting the host system.
 5.  **Cargo Tarpaulin**:

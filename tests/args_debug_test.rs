@@ -14,6 +14,7 @@ fn test_cli_debug_obfuscation() {
         client_id: Some("admin-cli".to_string()),
         client_secret: Some("secret_client".to_string()),
         profile: None,
+        timeout: None,
         vault_addr: None,
         vault_token: Some("secret_vault".to_string()),
         config: None,

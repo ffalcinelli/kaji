@@ -38,6 +38,10 @@ pub struct Cli {
     #[arg(long, short = 'p')]
     pub profile: Option<String>,
 
+    /// Keycloak request timeout in seconds
+    #[arg(long)]
+    pub timeout: Option<u64>,
+
     /// HashiCorp Vault URL
     #[arg(long, env = "VAULT_ADDR")]
     pub vault_addr: Option<String>,
@@ -65,6 +69,7 @@ impl fmt::Debug for Cli {
                 &self.client_secret.as_ref().map(|_| "********"),
             )
             .field("profile", &self.profile)
+            .field("timeout", &self.timeout)
             .field("vault_addr", &self.vault_addr)
             .field(
                 "vault_token",
@@ -176,6 +181,8 @@ pub struct Config {
     pub client_id: Option<String>,
     /// Environment Profile Name
     pub profile: Option<String>,
+    /// Keycloak request timeout in seconds
+    pub timeout: Option<u64>,
     /// HashiCorp Vault URL
     pub vault_addr: Option<String>,
     /// HashiCorp Vault Token

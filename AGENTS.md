@@ -66,7 +66,7 @@ Multi-environment configurations are managed using the `--profile` (`-p`) flag:
 
 ## ⚙️ Project Configuration File (`kaji.toml` / `.kaji.toml`)
 
-Project connection defaults and workspace parameters can be declared inside `kaji.toml` or `.kaji.toml` files in the current working directory. The configuration file is parsed at startup and merged with command-line inputs.
+Project connection defaults, request timeouts, and workspace parameters can be declared inside `kaji.toml` or `.kaji.toml` files in the current working directory. The configuration file is parsed at startup and merged with command-line inputs.
 
 Settings are resolved in the following precedence order:
 1. **CLI Flags** (highest)
