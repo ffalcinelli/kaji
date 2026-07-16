@@ -23,7 +23,7 @@ All business logic is located in the `src/` directory:
 *   [`src/models.rs`](src/models.rs): Strongly-typed Serde representations of Keycloak resources. Implements the `KeycloakResource` and `ResourceMeta` traits.
 *   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline.
 *   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation.
-*   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules.
+*   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules. Supports optional pruning/deletion of orphaned remote resources via the `--prune` flag.
 *   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints.
 *   [`src/clean.rs`](src/clean.rs): Removes unreferenced or invalid configuration files from the workspace.
 *   [`src/init.rs`](src/init.rs): Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.

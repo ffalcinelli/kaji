@@ -23,9 +23,9 @@ This document provides context and guidelines for Google Jules when writing, ref
 4.  **Tempfile**:
     *   Use `tempfile::tempdir()` to create temporary workspaces for reading/writing configuration files during tests to avoid polluting the host system.
 5.  **Cargo Tarpaulin**:
-    *   Used to measure test coverage. Run coverage checks with:
+    *   Used to measure test coverage. The codebase maintains a strict **95% minimum code coverage** policy. Run coverage checks with:
         ```bash
-        cargo tarpaulin --out Xml
+        cargo tarpaulin
         ```
 
 ## Guidelines for Writing Tests
@@ -37,3 +37,4 @@ This document provides context and guidelines for Google Jules when writing, ref
     1.  A validation test in [validate_test.rs](tests/validate_test.rs).
     2.  An integration test verifying planning and reconciliation in [plan_test.rs](tests/plan_test.rs) or [apply_test.rs](tests/apply_test.rs).
     3.  A model coverage test in [models_coverage_test.rs](tests/models_coverage_test.rs).
+    4.  Verification that total project code coverage meets the **95% threshold**. Avoid writing "fake" or empty test cases to inflate coverage; all tests must validate realistic execution, errors, or configuration edge cases.

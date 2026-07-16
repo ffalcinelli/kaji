@@ -9,7 +9,7 @@ This document serves as the internal developer guide for `kaji`. It explains the
 1.  **Desired State**: Defined in local YAML files within the workspace. Support for **Environment Profiles & Overlays** allows for multi-environment configurations (e.g., `realm.yaml` + `realm.prod.yaml`).
 2.  **Current State**: Fetched from the Keycloak Admin API.
 3.  **Diff Engine (`src/plan/`)**: Compares the two states to identify what needs to be Created, Updated, or Deleted. It generates a `.kajiplan` file in the workspace containing the list of files that have pending changes.
-4.  **Reconciler (`src/apply/`)**: Executes the necessary API calls to bring the Current State in line with the Desired State. It uses **Dependency-Aware (Staged) Reconciliation** to ensure resources are applied in the correct order (e.g., Realms before Roles, Roles before Users).
+4.  **Reconciler (`src/apply/`)**: Executes the necessary API calls to bring the Current State in line with the Desired State. It uses **Dependency-Aware (Staged) Reconciliation** to ensure resources are applied in the correct order (e.g., Realms before Roles, Roles before Users). Supports optional pruning/deletion of orphaned remote resources not declared in the workspace configuration using the `--prune` flag (excluding protected system resources like default clients/roles).
 
 ### Core Modules
 
@@ -133,7 +133,7 @@ Located in `benches/`. Used to monitor performance for large workspaces with tho
 Secret handling is managed via the `SecretResolver` trait, which allows for multiple resolution strategies:
 
 - **EnvResolver**: Resolves `${VAR_NAME}` from the environment or a `.secrets` file.
-- **VaultResolver**: Resolves `${vault:mount/path#field}` from a HashiCorp Vault KV2 engine.
+- **VaultResolver**: Resolves `${vault:mount/path#field}` from a HashiCorp Vault KV2 engine. Utilizes a thread-safe in-memory cache (`tokio::sync::Mutex<HashMap>`) to avoid duplicate/redundant HTTP GET requests to Vault for the same secret path during planning/applying.
 - **CompositeResolver**: Chains multiple resolvers in a prioritized order.
 
 The masking heuristic during `inspect` looks for keys matching these patterns:

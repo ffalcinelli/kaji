@@ -841,3 +841,78 @@ async fn test_apply_enrichment() {
     assert_eq!(updated_client_2.id, None);
     assert_eq!(updated_client_2.name, Some("Initial Name 2".to_string()));
 }
+
+#[tokio::test]
+async fn test_apply_pruning() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    // Create realm.yaml
+    let realm = RealmRepresentation {
+        realm: "test-realm".to_string(),
+        enabled: Some(true),
+        display_name: Some("Test Realm".to_string()),
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        realm_dir.join("realm.yaml"),
+        serde_yaml::to_string(&realm).unwrap(),
+    )
+    .unwrap();
+
+    // Create clients directory but only put client-1.yaml in it (client-2 exists on the mock server and should be pruned)
+    let clients_dir = realm_dir.join("clients");
+    fs::create_dir(&clients_dir).unwrap();
+    let client_rep = ClientRepresentation {
+        id: Some("1".to_string()),
+        client_id: Some("client-1".to_string()),
+        name: Some("Client 1".to_string()),
+        description: None,
+        enabled: Some(true),
+        protocol: None,
+        redirect_uris: None,
+        web_origins: None,
+        public_client: None,
+        bearer_only: None,
+        service_accounts_enabled: None,
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        clients_dir.join("client-1.yaml"),
+        serde_yaml::to_string(&client_rep).unwrap(),
+    )
+    .unwrap();
+
+    let ui = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true, true, true]), // Send anyway, Enrichment client-1, Pruning client-2
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    apply::run_ext(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        false, // yes = false (prompt)
+        false, // review = false
+        true,  // prune = true
+        ui,
+        resolver.clone(),
+        None,
+    )
+    .await
+    .expect("Apply pruning failed");
+}

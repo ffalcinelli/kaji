@@ -454,6 +454,25 @@ impl KeycloakClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
+
+            #[derive(Deserialize)]
+            struct KeycloakErrorBody {
+                error: Option<String>,
+                #[serde(rename = "error_description")]
+                error_description: Option<String>,
+                #[serde(rename = "errorMessage")]
+                error_message: Option<String>,
+            }
+
+            if let Ok(err_body) = serde_json::from_str::<KeycloakErrorBody>(&text) {
+                let detail = err_body
+                    .error_description
+                    .or(err_body.error_message)
+                    .unwrap_or_else(|| err_body.error.unwrap_or_default());
+                if !detail.is_empty() {
+                    anyhow::bail!("{}: {} - {}", context_msg, status, detail);
+                }
+            }
             anyhow::bail!("{}: {} - {}", context_msg, status, text);
         }
         Ok(response)
@@ -828,5 +847,76 @@ mod tests {
                 .to_string()
                 .contains("Failed to send PUT request")
         );
+    }
+
+    #[tokio::test]
+    async fn test_check_response_structured_error() {
+        use mockito::Server;
+        use serde_json::json;
+
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/test-err")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "error": "invalid_request",
+                    "error_description": "Custom error detail message"
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(server.url());
+        client.token = Some("mock_token".to_string());
+        let result = client
+            .get::<serde_json::Value>(&format!("{}/test-err", server.url()))
+            .await;
+
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("Custom error detail message"),
+            "Error message was: {}",
+            err_str
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_check_response_error_message() {
+        use mockito::Server;
+        use serde_json::json;
+
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/test-err2")
+            .with_status(409)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "errorMessage": "User already exists"
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(server.url());
+        client.token = Some("mock_token".to_string());
+        let result = client
+            .get::<serde_json::Value>(&format!("{}/test-err2", server.url()))
+            .await;
+
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("User already exists"),
+            "Error message was: {}",
+            err_str
+        );
+        mock.assert_async().await;
     }
 }

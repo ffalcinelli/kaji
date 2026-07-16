@@ -235,6 +235,7 @@ async fn handle_apply(
     workspace: &std::path::Path,
     yes: bool,
     review: bool,
+    prune: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -248,12 +249,13 @@ async fn handle_apply(
         .cyan()
         .bold()
     );
-    apply::run(
+    apply::run_ext(
         &client,
         workspace.to_path_buf(),
         &cli.realms,
         yes,
         review,
+        prune,
         Arc::new(crate::utils::ui::DialoguerUi::new()),
         resolver,
         cli.profile.clone(),
@@ -441,8 +443,10 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Validate { .. } => {
             handle_validate(&cli, &workspace).await?;
         }
-        Commands::Apply { yes, review, .. } => {
-            handle_apply(&cli, profile.as_ref(), &workspace, *yes, *review).await?;
+        Commands::Apply {
+            yes, review, prune, ..
+        } => {
+            handle_apply(&cli, profile.as_ref(), &workspace, *yes, *review, *prune).await?;
         }
         Commands::Plan {
             changes_only,

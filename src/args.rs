@@ -111,6 +111,10 @@ pub enum Commands {
         /// Ask for confirmation before applying each resource
         #[arg(long, short = 'r', default_value = "false")]
         review: bool,
+
+        /// Prune remote resources that are not declared in the workspace configuration
+        #[arg(long, default_value = "false")]
+        prune: bool,
     },
     /// Plan the application of the local Keycloak configuration
     Plan {

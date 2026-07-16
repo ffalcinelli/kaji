@@ -81,6 +81,7 @@ async fn test_run_app_apply() -> Result<()> {
             workspace: Some(workspace),
             yes: true,
             review: false,
+            prune: false,
         },
         server: Some(mock_url),
         realms: vec!["test-realm".to_string()],

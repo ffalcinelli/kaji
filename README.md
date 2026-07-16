@@ -257,6 +257,9 @@ kaji apply --profile prod --yes
 
 # Review mode: confirm each change before application
 kaji apply --profile prod --review
+
+# Prune mode: delete remote resources that are not declared in local config files
+kaji apply --profile prod --prune
 ```
 
 ### `drift`
