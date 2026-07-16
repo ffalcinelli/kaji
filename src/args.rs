@@ -38,6 +38,10 @@ pub struct Cli {
     #[arg(long, short = 'p')]
     pub profile: Option<String>,
 
+    /// Keycloak request timeout in seconds
+    #[arg(long)]
+    pub timeout: Option<u64>,
+
     /// HashiCorp Vault URL
     #[arg(long, env = "VAULT_ADDR")]
     pub vault_addr: Option<String>,
@@ -65,6 +69,7 @@ impl fmt::Debug for Cli {
                 &self.client_secret.as_ref().map(|_| "********"),
             )
             .field("profile", &self.profile)
+            .field("timeout", &self.timeout)
             .field("vault_addr", &self.vault_addr)
             .field(
                 "vault_token",
@@ -106,6 +111,10 @@ pub enum Commands {
         /// Ask for confirmation before applying each resource
         #[arg(long, short = 'r', default_value = "false")]
         review: bool,
+
+        /// Prune remote resources that are not declared in the workspace configuration
+        #[arg(long, default_value = "false")]
+        prune: bool,
     },
     /// Plan the application of the local Keycloak configuration
     Plan {
@@ -176,6 +185,8 @@ pub struct Config {
     pub client_id: Option<String>,
     /// Environment Profile Name
     pub profile: Option<String>,
+    /// Keycloak request timeout in seconds
+    pub timeout: Option<u64>,
     /// HashiCorp Vault URL
     pub vault_addr: Option<String>,
     /// HashiCorp Vault Token

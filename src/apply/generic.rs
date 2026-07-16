@@ -24,6 +24,7 @@ pub async fn apply_resources<T>(
     review: bool,
     ui: Arc<dyn Ui>,
     yes: bool,
+    prune: bool,
 ) -> Result<()>
 where
     T: KeycloakResource
@@ -48,7 +49,7 @@ where
         .with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, realm_name))?;
 
     let existing_map: HashMap<String, String> = existing_resources
-        .into_iter()
+        .iter()
         .filter_map(|r| {
             let identity = r.get_identity();
             let id = r.get_id();
@@ -198,7 +199,109 @@ where
 
     crate::utils::join_all_tasks(set, None).await?;
     pb.finish_with_message(format!("Applied {}", T::LABEL));
+
+    if prune {
+        let mut declared = HashSet::new();
+        if async_fs::try_exists(&resources_dir).await? {
+            let mut entries = async_fs::read_dir(&resources_dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.extension().is_none_or(|ext| ext != "yaml") {
+                    continue;
+                }
+                if is_overlay_file(&path, profile.as_deref()) {
+                    continue;
+                }
+                if let Ok(content) = async_fs::read_to_string(&path).await {
+                    if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
+                        if let Ok(rep) = serde_json::from_value::<T>(val) {
+                            if let Some(identity) = rep.get_identity() {
+                                declared.insert(identity);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for remote in &existing_resources {
+            if let (Some(identity), Some(id)) = (remote.get_identity(), remote.get_id()) {
+                if !declared.contains(&identity) {
+                    if is_protected_resource::<T>(&identity, realm_name) {
+                        continue;
+                    }
+
+                    let proceed = if yes {
+                        true
+                    } else {
+                        ui.confirm(
+                            &format!("Prune/Delete remote {} '{}'?", T::LABEL, remote.get_name()),
+                            false,
+                        )?
+                    };
+
+                    if proceed {
+                        client.delete_resource::<T>(id).await.with_context(|| {
+                            format!("Failed to prune {} '{}'", T::LABEL, remote.get_name())
+                        })?;
+                        println!("  Removed/Pruned {} {}", T::LABEL, remote.get_name());
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
+}
+
+fn is_protected_resource<T>(identity: &str, realm_name: &str) -> bool
+where
+    T: KeycloakResource,
+{
+    let path = T::API_PATH;
+    if path == "clients" {
+        let protected = [
+            "admin-cli",
+            "security-admin-console",
+            "account",
+            "account-console",
+            "broker",
+            "realm-management",
+        ];
+        protected.contains(&identity)
+    } else if path == "roles" {
+        let default_role = format!("default-roles-{}", realm_name);
+        let protected = ["offline_access", "uma_authorization", &default_role];
+        protected.contains(&identity)
+    } else if path == "client-scopes" {
+        let protected = [
+            "profile",
+            "email",
+            "address",
+            "phone",
+            "offline_access",
+            "roles",
+            "web-origins",
+            "microprofile-jwt",
+        ];
+        protected.contains(&identity)
+    } else if path == "authentication/flows" {
+        let protected = [
+            "browser",
+            "direct grant",
+            "registration",
+            "registration form",
+            "reset credentials",
+            "clients",
+            "first broker login",
+            "saml ecp",
+            "docker auth",
+            "http challenge",
+        ];
+        protected.contains(&identity)
+    } else {
+        false
+    }
 }
 
 pub async fn check_and_update_enrichment<T>(
@@ -491,5 +594,75 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_is_protected_resource_branches() {
+        use crate::models::{
+            AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
+            GroupRepresentation, RoleRepresentation,
+        };
+
+        // clients
+        assert!(is_protected_resource::<ClientRepresentation>(
+            "admin-cli",
+            "myrealm"
+        ));
+        assert!(is_protected_resource::<ClientRepresentation>(
+            "security-admin-console",
+            "myrealm"
+        ));
+        assert!(is_protected_resource::<ClientRepresentation>(
+            "account", "myrealm"
+        ));
+        assert!(!is_protected_resource::<ClientRepresentation>(
+            "my-custom-client",
+            "myrealm"
+        ));
+
+        // roles
+        assert!(is_protected_resource::<RoleRepresentation>(
+            "offline_access",
+            "myrealm"
+        ));
+        assert!(is_protected_resource::<RoleRepresentation>(
+            "default-roles-myrealm",
+            "myrealm"
+        ));
+        assert!(!is_protected_resource::<RoleRepresentation>(
+            "my-custom-role",
+            "myrealm"
+        ));
+
+        // client-scopes
+        assert!(is_protected_resource::<ClientScopeRepresentation>(
+            "profile", "myrealm"
+        ));
+        assert!(is_protected_resource::<ClientScopeRepresentation>(
+            "roles", "myrealm"
+        ));
+        assert!(!is_protected_resource::<ClientScopeRepresentation>(
+            "my-custom-scope",
+            "myrealm"
+        ));
+
+        // authentication flows
+        assert!(is_protected_resource::<AuthenticationFlowRepresentation>(
+            "browser", "myrealm"
+        ));
+        assert!(is_protected_resource::<AuthenticationFlowRepresentation>(
+            "direct grant",
+            "myrealm"
+        ));
+        assert!(!is_protected_resource::<AuthenticationFlowRepresentation>(
+            "my-custom-flow",
+            "myrealm"
+        ));
+
+        // other (e.g. groups)
+        assert!(!is_protected_resource::<GroupRepresentation>(
+            "my-custom-group",
+            "myrealm"
+        ));
     }
 }

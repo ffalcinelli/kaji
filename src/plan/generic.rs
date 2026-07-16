@@ -10,6 +10,7 @@ use tokio::fs as async_fs;
 
 use super::{PlanContext, PlanSummary, print_diff};
 
+#[rustfmt::skip]
 pub async fn plan_resources<T>(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSummary)>
 where
     T: KeycloakResource
@@ -31,9 +32,7 @@ where
     }
 
     let existing_resources =
-        ctx.client.get_resources::<T>().await.with_context(|| {
-            format!("Failed to get {} for realm '{}'", T::LABEL, ctx.realm_name)
-        })?;
+        ctx.client.get_resources::<T>().await.with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, ctx.realm_name))?;
 
     let existing_map: HashMap<String, T> = existing_resources
         .into_iter()
@@ -60,21 +59,9 @@ where
             set.spawn(async move {
                 let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
                 substitute_secrets(&mut val, resolver).await?;
-                let local: T = serde_json::from_value(val).with_context(|| {
-                    format!(
-                        "Failed to deserialize YAML file {:?} in realm '{}'",
-                        path, realm_name
-                    )
-                })?;
+                let local: T = serde_json::from_value(val).with_context(|| format!("Failed to deserialize YAML file {:?} in realm '{}'", path, realm_name))?;
 
-                let identity = local.get_identity().with_context(|| {
-                    format!(
-                        "Failed to get identity for {} in {:?} in realm '{}'",
-                        T::LABEL,
-                        path,
-                        realm_name
-                    )
-                })?;
+                let identity = local.get_identity().with_context(|| format!("Failed to get identity for {} in {:?} in realm '{}'", T::LABEL, path, realm_name))?;
                 let remote = existing_map.get(&identity).cloned();
 
                 Ok::<(T, PathBuf, Option<T>), anyhow::Error>((local, path, remote))
@@ -93,38 +80,18 @@ where
                 rc.clear_metadata();
             }
             let diff_name = format!("{} {}", T::LABEL, local.get_name());
-            let ch = print_diff(
-                &diff_name,
-                Some(&rc),
-                &local,
-                ctx.options.changes_only,
-                ctx.options.verbose,
-                T::SECRET_PREFIX,
-            )?;
+            let ch = print_diff(&diff_name, Some(&rc), &local, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX)?;
             remote_clone = Some(rc);
             ch
         } else {
             println!("\n{} Will create {}", SPARKLE, T::LABEL);
-            print_diff(
-                &format!("{} {}", T::LABEL, local.get_name()),
-                None::<&T>,
-                &local,
-                ctx.options.changes_only,
-                ctx.options.verbose,
-                T::SECRET_PREFIX,
-            )?
+            print_diff(&format!("{} {}", T::LABEL, local.get_name()), None::<&T>, &local, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX)?
         };
 
         if changed {
             let mut include = true;
             if ctx.options.interactive {
-                include = super::prompt_interactive_change(
-                    ctx.ui,
-                    &format!("{} {}", T::LABEL, local.get_name()),
-                    remote_clone.as_ref(),
-                    &local,
-                    T::SECRET_PREFIX,
-                )?;
+                include = super::prompt_interactive_change(ctx.ui, &format!("{} {}", T::LABEL, local.get_name()), remote_clone.as_ref(), &local, T::SECRET_PREFIX)?;
             }
             if include {
                 changed_files.push(path);

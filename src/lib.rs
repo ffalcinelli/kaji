@@ -58,6 +58,8 @@ pub struct Profile {
     pub vault_addr: Option<String>,
     /// Token for HashiCorp Vault server (optional).
     pub vault_token: Option<String>,
+    /// Timeout in seconds (optional).
+    pub timeout: Option<u64>,
 }
 
 /// Loads a profile configuration file from the `profiles/` directory in the workspace.
@@ -136,7 +138,9 @@ pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<Keycloa
         .and_then(|p| p.password.clone())
         .or_else(|| cli.password.clone());
 
-    let mut client = KeycloakClient::new(server);
+    let timeout_secs = cli.timeout.unwrap_or(10);
+    let mut client =
+        KeycloakClient::new(server).with_timeout(std::time::Duration::from_secs(timeout_secs));
     client
         .login(
             &client_id,
@@ -231,6 +235,7 @@ async fn handle_apply(
     workspace: &std::path::Path,
     yes: bool,
     review: bool,
+    prune: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -244,12 +249,13 @@ async fn handle_apply(
         .cyan()
         .bold()
     );
-    apply::run(
+    apply::run_ext(
         &client,
         workspace.to_path_buf(),
         &cli.realms,
         yes,
         review,
+        prune,
         Arc::new(crate::utils::ui::DialoguerUi::new()),
         resolver,
         cli.profile.clone(),
@@ -415,6 +421,20 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         None
     };
 
+    // Resolve timeout based on:
+    // CLI Flags > Active Profile > Environment Variables > TOML Configuration > Default Fallbacks
+    let resolved_timeout = cli
+        .timeout
+        .or_else(|| profile.as_ref().and_then(|p| p.timeout))
+        .or_else(|| {
+            std::env::var("KEYCLOAK_TIMEOUT")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+        })
+        .or(config.timeout)
+        .unwrap_or(10);
+    cli.timeout = Some(resolved_timeout);
+
     // 6. Execute subcommand handlers
     match &cli.command {
         Commands::Inspect { yes, .. } => {
@@ -423,8 +443,10 @@ pub async fn run_app(cli: Cli) -> Result<()> {
         Commands::Validate { .. } => {
             handle_validate(&cli, &workspace).await?;
         }
-        Commands::Apply { yes, review, .. } => {
-            handle_apply(&cli, profile.as_ref(), &workspace, *yes, *review).await?;
+        Commands::Apply {
+            yes, review, prune, ..
+        } => {
+            handle_apply(&cli, profile.as_ref(), &workspace, *yes, *review, *prune).await?;
         }
         Commands::Plan {
             changes_only,

@@ -248,4 +248,26 @@ mod tests {
         run(workspace_dir.clone(), false, &[], &ui).await.unwrap();
         assert!(workspace_dir.join("realm1").exists());
     }
+
+    #[tokio::test]
+    async fn test_clean_confirm_subset_yes() {
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().to_path_buf();
+        fs::create_dir(workspace_dir.join("realm1")).await.unwrap();
+        fs::create_dir(workspace_dir.join("realm2")).await.unwrap();
+
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![true]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(workspace_dir.clone(), false, &["realm1".to_string()], &ui)
+            .await
+            .unwrap();
+
+        assert!(!workspace_dir.join("realm1").exists());
+        assert!(workspace_dir.join("realm2").exists());
+    }
 }

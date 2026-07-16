@@ -7,7 +7,7 @@ pub mod generic;
 pub mod realm;
 
 macro_rules! spawn_apply_stage {
-    ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, [ $($t:ty),* ]) => {
+    ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, $prune:expr, [ $($t:ty),* ]) => {
         $(
             let client_clone = $client.clone();
             let dir_clone = $dir.clone();
@@ -19,6 +19,7 @@ macro_rules! spawn_apply_stage {
             let ui_clone = Arc::clone(&$ui);
             let review_clone = $review;
             let yes_clone = $yes;
+            let prune_clone = $prune;
             $set.spawn(async move {
                 generic::apply_resources::<$t>(
                     &client_clone,
@@ -31,6 +32,7 @@ macro_rules! spawn_apply_stage {
                     review_clone,
                     ui_clone,
                     yes_clone,
+                    prune_clone,
                 )
                 .await
             });
@@ -119,6 +121,34 @@ pub async fn run(
     realms_to_apply: &[String],
     yes: bool,
     review: bool,
+    ui: Arc<dyn Ui>,
+    resolver: Arc<dyn SecretResolver>,
+    profile: Option<String>,
+) -> Result<()> {
+    run_ext(
+        client,
+        workspace_dir,
+        realms_to_apply,
+        yes,
+        review,
+        false,
+        ui,
+        resolver,
+        profile,
+    )
+    .await
+}
+
+/// Reconciles local configuration files in the workspace directory with the remote Keycloak server,
+/// optionally pruning orphaned remote resources.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_ext(
+    client: &KeycloakClient,
+    workspace_dir: PathBuf,
+    realms_to_apply: &[String],
+    yes: bool,
+    review: bool,
+    prune: bool,
     ui: Arc<dyn Ui>,
     resolver: Arc<dyn SecretResolver>,
     profile: Option<String>,
@@ -231,6 +261,7 @@ pub async fn run(
                 review,
                 ui,
                 yes,
+                prune,
             )
             .await
         });
@@ -258,6 +289,7 @@ async fn apply_single_realm(
     review: bool,
     ui: Arc<dyn Ui>,
     yes: bool,
+    prune: bool,
 ) -> Result<()> {
     // Stage 0: Realms
     realm::apply_realm(
@@ -288,6 +320,7 @@ async fn apply_single_realm(
             review,
             ui,
             yes,
+            prune,
             [IdentityProviderRepresentation, RoleRepresentation]
         );
         crate::utils::join_all_tasks(set, None).await?;
@@ -308,6 +341,7 @@ async fn apply_single_realm(
             review,
             ui,
             yes,
+            prune,
             [
                 ClientRepresentation,
                 ClientScopeRepresentation,
@@ -334,6 +368,7 @@ async fn apply_single_realm(
             review,
             ui,
             yes,
+            prune,
             [UserRepresentation]
         );
 

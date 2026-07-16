@@ -308,3 +308,814 @@ async fn test_apply_components_gaps() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn test_apply_secrets_file_loading_coverage() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    fs::create_dir_all(&realm_dir).unwrap();
+
+    fs::write(realm_dir.join("realm.yaml"), "realm: test-realm\n").unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![true]),
+        selects: std::sync::Mutex::new(vec![]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let _ = apply::run(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        true,
+        false,
+        ui.clone(),
+        resolver.clone(),
+        Some("non_existent".to_string()),
+    )
+    .await;
+
+    let profiles_dir = workspace_dir.join("profiles");
+    fs::create_dir(&profiles_dir).unwrap();
+    fs::write(
+        profiles_dir.join("no_secrets.yaml"),
+        "server_url: http://dummy\nclient_id: foo\n",
+    )
+    .unwrap();
+
+    let _ = apply::run(
+        &client,
+        workspace_dir.clone(),
+        &["test-realm".to_string()],
+        true,
+        false,
+        ui.clone(),
+        resolver.clone(),
+        Some("no_secrets".to_string()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_apply_components_enrichment() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    let components_dir = realm_dir.join("components");
+    fs::create_dir_all(&components_dir).unwrap();
+
+    let comp = ComponentRepresentation {
+        id: Some("c1".to_string()),
+        name: Some("component-1".to_string()),
+        provider_id: Some("ldap".to_string()),
+        provider_type: Some("org.keycloak.storage.UserStorageProvider".to_string()),
+        parent_id: Some("test-realm".to_string()),
+        sub_type: None,
+        config: Some(HashMap::new()),
+        extra: HashMap::new(),
+    };
+    fs::write(
+        components_dir.join("comp-1.yaml"),
+        serde_yaml::to_string(&comp).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let planned_files = Arc::new(None);
+    let secrets_path = Arc::new(workspace_dir.join(".secrets"));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true]),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    let _ = apply::components::apply_components_or_keys(
+        &client,
+        &realm_dir,
+        "components",
+        secrets_path.clone(),
+        resolver.clone(),
+        planned_files.clone(),
+        "test-realm",
+        None,
+        ui.clone(),
+        false,
+    )
+    .await;
+
+    let comp_no_id = ComponentRepresentation {
+        id: None,
+        name: Some("comp-2".to_string()),
+        provider_id: Some("ldap".to_string()),
+        provider_type: Some("org.keycloak.storage.UserStorageProvider".to_string()),
+        parent_id: Some("test-realm".to_string()),
+        sub_type: None,
+        config: Some(HashMap::new()),
+        extra: HashMap::new(),
+    };
+    fs::write(
+        components_dir.join("comp-2.yaml"),
+        serde_yaml::to_string(&comp_no_id).unwrap(),
+    )
+    .unwrap();
+
+    let ui2 = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true]),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    let _ = apply::components::apply_components_or_keys(
+        &client,
+        &realm_dir,
+        "components",
+        secrets_path,
+        resolver,
+        planned_files,
+        "test-realm",
+        None,
+        ui2,
+        false,
+    )
+    .await;
+}
+
+#[test]
+fn test_print_diff_and_interactive_prompt() {
+    use kaji::models::RoleRepresentation;
+    use kaji::plan::print_diff;
+
+    let old_role = RoleRepresentation {
+        id: Some("r1-id".to_string()),
+        name: "r1".to_string(),
+        description: Some("old desc".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+
+    let new_role = RoleRepresentation {
+        id: Some("r1-id".to_string()),
+        name: "r1".to_string(),
+        description: Some(
+            "new desc which has longer text and more lines to test hunk printing".to_string(),
+        ),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+
+    let res = print_diff(
+        "role",
+        Some(&old_role),
+        &new_role,
+        false,
+        true,
+        "role_prefix",
+    )
+    .unwrap();
+    assert!(res);
+
+    let res2 = print_diff(
+        "role",
+        Some(&old_role),
+        &new_role,
+        false,
+        false,
+        "role_prefix",
+    )
+    .unwrap();
+    assert!(res2);
+
+    let mut old_map = std::collections::BTreeMap::new();
+    for i in 1..=15 {
+        old_map.insert(format!("f{:02}", i), format!("v{}", i));
+    }
+    let mut new_map = old_map.clone();
+    new_map.insert("f01".to_string(), "changed_v1".to_string());
+    new_map.insert("f15".to_string(), "changed_v15".to_string());
+
+    let res3 = print_diff("map", Some(&old_map), &new_map, false, false, "prefix").unwrap();
+    assert!(res3);
+
+    // Single line diff test
+    let mut old_single = HashMap::new();
+    old_single.insert("val".to_string(), "old".to_string());
+    let mut new_single = HashMap::new();
+    new_single.insert("val".to_string(), "new".to_string());
+
+    let res4 = print_diff(
+        "single",
+        Some(&old_single),
+        &new_single,
+        false,
+        false,
+        "prefix",
+    )
+    .unwrap();
+    assert!(res4);
+}
+
+#[tokio::test]
+async fn test_plan_generic_error_paths() {
+    let mock_url = start_mock_server().await;
+    let client = KeycloakClient::new(mock_url);
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let roles_dir = workspace_dir.join("roles");
+    fs::create_dir_all(&roles_dir).unwrap();
+
+    // Create profiles directory and prod.yaml profile configuration file
+    let profiles_dir = workspace_dir.join("profiles");
+    fs::create_dir_all(&profiles_dir).unwrap();
+    fs::write(profiles_dir.join("prod.yaml"), "").unwrap();
+
+    // Create an overlay file role.prod.yaml to hit overlay check line 52 in plan/generic.rs
+    fs::write(roles_dir.join("role.prod.yaml"), "name: role-prod\n").unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let ctx = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: false,
+            verbose: false,
+        },
+        resolver: resolver.clone(),
+        realm_name: "error-realm",
+        ui: &*ui,
+        profile: None,
+    };
+
+    let res = kaji::plan::generic::plan_resources::<RoleRepresentation>(&ctx).await;
+    assert!(res.is_err());
+
+    let ctx2 = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: false,
+            verbose: false,
+        },
+        resolver: resolver.clone(),
+        realm_name: "test-realm",
+        ui: &*ui,
+        profile: None,
+    };
+
+    fs::write(roles_dir.join("invalid_role.yaml"), "name: { :").unwrap();
+    let res2 = kaji::plan::generic::plan_resources::<RoleRepresentation>(&ctx2).await;
+    assert!(res2.is_err());
+
+    fs::write(
+        roles_dir.join("invalid_deserialize.yaml"),
+        "composite: [1, 2, 3]\n",
+    )
+    .unwrap();
+    let res_deser = kaji::plan::generic::plan_resources::<RoleRepresentation>(&ctx2).await;
+    assert!(res_deser.is_err());
+
+    let clients_dir = workspace_dir.join("clients");
+    fs::create_dir_all(&clients_dir).unwrap();
+    fs::write(
+        clients_dir.join("invalid_client.yaml"),
+        "name: some-client-name\n",
+    )
+    .unwrap();
+
+    let res3 = kaji::plan::generic::plan_resources::<ClientRepresentation>(&ctx2).await;
+    assert!(res3.is_err());
+}
+
+#[tokio::test]
+async fn test_plan_components_and_keys_coverage() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let keys_dir = workspace_dir.join("keys");
+    fs::create_dir_all(&keys_dir).unwrap();
+
+    let comp = ComponentRepresentation {
+        id: None,
+        name: Some("rsa-generated".to_string()),
+        provider_id: Some("rsa-generated".to_string()),
+        provider_type: Some("org.keycloak.keys.KeyProvider".to_string()),
+        parent_id: Some("test-realm".to_string()),
+        sub_type: None,
+        config: Some(HashMap::new()),
+        extra: HashMap::new(),
+    };
+    fs::write(
+        keys_dir.join("rsa-generated.yaml"),
+        serde_yaml::to_string(&comp).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let ctx = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: false,
+            verbose: false,
+        },
+        resolver: resolver.clone(),
+        realm_name: "test-realm",
+        ui: &*ui,
+        profile: None,
+    };
+
+    let res = kaji::plan::components::plan_components_or_keys(&ctx, "keys").await;
+    assert!(res.is_ok());
+
+    // Write an invalid component file to trigger plan/components.rs:75 (deserialize failure)
+    fs::write(keys_dir.join("invalid.yaml"), "providerId: [1, 2, 3]\n").unwrap();
+    let res_err = kaji::plan::components::plan_components_or_keys(&ctx, "keys").await;
+    assert!(res_err.is_err());
+}
+
+#[tokio::test]
+async fn test_apply_authenticator_configs_cache_hits() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("cache-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("cache-realm");
+
+    let auth_configs_dir = realm_dir.join("authenticator-configs");
+    fs::create_dir_all(&auth_configs_dir).unwrap();
+
+    let config1 = AuthenticatorConfigRepresentation {
+        alias: Some("config-0".to_string()),
+        config: Some(HashMap::new()),
+        id: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        auth_configs_dir.join("config-0.yaml"),
+        serde_yaml::to_string(&config1).unwrap(),
+    )
+    .unwrap();
+
+    let config2 = AuthenticatorConfigRepresentation {
+        alias: Some("config-1".to_string()),
+        config: Some(HashMap::new()),
+        id: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        auth_configs_dir.join("config-1.yaml"),
+        serde_yaml::to_string(&config2).unwrap(),
+    )
+    .unwrap();
+
+    let local_flows_dir = realm_dir.join("authentication-flows");
+    fs::create_dir_all(&local_flows_dir).unwrap();
+
+    let flow1 = AuthenticationFlowRepresentation {
+        alias: Some("flow-1".to_string()),
+        authentication_executions: Some(vec![AuthenticationExecutionExportRepresentation {
+            authenticator: Some("review-profile".to_string()),
+            authenticator_config: Some("config-1".to_string()),
+            authenticator_flow: None,
+            flow_alias: None,
+            priority: None,
+            requirement: None,
+            user_setup_allowed: None,
+            id: None,
+            extra: HashMap::new(),
+        }]),
+        built_in: None,
+        description: None,
+        id: None,
+        provider_id: None,
+        top_level: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        local_flows_dir.join("flow-1.yaml"),
+        serde_yaml::to_string(&flow1).unwrap(),
+    )
+    .unwrap();
+
+    let flow2 = AuthenticationFlowRepresentation {
+        alias: Some("flow-2".to_string()),
+        authentication_executions: Some(vec![AuthenticationExecutionExportRepresentation {
+            authenticator: Some("another-authenticator".to_string()),
+            authenticator_config: Some("config-0".to_string()),
+            authenticator_flow: None,
+            flow_alias: None,
+            priority: None,
+            requirement: None,
+            user_setup_allowed: None,
+            id: None,
+            extra: HashMap::new(),
+        }]),
+        built_in: None,
+        description: None,
+        id: None,
+        provider_id: None,
+        top_level: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        local_flows_dir.join("flow-2.yaml"),
+        serde_yaml::to_string(&flow2).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let planned_files = Arc::new(None);
+    let secrets_path = Arc::new(workspace_dir.join(".secrets"));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    let _ = apply::authenticator_config::apply_authenticator_configs(
+        &client,
+        &realm_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        "cache-realm",
+        None,
+        false,
+        ui,
+        true,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_plan_components_interactive() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let components_dir = workspace_dir.join("components");
+    fs::create_dir_all(&components_dir).unwrap();
+
+    let comp = ComponentRepresentation {
+        id: Some("c1".to_string()),
+        name: Some("component-1".to_string()),
+        provider_id: Some("ldap".to_string()),
+        provider_type: Some("org.keycloak.storage.UserStorageProvider".to_string()),
+        parent_id: Some("different-realm".to_string()),
+        sub_type: None,
+        config: Some(HashMap::new()),
+        extra: HashMap::new(),
+    };
+    fs::write(
+        components_dir.join("component-1.yaml"),
+        serde_yaml::to_string(&comp).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![0]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let ctx = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: true,
+            verbose: false,
+        },
+        resolver: resolver.clone(),
+        realm_name: "test-realm",
+        ui: &*ui,
+        profile: None,
+    };
+
+    let res = kaji::plan::components::plan_components_or_keys(&ctx, "components").await;
+    assert!(res.is_ok());
+    let (changed_paths, summary) = res.unwrap();
+    assert_eq!(changed_paths.len(), 1);
+    assert_eq!(summary.updated, 1);
+
+    let keys_dir = workspace_dir.join("keys");
+    fs::create_dir_all(&keys_dir).unwrap();
+
+    let key_comp = ComponentRepresentation {
+        id: Some("rsa-generated-id".to_string()),
+        name: Some("rsa-generated".to_string()),
+        provider_id: Some("rsa-generated".to_string()),
+        provider_type: Some("org.keycloak.keys.KeyProvider".to_string()),
+        parent_id: Some("different-realm".to_string()),
+        sub_type: None,
+        config: Some(HashMap::new()),
+        extra: HashMap::new(),
+    };
+    fs::write(
+        keys_dir.join("rsa-generated.yaml"),
+        serde_yaml::to_string(&key_comp).unwrap(),
+    )
+    .unwrap();
+
+    let ui2 = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![0]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let ctx2 = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: true,
+            verbose: false,
+        },
+        resolver: resolver.clone(),
+        realm_name: "test-realm",
+        ui: &*ui2,
+        profile: None,
+    };
+
+    let res2 = kaji::plan::components::plan_components_or_keys(&ctx2, "keys").await;
+    assert!(res2.is_ok());
+}
+
+#[tokio::test]
+async fn test_plan_generic_interactive() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let roles_dir = workspace_dir.join("roles");
+    fs::create_dir_all(&roles_dir).unwrap();
+
+    let role = RoleRepresentation {
+        id: Some("r1".to_string()),
+        name: "role-1".to_string(),
+        description: Some("changed-description".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        roles_dir.join("role-1.yaml"),
+        serde_yaml::to_string(&role).unwrap(),
+    )
+    .unwrap();
+
+    let role2 = RoleRepresentation {
+        id: None,
+        name: "r2".to_string(),
+        description: Some("new role description".to_string()),
+        container_id: None,
+        composite: false,
+        client_role: false,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        roles_dir.join("r2.yaml"),
+        serde_yaml::to_string(&role2).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![0, 0]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let ctx = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: true,
+            verbose: false,
+        },
+        resolver,
+        realm_name: "test-realm",
+        ui: &*ui,
+        profile: None,
+    };
+
+    let res = kaji::plan::generic::plan_resources::<RoleRepresentation>(&ctx).await;
+    assert!(res.is_ok());
+    let (changed_paths, summary) = res.unwrap();
+    assert_eq!(changed_paths.len(), 2);
+    assert_eq!(summary.updated, 1);
+    assert_eq!(summary.created, 1);
+}
+
+#[tokio::test]
+async fn test_plan_generic_missing_identity() {
+    use kaji::models::ClientScopeRepresentation;
+    let mock_url = start_mock_server().await;
+    let client = KeycloakClient::new(mock_url);
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    let client_scopes_dir = workspace_dir.join("client-scopes");
+    fs::create_dir_all(&client_scopes_dir).unwrap();
+
+    // Client scope with name None to trigger plan/generic.rs:71-78 (get_identity is None)
+    let scope = ClientScopeRepresentation {
+        id: None,
+        name: None, // Missing name and ID!
+        description: None,
+        protocol: None,
+        attributes: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        client_scopes_dir.join("invalid.yaml"),
+        serde_yaml::to_string(&scope).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(vec![]),
+        confirms: std::sync::Mutex::new(vec![]),
+        selects: std::sync::Mutex::new(vec![]),
+        passwords: std::sync::Mutex::new(vec![]),
+    });
+
+    let ctx = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: &workspace_dir,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: false,
+            verbose: false,
+        },
+        resolver,
+        realm_name: "test-realm",
+        ui: &*ui,
+        profile: None,
+    };
+
+    let res = kaji::plan::generic::plan_resources::<ClientScopeRepresentation>(&ctx).await;
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_apply_authenticator_configs_missing_execution() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("cache-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("cache-realm");
+
+    let auth_configs_dir = realm_dir.join("authenticator-configs");
+    fs::create_dir_all(&auth_configs_dir).unwrap();
+
+    let config1 = AuthenticatorConfigRepresentation {
+        alias: Some("config-0".to_string()),
+        config: Some(HashMap::new()),
+        id: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        auth_configs_dir.join("config-0.yaml"),
+        serde_yaml::to_string(&config1).unwrap(),
+    )
+    .unwrap();
+
+    let local_flows_dir = realm_dir.join("authentication-flows");
+    fs::create_dir_all(&local_flows_dir).unwrap();
+
+    // Authenticator "non-existent" is not in flow-2 executions list on mock server
+    let flow2 = AuthenticationFlowRepresentation {
+        alias: Some("flow-2".to_string()),
+        authentication_executions: Some(vec![AuthenticationExecutionExportRepresentation {
+            authenticator: Some("non-existent".to_string()), // Triggers missing execution error!
+            authenticator_config: Some("config-0".to_string()),
+            authenticator_flow: None,
+            flow_alias: None,
+            priority: None,
+            requirement: None,
+            user_setup_allowed: None,
+            id: None,
+            extra: HashMap::new(),
+        }]),
+        built_in: None,
+        description: None,
+        id: None,
+        provider_id: None,
+        top_level: None,
+        extra: HashMap::new(),
+    };
+    fs::write(
+        local_flows_dir.join("flow-2.yaml"),
+        serde_yaml::to_string(&flow2).unwrap(),
+    )
+    .unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let planned_files = Arc::new(None);
+    let secrets_path = Arc::new(workspace_dir.join(".secrets"));
+    let ui = Arc::new(MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(Vec::new()),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    let res = apply::authenticator_config::apply_authenticator_configs(
+        &client,
+        &realm_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        "cache-realm",
+        None,
+        false,
+        ui,
+        true,
+    )
+    .await;
+    assert!(res.is_err());
+}

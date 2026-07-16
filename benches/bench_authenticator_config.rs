@@ -87,12 +87,14 @@ fn bench_apply_auth_configs(c: &mut Criterion) {
             apply_authenticator_configs(
                 &client,
                 &workspace_dir,
+                Arc::new(workspace_dir.join(".secrets")),
                 resolver.clone(),
                 Arc::new(None),
-                "",
+                "test-realm",
                 None,
                 false,
                 ui.clone(),
+                false,
             )
             .await
             .unwrap();

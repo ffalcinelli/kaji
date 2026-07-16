@@ -340,6 +340,15 @@ async fn get_flows_handler(
                 { "id": "f1", "alias": "flow-1", "providerId": "basic-flow" }
             ])),
         )
+    } else if realm == "cache-realm" {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!([
+                { "id": "f1", "alias": "flow-1", "providerId": "basic-flow" },
+                { "id": "f2", "alias": "flow-2", "providerId": "basic-flow" },
+                { "id": "f3", "alias": "flow-3", "providerId": "basic-flow" }
+            ])),
+        )
     } else {
         (StatusCode::OK, Json(serde_json::json!([])))
     }
@@ -495,6 +504,24 @@ async fn get_flow_executions_handler(
                 }
             ])),
         )
+    } else if realm == "cache-realm" && (flow == "flow-1" || flow == "flow-2" || flow == "flow-3") {
+        (
+            StatusCode::OK,
+            Json(serde_json::json!([
+                {
+                    "id": "exec-3",
+                    "authenticator": "review-profile",
+                    "requirement": "REQUIRED",
+                    "priority": 1
+                },
+                {
+                    "id": "exec-4",
+                    "authenticator": "another-authenticator",
+                    "requirement": "REQUIRED",
+                    "priority": 2
+                }
+            ])),
+        )
     } else {
         (StatusCode::OK, Json(serde_json::json!([])))
     }
@@ -526,9 +553,14 @@ async fn create_config_handler(
     axum::extract::Path((realm, exec_id)): axum::extract::Path<(String, String)>,
     axum::Json(body): axum::Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    if realm == "test-realm" && (exec_id == "exec-1" || exec_id == "exec-2") {
+    if (realm == "test-realm" || realm == "cache-realm")
+        && (exec_id == "exec-1"
+            || exec_id == "exec-2"
+            || exec_id == "exec-3"
+            || exec_id == "exec-4")
+    {
         let mut response_body = body;
-        let config_id = if exec_id == "exec-1" {
+        let config_id = if exec_id == "exec-1" || exec_id == "exec-3" {
             "config-1"
         } else {
             "config-2"

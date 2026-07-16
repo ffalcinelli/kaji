@@ -3,11 +3,15 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use std::collections::HashMap;
+use tokio::sync::Mutex;
+
 /// Resolves secrets from a HashiCorp Vault server.
 pub struct VaultResolver {
     address: String,
     token: String,
     client: reqwest::Client,
+    cache: Mutex<HashMap<String, serde_json::Value>>,
 }
 
 impl VaultResolver {
@@ -21,6 +25,7 @@ impl VaultResolver {
             address: address.trim_end_matches('/').to_string(),
             token: token.to_string(),
             client: reqwest::Client::new(),
+            cache: Mutex::new(HashMap::new()),
         })
     }
 }
@@ -60,6 +65,24 @@ impl SecretResolver for VaultResolver {
             ));
         }
 
+        // Check cache first
+        {
+            let cache_lock = self.cache.lock().await;
+            if let Some(secret_data) = cache_lock.get(full_path) {
+                if let Some(val) = secret_data.get(field) {
+                    if let Some(s) = val.as_str() {
+                        return Ok(Some(s.to_string()));
+                    }
+                    return Ok(Some(val.to_string()));
+                }
+                return Err(anyhow::anyhow!(
+                    "Field '{}' not found in cached vault secret '{}'",
+                    field,
+                    full_path
+                ));
+            }
+        }
+
         // Split mount and path
         let path_parts: Vec<&str> = full_path.splitn(2, '/').collect();
         if path_parts.len() != 2 {
@@ -81,7 +104,15 @@ impl SecretResolver for VaultResolver {
 
         if resp.status().is_success() {
             let body: VaultResponse = resp.json().await?;
-            if let Some(val) = body.data.data.get(field) {
+            let secret_data = body.data.data;
+
+            // Insert into cache
+            {
+                let mut cache_lock = self.cache.lock().await;
+                cache_lock.insert(full_path.to_string(), secret_data.clone());
+            }
+
+            if let Some(val) = secret_data.get(field) {
                 if let Some(s) = val.as_str() {
                     return Ok(Some(s.to_string()));
                 }
@@ -287,6 +318,133 @@ mod tests {
                 .to_string()
                 .contains("Field 'missing_field' not found")
         );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_caching() {
+        let mut server = Server::new_async().await;
+        // Mock only allows exactly one call
+        let mock = server
+            .mock("GET", "/v1/secret/data/mysecret")
+            .match_header("X-Vault-Token", "mock-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "data": {
+                        "data": {
+                            "username": "user1",
+                            "password": "pass1"
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+
+        let res_user = resolver
+            .resolve("vault:secret/mysecret#username")
+            .await
+            .unwrap();
+        assert_eq!(res_user, Some("user1".to_string()));
+
+        let res_pass = resolver
+            .resolve("vault:secret/mysecret#password")
+            .await
+            .unwrap();
+        assert_eq!(res_pass, Some("pass1".to_string()));
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_cached_non_string_field() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/secret/data/mysecret")
+            .match_header("X-Vault-Token", "mock-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "data": {
+                        "data": {
+                            "port": 8080
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+
+        // 1st call gets value, caches it
+        let res1 = resolver
+            .resolve("vault:secret/mysecret#port")
+            .await
+            .unwrap();
+        assert_eq!(res1, Some("8080".to_string()));
+
+        // 2nd call should hit the cache (port is a number, so hits the non-string val.to_string() line)
+        let res2 = resolver
+            .resolve("vault:secret/mysecret#port")
+            .await
+            .unwrap();
+        assert_eq!(res2, Some("8080".to_string()));
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_cached_missing_field() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/secret/data/mysecret")
+            .match_header("X-Vault-Token", "mock-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "data": {
+                        "data": {
+                            "username": "user1"
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+
+        // 1st call caches the data
+        let res1 = resolver
+            .resolve("vault:secret/mysecret#username")
+            .await
+            .unwrap();
+        assert_eq!(res1, Some("user1".to_string()));
+
+        // 2nd call asks for missing field on cached secret data, hits cache-missing-field error path
+        let res2 = resolver
+            .resolve("vault:secret/mysecret#missing_field")
+            .await;
+        assert!(res2.is_err());
+        assert!(
+            res2.unwrap_err()
+                .to_string()
+                .contains("Field 'missing_field' not found in cached vault secret")
+        );
+
         mock.assert_async().await;
     }
 }

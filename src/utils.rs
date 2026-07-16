@@ -56,25 +56,23 @@ pub fn recursive_sort(value: &mut serde_json::Value) {
             for v in arr.iter_mut() {
                 recursive_sort(v);
             }
-            if arr.is_empty() {
-                return;
-            }
-
-            // Sort arrays of simple values (Strings, Numbers, Bools)
-            if arr
-                .iter()
-                .all(|v| v.is_string() || v.is_number() || v.is_boolean())
-            {
-                arr.sort_by_cached_key(|a| a.to_string());
-            } else if arr.iter().all(|v| v.is_object()) {
-                // Try to find a common sorting key: id, clientId, username, alias, or name
-                let keys = ["id", "clientId", "username", "alias", "name"];
-                for key in keys {
-                    if arr.iter().all(|v| v.get(key).is_some()) {
-                        arr.sort_by_cached_key(|a| {
-                            a.get(key).map_or(String::new(), |v| v.to_string())
-                        });
-                        break;
+            if !arr.is_empty() {
+                // Sort arrays of simple values (Strings, Numbers, Bools)
+                if arr
+                    .iter()
+                    .all(|v| v.is_string() || v.is_number() || v.is_boolean())
+                {
+                    arr.sort_by_cached_key(|a| a.to_string());
+                } else if arr.iter().all(|v| v.is_object()) {
+                    // Try to find a common sorting key: id, clientId, username, alias, or name
+                    let keys = ["id", "clientId", "username", "alias", "name"];
+                    for key in keys {
+                        if arr.iter().all(|v| v.get(key).is_some()) {
+                            arr.sort_by_cached_key(|a| {
+                                a.get(key).map_or(String::new(), |v| v.to_string())
+                            });
+                            break;
+                        }
                     }
                 }
             }

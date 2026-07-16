@@ -19,6 +19,7 @@ client_secret: "prod-secret"
 user: "prod-admin"
 password: "prod-password"
 secrets_file: ".secrets.prod"
+timeout: 15
 "#;
     fs::write(profiles_dir.join("prod.yaml"), profile_content)?;
 
@@ -27,6 +28,7 @@ secrets_file: ".secrets.prod"
     assert_eq!(profile.server_url, "https://mock.prod.example.com");
     assert_eq!(profile.client_id, Some("prod-cli".to_string()));
     assert_eq!(profile.user, Some("prod-admin".to_string()));
+    assert_eq!(profile.timeout, Some(15));
 
     Ok(())
 }
@@ -63,6 +65,7 @@ client_secret: "secret"
         client_id: Some("ignored".to_string()),
         client_secret: None,
         profile: Some("test".to_string()),
+        timeout: None,
         vault_addr: None,
         vault_token: None,
         config: None,
@@ -95,6 +98,7 @@ async fn test_init_secrets_with_profile() -> Result<()> {
         secrets_file: Some(".secrets.prod".to_string()),
         vault_addr: None,
         vault_token: None,
+        timeout: None,
     };
 
     let cli = Cli {
@@ -108,6 +112,7 @@ async fn test_init_secrets_with_profile() -> Result<()> {
         client_id: Some("admin-cli".to_string()),
         client_secret: None,
         profile: Some("prod".to_string()),
+        timeout: None,
         vault_addr: None,
         vault_token: None,
         config: None,
@@ -134,6 +139,7 @@ async fn test_init_secrets_with_vault() -> Result<()> {
         secrets_file: None,
         vault_addr: Some("http://127.0.0.1:8200".to_string()),
         vault_token: Some("root-token".to_string()),
+        timeout: None,
     };
 
     let cli = Cli {
@@ -147,6 +153,7 @@ async fn test_init_secrets_with_vault() -> Result<()> {
         client_id: Some("admin-cli".to_string()),
         client_secret: None,
         profile: Some("prod".to_string()),
+        timeout: None,
         vault_addr: None,
         vault_token: None,
         config: None,
