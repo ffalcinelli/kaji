@@ -121,21 +121,24 @@ fn get_object_identifier(map: &serde_json::Map<String, Value>) -> Option<String>
 
 /// Helper to format environment variable names
 fn format_env_var_name(prefix: &str, key: &str) -> String {
-    let env_var_name = if prefix.is_empty() {
-        format!("KEYCLOAK_{}", key)
-    } else {
-        format!("KEYCLOAK_{}_{}", prefix, key)
-    };
-    env_var_name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() {
-                c.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    // Pre-calculate capacity to avoid reallocations: "KEYCLOAK_" + prefix + "_" + key
+    let capacity = "KEYCLOAK_".len() + prefix.len() + if prefix.is_empty() { 0 } else { 1 } + key.len();
+    let mut out = String::with_capacity(capacity);
+
+    out.push_str("KEYCLOAK_");
+
+    if !prefix.is_empty() {
+        for c in prefix.chars() {
+            out.push(if c.is_alphanumeric() { c.to_ascii_uppercase() } else { '_' });
+        }
+        out.push('_');
+    }
+
+    for c in key.chars() {
+        out.push(if c.is_alphanumeric() { c.to_ascii_uppercase() } else { '_' });
+    }
+
+    out
 }
 
 /// Recursively extract secrets and replace them with ${ENV_VAR}
@@ -228,13 +231,27 @@ fn obfuscate_string(s: &str) -> String {
         return s.to_string();
     }
 
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= 3 {
+    let mut chars = s.chars();
+    // String is not empty, so next() will return Some
+    let first = chars.next().unwrap();
+
+    let mut count = 1;
+    let mut last = first;
+
+    for c in chars {
+        last = c;
+        count += 1;
+    }
+
+    if count <= 3 {
         return "***".to_string();
     }
-    let first = chars[0];
-    let last = chars[chars.len() - 1];
-    format!("{}***{}", first, last)
+
+    let mut out = String::with_capacity(first.len_utf8() + 3 + last.len_utf8());
+    out.push(first);
+    out.push_str("***");
+    out.push(last);
+    out
 }
 
 /// Recursively obfuscate known secret fields
