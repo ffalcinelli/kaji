@@ -122,20 +122,29 @@ fn get_object_identifier(map: &serde_json::Map<String, Value>) -> Option<String>
 /// Helper to format environment variable names
 fn format_env_var_name(prefix: &str, key: &str) -> String {
     // Pre-calculate capacity to avoid reallocations: "KEYCLOAK_" + prefix + "_" + key
-    let capacity = "KEYCLOAK_".len() + prefix.len() + if prefix.is_empty() { 0 } else { 1 } + key.len();
+    let capacity =
+        "KEYCLOAK_".len() + prefix.len() + if prefix.is_empty() { 0 } else { 1 } + key.len();
     let mut out = String::with_capacity(capacity);
 
     out.push_str("KEYCLOAK_");
 
     if !prefix.is_empty() {
         for c in prefix.chars() {
-            out.push(if c.is_alphanumeric() { c.to_ascii_uppercase() } else { '_' });
+            out.push(if c.is_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            });
         }
         out.push('_');
     }
 
     for c in key.chars() {
-        out.push(if c.is_alphanumeric() { c.to_ascii_uppercase() } else { '_' });
+        out.push(if c.is_alphanumeric() {
+            c.to_ascii_uppercase()
+        } else {
+            '_'
+        });
     }
 
     out
