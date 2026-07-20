@@ -13,8 +13,8 @@ use log::{debug, info};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use std::any::{Any, TypeId};
-use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 /// High-level client wrapper for the Keycloak Admin REST API.
 #[derive(Clone)]
@@ -514,7 +514,13 @@ fn redact_url(url_str: &str) -> String {
 impl KeycloakClient {
     pub async fn get_cached_resources<T>(&self) -> Result<Vec<T>>
     where
-        T: KeycloakResource + KeycloakResourceMapping + for<'a> Deserialize<'a> + Send + Sync + Clone + 'static,
+        T: KeycloakResource
+            + KeycloakResourceMapping
+            + for<'a> Deserialize<'a>
+            + Send
+            + Sync
+            + Clone
+            + 'static,
     {
         let type_id = TypeId::of::<T>();
         if let Ok(cache) = self.resource_cache.read() {
@@ -572,7 +578,9 @@ impl KeycloakClient {
     }
 
     pub async fn get_authenticator_config_map(&self) -> Result<HashMap<String, String>> {
-        let configs = self.get_cached_resources::<AuthenticatorConfigRepresentation>().await?;
+        let configs = self
+            .get_cached_resources::<AuthenticatorConfigRepresentation>()
+            .await?;
         let mut map = HashMap::new();
         for config in configs {
             if let (Some(alias), Some(id)) = (config.alias, config.id) {
