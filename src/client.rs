@@ -12,7 +12,9 @@ use async_trait::async_trait;
 use log::{debug, info};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 /// High-level client wrapper for the Keycloak Admin REST API.
 #[derive(Clone)]
@@ -22,6 +24,7 @@ pub struct KeycloakClient {
     /// The target Keycloak realm being managed.
     pub target_realm: String, // The realm we are managing
     token: Option<String>,
+    resource_cache: Arc<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>>,
 }
 
 impl KeycloakClient {
@@ -38,6 +41,7 @@ impl KeycloakClient {
             base_url,
             target_realm,
             token: None,
+            resource_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -52,6 +56,9 @@ impl KeycloakClient {
 
     pub fn set_target_realm(&mut self, target_realm: String) {
         self.target_realm = target_realm;
+        if let Ok(mut cache) = self.resource_cache.write() {
+            cache.clear();
+        }
     }
 
     pub fn get_base_url(&self) -> &str {
@@ -94,28 +101,34 @@ impl KeycloakClient {
     }
 
     pub async fn create_resource<
-        T: KeycloakResource + KeycloakResourceMapping + Serialize + Clone + Send,
+        T: KeycloakResource + KeycloakResourceMapping + Serialize + Clone + Send + 'static,
     >(
         &self,
         res: &T,
     ) -> Result<()> {
         let mapped = res.clone().pre_save(self).await?;
-        self.post(&self.resource_url::<T>(), &mapped).await
+        self.post(&self.resource_url::<T>(), &mapped).await?;
+        self.invalidate_resource_cache::<T>();
+        Ok(())
     }
 
     pub async fn update_resource<
-        T: KeycloakResource + KeycloakResourceMapping + Serialize + Clone + Send,
+        T: KeycloakResource + KeycloakResourceMapping + Serialize + Clone + Send + 'static,
     >(
         &self,
         id: &str,
         res: &T,
     ) -> Result<()> {
         let mapped = res.clone().pre_save(self).await?;
-        self.put(&self.object_url::<T>(id), &mapped).await
+        self.put(&self.object_url::<T>(id), &mapped).await?;
+        self.invalidate_resource_cache::<T>();
+        Ok(())
     }
 
-    pub async fn delete_resource<T: KeycloakResource>(&self, id: &str) -> Result<()> {
-        self.delete(&self.object_url::<T>(id)).await
+    pub async fn delete_resource<T: KeycloakResource + 'static>(&self, id: &str) -> Result<()> {
+        self.delete(&self.object_url::<T>(id)).await?;
+        self.invalidate_resource_cache::<T>();
+        Ok(())
     }
 
     pub async fn get_realms(&self) -> Result<Vec<RealmRepresentation>> {
@@ -499,6 +512,40 @@ fn redact_url(url_str: &str) -> String {
 }
 
 impl KeycloakClient {
+    pub async fn get_cached_resources<T>(&self) -> Result<Vec<T>>
+    where
+        T: KeycloakResource
+            + KeycloakResourceMapping
+            + for<'a> Deserialize<'a>
+            + Send
+            + Sync
+            + Clone
+            + 'static,
+    {
+        let type_id = TypeId::of::<T>();
+        if let Ok(cache) = self.resource_cache.read() {
+            if let Some(cached) = cache.get(&type_id) {
+                if let Some(resources) = cached.downcast_ref::<Vec<T>>() {
+                    return Ok(resources.clone());
+                }
+            }
+        }
+
+        let resources = T::fetch_all(self).await?;
+
+        if let Ok(mut cache) = self.resource_cache.write() {
+            cache.insert(type_id, Box::new(resources.clone()));
+        }
+
+        Ok(resources)
+    }
+
+    pub fn invalidate_resource_cache<T: 'static>(&self) {
+        if let Ok(mut cache) = self.resource_cache.write() {
+            cache.remove(&TypeId::of::<T>());
+        }
+    }
+
     pub async fn get_keys(&self) -> Result<crate::models::KeysMetadataRepresentation> {
         let url = self.realm_admin_url() + "/keys";
         self.get(&url).await
@@ -531,7 +578,9 @@ impl KeycloakClient {
     }
 
     pub async fn get_authenticator_config_map(&self) -> Result<HashMap<String, String>> {
-        let configs = self.get_authenticator_configs_internal().await?;
+        let configs = self
+            .get_cached_resources::<AuthenticatorConfigRepresentation>()
+            .await?;
         let mut map = HashMap::new();
         for config in configs {
             if let (Some(alias), Some(id)) = (config.alias, config.id) {
@@ -601,6 +650,7 @@ impl KeycloakClient {
             .await
             .with_context(|| format!("Failed to send POST request to {}", url))?;
         let response = Self::check_response(response, "POST authenticator config failed").await?;
+        self.invalidate_resource_cache::<AuthenticatorConfigRepresentation>();
         response
             .json()
             .await
