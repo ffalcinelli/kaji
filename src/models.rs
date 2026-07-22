@@ -480,7 +480,10 @@ impl std::fmt::Debug for UserRepresentation {
             .field("last_name", &self.last_name)
             .field("email", &self.email)
             .field("email_verified", &self.email_verified)
-            .field("credentials", &self.credentials.as_ref().map(|_| "********"))
+            .field(
+                "credentials",
+                &self.credentials.as_ref().map(|_| "********"),
+            )
             .field("extra", &self.extra)
             .finish()
     }
