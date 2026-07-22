@@ -448,7 +448,7 @@ impl std::fmt::Debug for CredentialRepresentation {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct UserRepresentation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -468,6 +468,22 @@ pub struct UserRepresentation {
     pub credentials: Option<Vec<CredentialRepresentation>>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for UserRepresentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserRepresentation")
+            .field("id", &self.id)
+            .field("username", &self.username)
+            .field("enabled", &self.enabled)
+            .field("first_name", &self.first_name)
+            .field("last_name", &self.last_name)
+            .field("email", &self.email)
+            .field("email_verified", &self.email_verified)
+            .field("credentials", &self.credentials.as_ref().map(|_| "********"))
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 impl_keycloak_resource!(
