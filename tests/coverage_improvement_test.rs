@@ -213,6 +213,28 @@ fn test_models_debug_obfuscation() {
     let mut idp_no_config = idp.clone();
     idp_no_config.config = None;
     assert!(format!("{:?}", idp_no_config).contains("config: None"));
+
+    let user_cred = CredentialRepresentation {
+        id: None,
+        type_: Some("password".to_string()),
+        value: Some("super_secret_password".to_string()),
+        temporary: Some(false),
+        extra: HashMap::new(),
+    };
+    let user = UserRepresentation {
+        id: Some("id".to_string()),
+        username: Some("testuser".to_string()),
+        enabled: Some(true),
+        first_name: None,
+        last_name: None,
+        email: None,
+        email_verified: None,
+        credentials: Some(vec![user_cred]),
+        extra: HashMap::new(),
+    };
+    let debug_user = format!("{:?}", user);
+    assert!(debug_user.contains("********"));
+    assert!(!debug_user.contains("super_secret_password"));
 }
 
 #[test]
