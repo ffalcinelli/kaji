@@ -75,6 +75,7 @@ async fn test_plan() {
     let client_rep = ClientRepresentation {
         id: None,
         client_id: Some("new-client".to_string()),
+        secret: None,
         name: Some("New Client".to_string()),
         description: None,
         enabled: Some(true),
@@ -95,6 +96,7 @@ async fn test_plan() {
     let existing_client = ClientRepresentation {
         id: None,
         client_id: Some("client-1".to_string()),
+        secret: None,
         name: Some("Client 1".to_string()), // Matches mock
         description: None,
         enabled: Some(true),

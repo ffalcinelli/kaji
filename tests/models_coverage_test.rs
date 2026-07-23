@@ -49,6 +49,7 @@ fn test_models_resource_trait() {
     let mut client = ClientRepresentation {
         id: Some("id2".to_string()),
         client_id: Some("cid".to_string()),
+        secret: None,
         name: Some("cname".to_string()),
         description: None,
         enabled: Some(true),

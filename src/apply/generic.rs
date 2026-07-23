@@ -516,6 +516,7 @@ mod tests {
         let enriched_client = ClientRepresentation {
             id: Some("generated-id-123".to_string()),
             client_id: Some("test-client".to_string()),
+            secret: None,
             name: Some("Enriched Name from Keycloak".to_string()),
             description: None,
             enabled: Some(true),

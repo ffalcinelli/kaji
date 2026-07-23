@@ -257,12 +257,14 @@ impl_resource_meta!(
     secret_prefix = "idp"
 );
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ClientRepresentation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "clientId", skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -286,6 +288,26 @@ pub struct ClientRepresentation {
     pub service_accounts_enabled: Option<bool>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+impl std::fmt::Debug for ClientRepresentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientRepresentation")
+            .field("id", &self.id)
+            .field("client_id", &self.client_id)
+            .field("secret", &self.secret.as_ref().map(|_| "********"))
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("enabled", &self.enabled)
+            .field("protocol", &self.protocol)
+            .field("redirect_uris", &self.redirect_uris)
+            .field("web_origins", &self.web_origins)
+            .field("public_client", &self.public_client)
+            .field("bearer_only", &self.bearer_only)
+            .field("service_accounts_enabled", &self.service_accounts_enabled)
+            .field("extra", &"********")
+            .finish()
+    }
 }
 
 impl_keycloak_resource!(
@@ -811,6 +833,7 @@ mod tests {
         let client = ClientRepresentation {
             id: None,
             client_id: Some("my-client".to_string()),
+            secret: None,
             name: None,
             description: None,
             enabled: None,

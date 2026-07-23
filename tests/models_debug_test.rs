@@ -73,6 +73,35 @@ fn test_component_debug() {
 }
 
 #[test]
+fn test_client_debug() {
+    let mut extra = HashMap::new();
+    extra.insert("some_extra".to_string(), json!("extra_val"));
+
+    let client = ClientRepresentation {
+        id: Some("id1".to_string()),
+        client_id: Some("my_client".to_string()),
+        secret: Some("client_super_secret".to_string()),
+        name: None,
+        description: None,
+        enabled: None,
+        protocol: None,
+        redirect_uris: None,
+        web_origins: None,
+        public_client: None,
+        bearer_only: None,
+        service_accounts_enabled: None,
+        extra,
+    };
+
+    let debug_str = format!("{:?}", client);
+    assert!(debug_str.contains("client_id: Some(\"my_client\")"));
+    assert!(debug_str.contains("secret: Some(\"********\")"));
+    assert!(debug_str.contains("extra: \"********\""));
+    assert!(!debug_str.contains("client_super_secret"));
+    assert!(!debug_str.contains("extra_val"));
+}
+
+#[test]
 fn test_authenticator_config_debug() {
     let mut config = HashMap::new();
     config.insert("mySecretField".to_string(), json!("secret_value"));

@@ -78,6 +78,7 @@ async fn test_apply() {
     let client_rep = ClientRepresentation {
         id: None,
         client_id: Some("new-client".to_string()),
+        secret: None,
         name: Some("New Client".to_string()),
         description: None,
         enabled: Some(true),
@@ -98,6 +99,7 @@ async fn test_apply() {
     let existing_client = ClientRepresentation {
         id: None,
         client_id: Some("client-1".to_string()),
+        secret: None,
         name: Some("Updated Client 1".to_string()),
         description: None,
         enabled: Some(true),
@@ -745,6 +747,7 @@ async fn test_apply_enrichment() {
     let client_rep = ClientRepresentation {
         id: None,
         client_id: Some("client-1".to_string()),
+        secret: None,
         name: Some("Initial Name".to_string()),
         description: None,
         enabled: Some(true),
@@ -798,6 +801,7 @@ async fn test_apply_enrichment() {
     let client_rep_2 = ClientRepresentation {
         id: None,
         client_id: Some("client-2".to_string()),
+        secret: None,
         name: Some("Initial Name 2".to_string()),
         description: None,
         enabled: Some(true),
@@ -878,6 +882,7 @@ async fn test_apply_pruning() {
     let client_rep = ClientRepresentation {
         id: Some("1".to_string()),
         client_id: Some("client-1".to_string()),
+        secret: None,
         name: Some("Client 1".to_string()),
         description: None,
         enabled: Some(true),

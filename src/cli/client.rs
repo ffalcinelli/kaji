@@ -29,6 +29,7 @@ pub async fn create_client_yaml(
     let client = ClientRepresentation {
         id: None,
         client_id: Some(client_id.to_string()),
+        secret: None,
         name: None,
         description: None,
         enabled: Some(true),
