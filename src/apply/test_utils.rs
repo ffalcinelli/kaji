@@ -195,6 +195,7 @@ pub async fn start_mock_server() -> Result<(String, Arc<std::sync::atomic::Atomi
             mock_get!(ClientRepresentation {
                 id: Some("existing-id".to_string()),
                 client_id: Some("existing-client".to_string()),
+                secret: None,
                 name: Some("Existing Client".to_string()),
                 description: None,
                 enabled: Some(true),

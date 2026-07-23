@@ -193,6 +193,7 @@ async fn test_validate_empty_client_id() {
     let client = ClientRepresentation {
         id: None,
         client_id: Some("".to_string()),
+        secret: None,
         name: None,
         description: None,
         enabled: None,

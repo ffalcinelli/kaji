@@ -117,6 +117,7 @@ async fn test_create_client() {
     let client_rep = ClientRepresentation {
         id: None,
         client_id: Some("new-client".to_string()),
+        secret: None,
         name: None,
         description: None,
         enabled: Some(true),
@@ -146,6 +147,7 @@ async fn test_update_client() {
     let client_rep = ClientRepresentation {
         id: Some("1".to_string()),
         client_id: Some("client-1".to_string()),
+        secret: None,
         name: Some("Updated Name".to_string()),
         description: None,
         enabled: Some(true),
@@ -565,6 +567,7 @@ async fn test_post_send_failure() {
     let client_rep = ClientRepresentation {
         id: None,
         client_id: Some("test".to_string()),
+        secret: None,
         name: None,
         description: None,
         enabled: None,
