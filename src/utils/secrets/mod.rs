@@ -164,7 +164,11 @@ pub fn extract_secrets(
                 if prefix.is_empty() {
                     id_str
                 } else {
-                    format!("{}_{}", prefix, id_str)
+                    let mut s = String::with_capacity(prefix.len() + 1 + id_str.len());
+                    s.push_str(prefix);
+                    s.push('_');
+                    s.push_str(&id_str);
+                    s
                 }
             } else {
                 prefix.to_string()
@@ -175,13 +179,21 @@ pub fn extract_secrets(
                     if is_secret_key(k, &current_prefix) && !is_boolean_string(s) {
                         let env_var_name = format_env_var_name(&current_prefix, k);
                         secrets.insert(env_var_name.clone(), s.clone());
-                        *s = format!("${{{}}}", env_var_name);
+                        let mut replaced = String::with_capacity(env_var_name.len() + 3);
+                        replaced.push_str("${");
+                        replaced.push_str(&env_var_name);
+                        replaced.push('}');
+                        *s = replaced;
                     }
                 } else if v.is_object() || v.is_array() {
                     let new_prefix = if current_prefix.is_empty() {
                         k.clone()
                     } else {
-                        format!("{}_{}", current_prefix, k)
+                        let mut s = String::with_capacity(current_prefix.len() + 1 + k.len());
+                        s.push_str(&current_prefix);
+                        s.push('_');
+                        s.push_str(k);
+                        s
                     };
                     extract_secrets(v, &new_prefix, secrets);
                 }
@@ -189,7 +201,11 @@ pub fn extract_secrets(
         }
         Value::Array(arr) => {
             for (i, v) in arr.iter_mut().enumerate() {
-                let new_prefix = format!("{}_{}", prefix, i);
+                let idx_str = i.to_string();
+                let mut new_prefix = String::with_capacity(prefix.len() + 1 + idx_str.len());
+                new_prefix.push_str(prefix);
+                new_prefix.push('_');
+                new_prefix.push_str(&idx_str);
                 extract_secrets(v, &new_prefix, secrets);
             }
         }
@@ -273,7 +289,11 @@ pub fn obfuscate_secrets(value: &mut Value, prefix: &str) {
                 if prefix.is_empty() {
                     id_str
                 } else {
-                    format!("{}_{}", prefix, id_str)
+                    let mut s = String::with_capacity(prefix.len() + 1 + id_str.len());
+                    s.push_str(prefix);
+                    s.push('_');
+                    s.push_str(&id_str);
+                    s
                 }
             } else {
                 prefix.to_string()
@@ -288,7 +308,11 @@ pub fn obfuscate_secrets(value: &mut Value, prefix: &str) {
                     let new_prefix = if current_prefix.is_empty() {
                         k.clone()
                     } else {
-                        format!("{}_{}", current_prefix, k)
+                        let mut s = String::with_capacity(current_prefix.len() + 1 + k.len());
+                        s.push_str(&current_prefix);
+                        s.push('_');
+                        s.push_str(k);
+                        s
                     };
                     obfuscate_secrets(v, &new_prefix);
                 }
@@ -296,7 +320,11 @@ pub fn obfuscate_secrets(value: &mut Value, prefix: &str) {
         }
         Value::Array(arr) => {
             for (i, v) in arr.iter_mut().enumerate() {
-                let new_prefix = format!("{}_{}", prefix, i);
+                let idx_str = i.to_string();
+                let mut new_prefix = String::with_capacity(prefix.len() + 1 + idx_str.len());
+                new_prefix.push_str(prefix);
+                new_prefix.push('_');
+                new_prefix.push_str(&idx_str);
                 obfuscate_secrets(v, &new_prefix);
             }
         }
