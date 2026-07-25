@@ -96,7 +96,7 @@ pub async fn run(
     };
 
     if realms.is_empty() {
-        println!(
+        eprintln!(
             "{} {}",
             WARN,
             style(format!("No realms found to plan in {:?}", workspace_dir)).yellow()
@@ -115,7 +115,7 @@ pub async fn run(
         let profile = profile.clone();
 
         set.spawn(async move {
-            println!(
+            eprintln!(
                 "\n{} {}",
                 ACTION,
                 style(format!("Planning changes for realm: {}", realm_name))
@@ -159,7 +159,7 @@ pub async fn run(
         if async_fs::try_exists(&plan_file).await? {
             async_fs::remove_file(&plan_file).await?;
         }
-        println!(
+        eprintln!(
             "\n{} {}",
             CHECK,
             style("No changes planned. Your infrastructure is in sync.")
@@ -169,7 +169,7 @@ pub async fn run(
     } else {
         let content = serde_json::to_string_pretty(&changed_files)?;
         async_fs::write(&plan_file, content).await?;
-        println!(
+        eprintln!(
             "\n{} {}",
             MEMO,
             style(format!(

@@ -62,7 +62,7 @@ pub async fn run(
         set.spawn(async move {
             {
                 let _lock = prompt_mutex.lock().await;
-                println!(
+                eprintln!(
                     "\n{} {}",
                     SEARCH,
                     style(format!("Inspecting realm: {}", realm_name_owned))
@@ -112,7 +112,7 @@ pub async fn run(
             true,
         )
         .await?;
-        println!(
+        eprintln!(
             "{} {}",
             CHECK,
             style("Exported secrets to .secrets").green()
@@ -145,7 +145,7 @@ async fn write_if_changed_with_mutex(
                 .default(false)
                 .interact()?
             {
-                println!(
+                eprintln!(
                     "{} {}",
                     WARN,
                     style(format!("Skipping {:?}", path)).yellow()
@@ -239,7 +239,7 @@ where
     crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
     {
         let _lock = prompt_mutex.lock().await;
-        println!(
+        eprintln!(
             "  {} {}",
             SUCCESS,
             style(format!(
@@ -303,7 +303,7 @@ async fn inspect_realm(
             .await?;
             {
                 let _lock = prompt_mutex.lock().await;
-                println!(
+                eprintln!(
                     "  {} {}",
                     SUCCESS,
                     style("Exported realm configuration to realm.yaml").green()

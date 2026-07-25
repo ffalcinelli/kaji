@@ -38,7 +38,7 @@ pub async fn apply_realm(
             .update_realm(&realm_rep)
             .await
             .with_context(|| format!("Failed to update realm '{}'", realm_name))?;
-        println!(
+        eprintln!(
             "  {} {}",
             SUCCESS_UPDATE,
             style("Updated realm configuration").cyan()

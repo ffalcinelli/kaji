@@ -128,7 +128,7 @@ mod tests {
         });
 
         let yaml = to_sorted_yaml(&val).expect("Failed to serialize yaml");
-        println!("Generated YAML:\n{}", yaml);
+        eprintln!("Generated YAML:\n{}", yaml);
 
         let lines: Vec<&str> = yaml.lines().collect();
         assert_eq!(lines[0], "a: val_a");
@@ -158,7 +158,7 @@ mod tests {
         });
 
         let yaml = to_sorted_yaml(&val).expect("Failed to serialize yaml");
-        println!("Generated YAML:\n{}", yaml);
+        eprintln!("Generated YAML:\n{}", yaml);
 
         let lines: Vec<&str> = yaml.lines().collect();
         // aliases sorted by alias

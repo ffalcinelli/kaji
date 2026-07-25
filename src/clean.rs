@@ -17,7 +17,7 @@ pub async fn run(
     ui: &dyn Ui,
 ) -> Result<()> {
     if !workspace_dir.exists() {
-        println!(
+        eprintln!(
             "{} {}",
             WARN,
             style(format!(
@@ -40,7 +40,7 @@ pub async fn run(
     };
 
     if targets.is_empty() {
-        println!("{} {}", WARN, style("No targets found to clean.").yellow());
+        eprintln!("{} {}", WARN, style("No targets found to clean.").yellow());
         return Ok(());
     }
 
@@ -59,7 +59,7 @@ pub async fn run(
         };
 
         if !ui.confirm(&msg, false)? {
-            println!("{} {}", ERROR, style("Aborted.").red());
+            eprintln!("{} {}", ERROR, style("Aborted.").red());
             return Ok(());
         }
     }
@@ -68,7 +68,7 @@ pub async fn run(
 
     for target in targets {
         if target == workspace_dir && realms_to_clean.is_empty() {
-            println!(
+            eprintln!(
                 "{} {}",
                 ACTION,
                 style(format!("Cleaning all configuration in {:?}", workspace_dir)).cyan()
@@ -90,7 +90,7 @@ pub async fn run(
                 });
             }
         } else {
-            println!(
+            eprintln!(
                 "{} {}",
                 ACTION,
                 style(format!("Cleaning realm directory {:?}", target)).cyan()
@@ -114,7 +114,7 @@ pub async fn run(
 
     crate::utils::join_all_tasks(set, Some("Join error")).await?;
 
-    println!(
+    eprintln!(
         "{} {}",
         SUCCESS,
         style("Clean completed successfully.").green().bold()

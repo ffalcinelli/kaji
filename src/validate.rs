@@ -68,7 +68,7 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
     };
 
     if realms.is_empty() {
-        println!(
+        eprintln!(
             "{} {}",
             WARN,
             style(format!(
@@ -81,7 +81,7 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
     }
 
     for realm_name in &realms {
-        println!(
+        eprintln!(
             "\n{} {}",
             SEARCH,
             style(format!("Validating realm: {}", realm_name))
@@ -90,7 +90,7 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
         );
         let realm_dir = workspace_dir.join(realm_name);
         validate_realm(realm_dir).await?;
-        println!(
+        eprintln!(
             "  {} {}",
             SUCCESS,
             style(format!("Successfully validated realm: {}", realm_name))
@@ -115,7 +115,7 @@ async fn validate_realm_config(workspace_dir: &Path) -> Result<()> {
     if realm.realm.is_empty() {
         anyhow::bail!("Realm name is empty in realm.yaml");
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Realm configuration is valid:").dim(),
@@ -135,7 +135,7 @@ fn validate_roles(roles: &[(PathBuf, RoleRepresentation)]) -> Result<()> {
         }
         role_names.insert(role.name.clone());
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated roles:").dim(),
@@ -150,7 +150,7 @@ fn validate_clients(clients: &[(PathBuf, ClientRepresentation)]) -> Result<()> {
             anyhow::bail!("Client ID is missing or empty in {:?}", path);
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated clients:").dim(),
@@ -171,7 +171,7 @@ fn validate_idps(idps: &[(PathBuf, IdentityProviderRepresentation)]) -> Result<(
             );
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated Identity Providers:").dim(),
@@ -186,7 +186,7 @@ fn validate_client_scopes(scopes: &[(PathBuf, ClientScopeRepresentation)]) -> Re
             anyhow::bail!("Client Scope name is missing or empty in {:?}", path);
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated client scopes:").dim(),
@@ -201,7 +201,7 @@ fn validate_groups(groups: &[(PathBuf, GroupRepresentation)]) -> Result<()> {
             anyhow::bail!("Group name is missing or empty in {:?}", path);
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated groups:").dim(),
@@ -216,7 +216,7 @@ fn validate_users(users: &[(PathBuf, UserRepresentation)]) -> Result<()> {
             anyhow::bail!("User username is missing or empty in {:?}", path);
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated users:").dim(),
@@ -236,7 +236,7 @@ fn validate_authentication_flows(
             );
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated authentication flows:").dim(),
@@ -259,7 +259,7 @@ fn validate_required_actions(
             );
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated required actions:").dim(),
@@ -279,7 +279,7 @@ fn validate_authenticator_configs(
             );
         }
     }
-    println!(
+    eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated authenticator configs:").dim(),
@@ -355,7 +355,7 @@ async fn validate_components_in_dir(workspace_dir: &Path, dir_name: &str) -> Res
                 anyhow::bail!("Component providerId is missing or empty in {:?}", path);
             }
         }
-        println!(
+        eprintln!(
             "  {} {} {}",
             CHECK,
             style(format!("Validated {}:", dir_name)).dim(),
