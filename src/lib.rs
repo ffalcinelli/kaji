@@ -200,7 +200,7 @@ async fn handle_inspect(
     yes: bool,
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
-    println!(
+    eprintln!(
         "{} {}",
         SEARCH,
         style(format!(
@@ -215,7 +215,7 @@ async fn handle_inspect(
 }
 
 async fn handle_validate(cli: &Cli, workspace: &std::path::Path) -> Result<()> {
-    println!(
+    eprintln!(
         "{} {}",
         SEARCH,
         style(format!(
@@ -239,7 +239,7 @@ async fn handle_apply(
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
-    println!(
+    eprintln!(
         "{} {}",
         ACTION,
         style(format!(
@@ -274,7 +274,7 @@ async fn handle_plan(
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
-    println!(
+    eprintln!(
         "{} {}",
         SEARCH,
         style(format!(
@@ -307,7 +307,7 @@ async fn handle_drift(
 ) -> Result<()> {
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
-    println!(
+    eprintln!(
         "{} {}",
         SEARCH,
         style(format!(
@@ -342,7 +342,7 @@ async fn handle_cli(workspace: &std::path::Path) -> Result<()> {
 }
 
 async fn handle_clean(cli: &Cli, workspace: &std::path::Path, yes: bool) -> Result<()> {
-    println!(
+    eprintln!(
         "{} {}",
         ACTION,
         style(format!(

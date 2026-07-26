@@ -68,7 +68,7 @@ macro_rules! handle_upsert {
                     $realm_name
                 )
             })?;
-            println!(
+            eprintln!(
                 "  {} {}",
                 $crate::utils::ui::SUCCESS_UPDATE,
                 console::style(format!("Updated {} {}", $resource_name, $rep.get_name())).cyan()
@@ -84,7 +84,7 @@ macro_rules! handle_upsert {
                     $realm_name
                 )
             })?;
-            println!(
+            eprintln!(
                 "  {} {}",
                 $crate::utils::ui::SUCCESS_CREATE,
                 console::style(format!("Created {} {}", $resource_name, $rep.get_name())).green()
@@ -183,7 +183,7 @@ pub async fn run_ext(
                     false,
                 )?;
                 if !proceed {
-                    println!("Aborted.");
+                    eprintln!("Aborted.");
                     return Ok(());
                 }
             }
@@ -200,7 +200,7 @@ pub async fn run_ext(
                 false,
             )?;
             if !proceed {
-                println!("Aborted.");
+                eprintln!("Aborted.");
                 return Ok(());
             }
         }
@@ -221,7 +221,7 @@ pub async fn run_ext(
     };
 
     if realms.is_empty() {
-        println!(
+        eprintln!(
             "{} {}",
             WARN,
             style(format!("No realms found to apply in {:?}", workspace_dir)).yellow()
@@ -242,7 +242,7 @@ pub async fn run_ext(
         let secrets_path = Arc::clone(&secrets_path);
 
         set.spawn(async move {
-            println!(
+            eprintln!(
                 "\n{} {}",
                 ACTION,
                 style(format!("Applying realm: {}", realm_name))

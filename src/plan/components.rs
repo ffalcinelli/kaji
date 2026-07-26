@@ -131,7 +131,7 @@ pub async fn plan_components_or_keys(
                 remote_clone = Some(rc);
                 ch
             } else {
-                println!(
+                eprintln!(
                     "\n{} Will create Component: {}",
                     SPARKLE,
                     local_component.get_name()
@@ -210,7 +210,7 @@ pub async fn check_keys_drift(
                     #[allow(clippy::collapsible_if)]
                     if valid_to > 0 && valid_to - now < thirty_days {
                         let provider_id = key.provider_id.as_deref().unwrap_or("unknown");
-                        println!(
+                        eprintln!(
                             "{} Warning: Active key (providerId: {}) in realm '{}' is near expiration or expired! Consider rotating keys.",
                             WARN,
                             style(provider_id).yellow(),

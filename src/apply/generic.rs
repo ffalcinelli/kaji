@@ -244,7 +244,7 @@ where
                         client.delete_resource::<T>(id).await.with_context(|| {
                             format!("Failed to prune {} '{}'", T::LABEL, remote.get_name())
                         })?;
-                        println!("  Removed/Pruned {} {}", T::LABEL, remote.get_name());
+                        eprintln!("  Removed/Pruned {} {}", T::LABEL, remote.get_name());
                     }
                 }
             }

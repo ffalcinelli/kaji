@@ -84,7 +84,7 @@ where
             remote_clone = Some(rc);
             ch
         } else {
-            println!("\n{} Will create {}", SPARKLE, T::LABEL);
+            eprintln!("\n{} Will create {}", SPARKLE, T::LABEL);
             print_diff(&format!("{} {}", T::LABEL, local.get_name()), None::<&T>, &local, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX)?
         };
 
