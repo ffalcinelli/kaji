@@ -41,46 +41,14 @@ pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
         let selection = ui.select("What would you like to do?", selections, 0)?;
 
         match selection {
-            0 => {
-                if let Err(e) = user::create_user_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error creating user: {}", e));
-                }
-            }
-            1 => {
-                if let Err(e) = user::change_user_password_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error changing password: {}", e));
-                }
-            }
-            2 => {
-                if let Err(e) = client::create_client_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error creating client: {}", e));
-                }
-            }
-            3 => {
-                if let Err(e) = role::create_role_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error creating role: {}", e));
-                }
-            }
-            4 => {
-                if let Err(e) = group::create_group_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error creating group: {}", e));
-                }
-            }
-            5 => {
-                if let Err(e) = idp::create_idp_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error creating IDP: {}", e));
-                }
-            }
-            6 => {
-                if let Err(e) = client::create_client_scope_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error creating client scope: {}", e));
-                }
-            }
-            7 => {
-                if let Err(e) = keys::rotate_keys_interactive(&workspace_dir, ui).await {
-                    ui.print_error(&format!("Error rotating keys: {}", e));
-                }
-            }
+            0 => handle_create_user(&workspace_dir, ui).await,
+            1 => handle_change_password(&workspace_dir, ui).await,
+            2 => handle_create_client(&workspace_dir, ui).await,
+            3 => handle_create_role(&workspace_dir, ui).await,
+            4 => handle_create_group(&workspace_dir, ui).await,
+            5 => handle_create_idp(&workspace_dir, ui).await,
+            6 => handle_create_client_scope(&workspace_dir, ui).await,
+            7 => handle_rotate_keys(&workspace_dir, ui).await,
             8 => {
                 ui.print_info("Exiting...");
                 break;
@@ -92,6 +60,54 @@ pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn handle_create_user(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = user::create_user_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error creating user: {}", e));
+    }
+}
+
+async fn handle_change_password(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = user::change_user_password_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error changing password: {}", e));
+    }
+}
+
+async fn handle_create_client(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = client::create_client_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error creating client: {}", e));
+    }
+}
+
+async fn handle_create_role(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = role::create_role_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error creating role: {}", e));
+    }
+}
+
+async fn handle_create_group(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = group::create_group_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error creating group: {}", e));
+    }
+}
+
+async fn handle_create_idp(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = idp::create_idp_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error creating IDP: {}", e));
+    }
+}
+
+async fn handle_create_client_scope(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = client::create_client_scope_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error creating client scope: {}", e));
+    }
+}
+
+async fn handle_rotate_keys(workspace_dir: &std::path::Path, ui: &dyn Ui) {
+    if let Err(e) = keys::rotate_keys_interactive(workspace_dir, ui).await {
+        ui.print_error(&format!("Error rotating keys: {}", e));
+    }
 }
 
 /// Dynamic UX prompt for selecting/creating target realm
