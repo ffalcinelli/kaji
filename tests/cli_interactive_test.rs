@@ -390,3 +390,48 @@ async fn test_cli_run_full_loop() {
 
     cli::run(workspace_dir, &ui).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_cli_errors_hit() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    // We want the interactive sub-functions to fail.
+    // They usually fail if prompt_realm fails, which calls ui.input() or ui.select()
+    // For prompt_realm to call input, the realm directory needs to be empty, which it is.
+
+    struct MockFailingUi {
+        selects: std::sync::Mutex<Vec<usize>>,
+    }
+
+    impl kaji::utils::ui::Ui for MockFailingUi {
+        fn print_info(&self, _msg: &str) {}
+        fn print_success(&self, _msg: &str) {}
+        fn print_warn(&self, _msg: &str) {}
+        fn print_error(&self, _msg: &str) {}
+        fn input(&self, _prompt: &str, _default: Option<String>, _allow_empty: bool) -> anyhow::Result<String> {
+            anyhow::bail!("mock input error")
+        }
+        fn confirm(&self, _prompt: &str, _default: bool) -> anyhow::Result<bool> {
+            anyhow::bail!("mock confirm error")
+        }
+        fn select(&self, _prompt: &str, _items: &[&str], _default: usize) -> anyhow::Result<usize> {
+            let mut selects = self.selects.lock().unwrap();
+            if !selects.is_empty() {
+                Ok(selects.remove(0))
+            } else {
+                anyhow::bail!("mock select error")
+            }
+        }
+        fn password(&self, _prompt: &str, _confirm: Option<&str>) -> anyhow::Result<String> {
+            anyhow::bail!("mock password error")
+        }
+    }
+
+    for menu_option in 0..8 {
+        let ui = MockFailingUi {
+            selects: std::sync::Mutex::new(vec![menu_option, 8]), // execute option, then exit
+        };
+        cli::run(workspace_dir.clone(), &ui).await.unwrap();
+    }
+}
