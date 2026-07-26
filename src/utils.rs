@@ -120,14 +120,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_sorting_with_value() {
+    fn test_sorting_with_value() -> anyhow::Result<()> {
         let val = serde_json::json!({
             "z": "val_z",
             "a": "val_a",
             "m": ["item3", "item1", "item2"]
         });
 
-        let yaml = to_sorted_yaml(&val).expect("Failed to serialize yaml");
+        let yaml = to_sorted_yaml(&val)?;
         eprintln!("Generated YAML:\n{}", yaml);
 
         let lines: Vec<&str> = yaml.lines().collect();
@@ -137,10 +137,11 @@ mod tests {
         assert_eq!(lines[3], "- item2");
         assert_eq!(lines[4], "- item3");
         assert_eq!(lines[5], "z: val_z");
+        Ok(())
     }
 
     #[test]
-    fn test_sorting_arrays_of_objects() {
+    fn test_sorting_arrays_of_objects() -> anyhow::Result<()> {
         let val = serde_json::json!({
             "list": [
                 { "name": "c", "v": 3 },
@@ -157,7 +158,7 @@ mod tests {
             ]
         });
 
-        let yaml = to_sorted_yaml(&val).expect("Failed to serialize yaml");
+        let yaml = to_sorted_yaml(&val)?;
         eprintln!("Generated YAML:\n{}", yaml);
 
         let lines: Vec<&str> = yaml.lines().collect();
@@ -177,6 +178,7 @@ mod tests {
         assert_eq!(lines[10], "  v: 2");
         assert_eq!(lines[11], "- name: c");
         assert_eq!(lines[12], "  v: 3");
+        Ok(())
     }
 
     #[test]
