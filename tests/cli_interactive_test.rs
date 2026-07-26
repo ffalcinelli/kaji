@@ -393,7 +393,7 @@ async fn test_cli_run_full_loop() {
 
 #[tokio::test]
 async fn test_cli_errors_hit() {
-    let dir = tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let workspace_dir = dir.path().to_path_buf();
 
     // We want the interactive sub-functions to fail.
@@ -409,7 +409,12 @@ async fn test_cli_errors_hit() {
         fn print_success(&self, _msg: &str) {}
         fn print_warn(&self, _msg: &str) {}
         fn print_error(&self, _msg: &str) {}
-        fn input(&self, _prompt: &str, _default: Option<String>, _allow_empty: bool) -> anyhow::Result<String> {
+        fn input(
+            &self,
+            _prompt: &str,
+            _default: Option<String>,
+            _allow_empty: bool,
+        ) -> anyhow::Result<String> {
             anyhow::bail!("mock input error")
         }
         fn confirm(&self, _prompt: &str, _default: bool) -> anyhow::Result<bool> {
@@ -432,6 +437,62 @@ async fn test_cli_errors_hit() {
         let ui = MockFailingUi {
             selects: std::sync::Mutex::new(vec![menu_option, 8]), // execute option, then exit
         };
-        cli::run(workspace_dir.clone(), &ui).await.unwrap();
+        kaji::cli::run(workspace_dir.clone(), &ui).await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn test_get_realms_branches() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+
+    // Create an invalid realm dir, .hidden dir, profiles dir, target dir, and a file
+    tokio::fs::create_dir_all(workspace_dir.join("master"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(workspace_dir.join(".hidden"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(workspace_dir.join("profiles"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(workspace_dir.join("target"))
+        .await
+        .unwrap();
+    tokio::fs::write(workspace_dir.join("file.txt"), "hello")
+        .await
+        .unwrap();
+
+    let realms = kaji::cli::get_realms(&workspace_dir).await.unwrap();
+    assert_eq!(realms, vec!["master".to_string()]);
+
+    // Also test prompt_realm hitting the branch where it creates a new realm
+    struct MockNewRealmUi {}
+    impl kaji::utils::ui::Ui for MockNewRealmUi {
+        fn input(
+            &self,
+            _prompt: &str,
+            _default: Option<String>,
+            _allow_empty: bool,
+        ) -> anyhow::Result<String> {
+            Ok("newrealm".to_string())
+        }
+        fn select(&self, _prompt: &str, _items: &[&str], _default: usize) -> anyhow::Result<usize> {
+            Ok(_items.len() - 1)
+        }
+        fn confirm(&self, _prompt: &str, _default: bool) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+        fn password(&self, _prompt: &str, _confirm: Option<&str>) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+        fn print_info(&self, _msg: &str) {}
+        fn print_success(&self, _msg: &str) {}
+        fn print_error(&self, _msg: &str) {}
+        fn print_warn(&self, _msg: &str) {}
+    }
+
+    let ui = MockNewRealmUi {};
+    let realm = kaji::cli::prompt_realm(&workspace_dir, &ui).await.unwrap();
+    assert_eq!(realm, "newrealm");
 }
