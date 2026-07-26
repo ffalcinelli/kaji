@@ -769,16 +769,15 @@ impl KeycloakResourceMapping for AuthenticationFlowRepresentation {
     async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>> {
         let flows: Vec<AuthenticationFlowRepresentation> =
             client.get(&client.resource_url::<Self>()).await?;
-        let mut mapped_flows = Vec::new();
-        for mut flow in flows {
+        let futures = flows.into_iter().map(|mut flow| async move {
             if let Some(alias) = &flow.alias {
                 if let Ok(executions) = client.get_flow_executions(alias).await {
                     flow.authentication_executions = Some(executions);
                 }
             }
-            mapped_flows.push(client.map_flow_executions(flow).await);
-        }
-        Ok(mapped_flows)
+            client.map_flow_executions(flow).await
+        });
+        Ok(futures::future::join_all(futures).await)
     }
 
     async fn pre_save(self, client: &KeycloakClient) -> Result<Self> {
