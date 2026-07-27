@@ -204,20 +204,18 @@ pub async fn check_keys_drift(
         let thirty_days = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
 
         for key in keys {
-            #[allow(clippy::collapsible_if)]
-            if key.status.as_deref() == Some("ACTIVE") {
-                if let Some(valid_to) = key.valid_to {
-                    #[allow(clippy::collapsible_if)]
-                    if valid_to > 0 && valid_to - now < thirty_days {
-                        let provider_id = key.provider_id.as_deref().unwrap_or("unknown");
-                        eprintln!(
-                            "{} Warning: Active key (providerId: {}) in realm '{}' is near expiration or expired! Consider rotating keys.",
-                            WARN,
-                            style(provider_id).yellow(),
-                            realm_name
-                        );
-                    }
-                }
+            if key.status.as_deref() == Some("ACTIVE")
+                && key
+                    .valid_to
+                    .is_some_and(|valid_to| valid_to > 0 && valid_to - now < thirty_days)
+            {
+                let provider_id = key.provider_id.as_deref().unwrap_or("unknown");
+                eprintln!(
+                    "{} Warning: Active key (providerId: {}) in realm '{}' is near expiration or expired! Consider rotating keys.",
+                    WARN,
+                    style(provider_id).yellow(),
+                    realm_name
+                );
             }
         }
     }
