@@ -666,4 +666,70 @@ mod tests {
             "myrealm"
         ));
     }
+
+    #[tokio::test]
+    async fn test_append_secrets_empty() -> Result<()> {
+        let temp = tempdir()?;
+        let secrets_path = temp.path().join(".secrets");
+        let new_secrets = std::collections::BTreeMap::new();
+
+        append_secrets(&secrets_path, &new_secrets).await?;
+
+        assert!(!secrets_path.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_append_secrets_new_file() -> Result<()> {
+        let temp = tempdir()?;
+        let secrets_path = temp.path().join(".secrets");
+        let mut new_secrets = std::collections::BTreeMap::new();
+        new_secrets.insert("KEY1".to_string(), "val1".to_string());
+        new_secrets.insert("KEY2".to_string(), "val2".to_string());
+
+        append_secrets(&secrets_path, &new_secrets).await?;
+
+        assert!(secrets_path.exists());
+        let content = fs::read_to_string(&secrets_path)?;
+        assert!(content.contains("KEY1=val1\n"));
+        assert!(content.contains("KEY2=val2\n"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_append_secrets_existing_file() -> Result<()> {
+        let temp = tempdir()?;
+        let secrets_path = temp.path().join(".secrets");
+        fs::write(&secrets_path, "EXISTING_KEY=old_val\nKEY1=old_val1\n")?;
+
+        let mut new_secrets = std::collections::BTreeMap::new();
+        new_secrets.insert("KEY1".to_string(), "new_val1".to_string()); // Should be ignored since KEY1 exists
+        new_secrets.insert("KEY2".to_string(), "val2".to_string()); // Should be added
+
+        append_secrets(&secrets_path, &new_secrets).await?;
+
+        let content = fs::read_to_string(&secrets_path)?;
+        assert!(content.contains("EXISTING_KEY=old_val\n"));
+        assert!(content.contains("KEY1=old_val1\n"));
+        assert!(!content.contains("KEY1=new_val1"));
+        assert!(content.contains("KEY2=val2\n"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_append_secrets_missing_newline() -> Result<()> {
+        let temp = tempdir()?;
+        let secrets_path = temp.path().join(".secrets");
+        fs::write(&secrets_path, "EXISTING_KEY=old_val")?; // No trailing newline
+
+        let mut new_secrets = std::collections::BTreeMap::new();
+        new_secrets.insert("KEY1".to_string(), "val1".to_string());
+
+        append_secrets(&secrets_path, &new_secrets).await?;
+
+        let content = fs::read_to_string(&secrets_path)?;
+        assert!(content.contains("EXISTING_KEY=old_val\n"));
+        assert!(content.contains("KEY1=val1\n"));
+        Ok(())
+    }
 }
