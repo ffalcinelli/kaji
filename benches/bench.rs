@@ -35,16 +35,16 @@ fn main() {
         let start = std::time::Instant::now();
         let ui = Arc::new(DialoguerUi::new());
         for _ in 0..500 {
-            plan::run(
-                &client,
-                PathBuf::from("/tmp/perf_test"),
-                true,
-                false,
-                &[],
-                ui.clone(),
-                resolver.clone(),
-                None,
-            )
+            plan::run(kaji::plan::PlanArgs {
+                client: &client,
+                workspace_dir: PathBuf::from("/tmp/perf_test"),
+                changes_only: true,
+                interactive: false,
+                realms_to_plan: &[],
+                ui: ui.clone(),
+                resolver: resolver.clone(),
+                profile: None,
+            })
             .await
             .unwrap();
         }
