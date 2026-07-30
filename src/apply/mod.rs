@@ -250,19 +250,19 @@ pub async fn run_ext(
                     .bold()
             );
 
-            apply_single_realm(
-                &realm_client,
-                realm_dir,
+            apply_single_realm(ApplyContext {
+                client: &realm_client,
+                workspace_dir: realm_dir,
                 secrets_path,
                 resolver,
                 planned_files,
-                &realm_name,
+                realm_name: realm_name.as_str(),
                 profile,
                 review,
                 ui,
                 yes,
                 prune,
-            )
+            })
             .await
         });
     }
@@ -277,20 +277,35 @@ pub async fn run_ext(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn apply_single_realm(
-    client: &KeycloakClient,
-    workspace_dir: PathBuf,
-    secrets_path: Arc<PathBuf>,
-    resolver: Arc<dyn SecretResolver>,
-    planned_files: Arc<Option<HashSet<PathBuf>>>,
-    realm_name: &str,
-    profile: Option<String>,
-    review: bool,
-    ui: Arc<dyn Ui>,
-    yes: bool,
-    prune: bool,
-) -> Result<()> {
+
+pub struct ApplyContext<'a> {
+    pub client: &'a KeycloakClient,
+    pub workspace_dir: PathBuf,
+    pub secrets_path: Arc<PathBuf>,
+    pub resolver: Arc<dyn SecretResolver>,
+    pub planned_files: Arc<Option<HashSet<PathBuf>>>,
+    pub realm_name: &'a str,
+    pub profile: Option<String>,
+    pub review: bool,
+    pub ui: Arc<dyn Ui>,
+    pub yes: bool,
+    pub prune: bool,
+}
+
+async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
+    let ApplyContext {
+        client,
+        workspace_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        realm_name,
+        profile,
+        review,
+        ui,
+        yes,
+        prune,
+    } = ctx;
     // Stage 0: Realms
     realm::apply_realm(
         client,
