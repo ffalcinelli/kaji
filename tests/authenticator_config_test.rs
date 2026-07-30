@@ -73,16 +73,16 @@ async fn test_authenticator_config_inspect_plan_apply() {
         as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = Arc::new(kaji::utils::ui::DialoguerUi::new());
 
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        true,
-        false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: true,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Plan failed");
 
@@ -148,16 +148,16 @@ async fn test_authenticator_config_inspect_plan_apply() {
         .expect("Validation failed");
 
     // 6. Run plan again (should detect the changes: 1 updated, 1 created)
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        true,
-        false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: true,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Plan after modifications failed");
 
