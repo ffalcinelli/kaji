@@ -50,31 +50,31 @@ async fn test_plan_extended_scenarios() {
 
     // This should work because plan::run uses directory names as realm names,
     // and realm::plan_realm just compares local realm.yaml with remote realm.
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
     // scenario: .kajiplan exists but is empty
     fs::write(workspace_dir.join(".kajiplan"), "[]").unwrap();
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        true,
-        false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: true,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
@@ -84,30 +84,30 @@ async fn test_plan_extended_scenarios() {
         "[\"test-realm/non-existent.yaml\"]",
     )
     .unwrap();
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
     // scenario: run for a specific realm that doesn't have a directory
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["no-dir-realm".to_string()],
-        ui.clone(),
-        resolver,
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["no-dir-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver,
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }

@@ -34,30 +34,30 @@ async fn test_plan_edge_cases() {
     });
 
     // 1. Test run with non-existent directory
-    let res = plan::run(
-        &client,
-        workspace_dir.join("non-existent"),
-        false,
-        false,
-        &[],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.join("non-existent"),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 
     // 2. Test run with empty directory (no realms)
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &[],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -79,61 +79,61 @@ async fn test_plan_edge_cases() {
     .unwrap();
 
     // 4. Test auto-discovery of realms
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &[],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
     // 5. Test plan_realm with 404 (realm doesn't exist on server)
     // "new-realm" should return 404 in my mock server
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["new-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["new-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
     // 6. Test with invalid YAML
     fs::write(realm_dir.join("invalid.yaml"), "invalid: [yaml").unwrap();
-    let _res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["new-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    let _res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["new-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
 
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
     fs::write(roles_dir.join("invalid.yaml"), "invalid: [yaml").unwrap();
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["new-realm".to_string()],
-        ui.clone(),
-        resolver,
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["new-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver,
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 }
@@ -276,16 +276,16 @@ async fn test_check_keys_drift() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    plan::run(
-        &client,
-        workspace_dir,
-        true,
-        false,
-        &["test-realm".to_string()],
-        ui,
-        resolver,
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: true,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui,
+        resolver: resolver,
+        profile: None,
+    })
     .await
     .unwrap();
 }

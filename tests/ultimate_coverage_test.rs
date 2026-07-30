@@ -48,16 +48,16 @@ async fn test_ultimate_flow() {
     )
     .unwrap();
 
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
@@ -96,16 +96,17 @@ async fn test_ultimate_flow() {
     )
     .unwrap();
 
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        true, // changes_only
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: true,
+        interactive: // changes_only
         false,
-        &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
@@ -127,16 +128,17 @@ async fn test_ultimate_flow() {
 
     ui.selects.lock().unwrap().push(1); // Say 'no' (index 1) to including change in plan
 
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        true, // interactive
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: true,
+        realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 

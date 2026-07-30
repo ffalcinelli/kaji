@@ -285,16 +285,16 @@ async fn handle_plan(
         .bold()
     );
     plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
-    plan::run(
-        &client,
-        workspace.to_path_buf(),
+    plan::run(plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace.to_path_buf(),
         changes_only,
         interactive,
-        &cli.realms,
-        Arc::new(crate::utils::ui::DialoguerUi::new()),
+        realms_to_plan: &cli.realms,
+        ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
         resolver,
-        cli.profile.clone(),
-    )
+        profile: cli.profile.clone(),
+    })
     .await?;
     Ok(())
 }
@@ -318,16 +318,16 @@ async fn handle_drift(
         .bold()
     );
     plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
-    plan::run(
-        &client,
-        workspace.to_path_buf(),
-        true,
-        false,
-        &cli.realms,
-        Arc::new(crate::utils::ui::DialoguerUi::new()),
+    plan::run(plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace.to_path_buf(),
+        changes_only: true,
+        interactive: false,
+        realms_to_plan: &cli.realms,
+        ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
         resolver,
-        cli.profile.clone(),
-    )
+        profile: cli.profile.clone(),
+    })
     .await?;
     Ok(())
 }

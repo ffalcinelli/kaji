@@ -15,18 +15,18 @@ use kaji::utils::ui::DialoguerUi;
 async fn test_plan_non_existent_workspace() {
     let mock_url = start_mock_server().await;
     let client = KeycloakClient::new(mock_url);
-    let res = plan::run(
-        &client,
-        std::path::PathBuf::from("non-existent-123"),
-        false,
-        false,
-        &[],
-        Arc::new(DialoguerUi::new()),
-        Arc::new(kaji::utils::secrets::EnvResolver::new(
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: std::path::PathBuf::from("non-existent-123"),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: Arc::new(kaji::utils::secrets::EnvResolver::new(
             std::collections::HashMap::new(),
         )),
-        None,
-    )
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 }
@@ -37,16 +37,16 @@ async fn test_plan_empty_workspace() {
     let mock_url = start_mock_server().await;
     let client = KeycloakClient::new(mock_url);
     let dir = tempdir().unwrap();
-    let res = plan::run(
-        &client,
-        dir.path().to_path_buf(),
-        false,
-        false,
-        &[],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: dir.path().to_path_buf(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }
@@ -69,16 +69,16 @@ async fn test_plan_with_secrets_file() {
     let realm_dir = workspace_dir.join("test-realm");
     fs::create_dir_all(&realm_dir).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }
@@ -103,16 +103,16 @@ async fn test_plan_cleanup_old_plan_file() {
     fs::create_dir_all(&realm_dir).unwrap();
 
     // No changes, so it should remove .kajiplan
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
     assert!(!plan_file.exists());
@@ -147,16 +147,16 @@ async fn test_plan_realm_not_found_remote() {
     .unwrap();
 
     // "new-realm" will return 404 from mock server
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &["new-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["new-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }
@@ -191,16 +191,16 @@ async fn test_plan_resources_creation() {
     let role_path = roles_dir.join("new-role.yaml");
     fs::write(&role_path, serde_yaml::to_string(&role).unwrap()).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -240,16 +240,16 @@ description: ${KEYCLOAK_ROLE_DESC}
     let role_path = roles_dir.join("secret-role.yaml");
     fs::write(&role_path, role_yaml).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -279,16 +279,16 @@ async fn test_plan_resources_invalid_yaml() {
     fs::create_dir_all(&roles_dir).unwrap();
     fs::write(roles_dir.join("bad.yaml"), "not : [ : valid").unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 }
@@ -314,16 +314,16 @@ async fn test_plan_resources_missing_identity() {
     // Missing 'name' for role
     fs::write(roles_dir.join("no-id.yaml"), "description: missing name").unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 }
@@ -359,16 +359,16 @@ async fn test_plan_resources_update() {
     let role_path = roles_dir.join("role-1.yaml");
     fs::write(&role_path, serde_yaml::to_string(&role).unwrap()).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -407,16 +407,17 @@ async fn test_plan_resources_changes_only() {
     let role_path = roles_dir.join("role-1.yaml");
     fs::write(&role_path, serde_yaml::to_string(&role).unwrap()).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        true, // changes_only
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: true,
+        interactive: // changes_only
         false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -464,16 +465,17 @@ async fn test_plan_interactive_include() {
         passwords: Mutex::new(vec![]),
     });
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        true, // interactive
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: true,
+        realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui,
-        resolver.clone(),
-        None,
-    )
+        ui: ui,
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -520,16 +522,17 @@ async fn test_plan_interactive_exclude() {
         passwords: Mutex::new(vec![]),
     });
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        true, // interactive
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: true,
+        realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui,
-        resolver.clone(),
-        None,
-    )
+        ui: ui,
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -557,16 +560,16 @@ async fn test_plan_error_paths() {
     )
     .unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["error-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["error-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
     assert!(res.unwrap_err().to_string().contains("Failed to get realm"));
@@ -578,16 +581,16 @@ async fn test_plan_error_paths() {
     fs::create_dir_all(&roles_dir).unwrap();
     fs::write(roles_dir.join("role.yaml"), "name: role\n").unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["error-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["error-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
     assert!(res.unwrap_err().to_string().contains("Failed to get roles"));
@@ -598,16 +601,16 @@ async fn test_plan_error_paths() {
     fs::create_dir_all(&comp_dir).unwrap();
     fs::write(comp_dir.join("comp.yaml"), "name: comp\n").unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["error-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["error-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
     assert!(
@@ -626,16 +629,16 @@ async fn test_plan_empty_realms_list() {
     let workspace_dir = dir.path().to_path_buf();
 
     // Create an empty directory (already empty)
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &[],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }
@@ -684,16 +687,16 @@ async fn test_plan_auto_discovery_no_realm_yaml() {
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &[],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &[],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }
@@ -737,16 +740,16 @@ async fn test_plan_resources_ignore_non_yaml() {
     // but read_dir gives all entries, and we check extension)
     fs::create_dir(roles_dir.join("some_subdir.yaml")).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir,
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir,
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 }
@@ -783,16 +786,16 @@ async fn test_plan_resources_with_id_no_clear() {
     )
     .unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -824,16 +827,16 @@ description: ${KEYCLOAK_ROLE_MISSING_SECRET}
     let role_path = roles_dir.join("secret-role.yaml");
     fs::write(&role_path, role_yaml).unwrap();
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["test-realm".to_string()],
-        Arc::new(DialoguerUi::new()),
-        resolver.clone(),
-        None,
-    )
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: Arc::new(DialoguerUi::new()),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
 
     assert!(res.is_err());
@@ -899,16 +902,18 @@ async fn test_plan_resources_interactive() {
     });
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false, // changes_only = false
-        true,  // interactive = true
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: // changes_only = false
+        true,
+        realms_to_plan: // interactive = true
         &["test-realm".to_string()],
-        ui.clone(),
-        resolver,
-        None,
-    )
+        ui: ui.clone(),
+        resolver: resolver,
+        profile: None,
+    })
     .await;
 
     assert!(res.is_ok());
@@ -984,16 +989,16 @@ async fn test_plan_resources_filter_skips() {
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
     // Run planning
-    let res = plan::run(
-        &client,
-        workspace_dir.clone(),
-        false, // changes_only
-        false, // interactive
-        &["test-realm".to_string()],
-        ui.clone(),
+    let res = plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["test-realm".to_string()],
+        ui: ui.clone(),
         resolver,
-        Some("prod".to_string()), // profile = prod (so role-1.prod.yaml is overlay)
-    )
+        profile: Some("prod".to_string()),
+    })
     .await;
 
     assert!(res.is_ok());

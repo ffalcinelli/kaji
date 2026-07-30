@@ -390,16 +390,18 @@ async fn test_plan() {
     )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     // Run plan
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false, // changes_only
-        false, // interactive
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: // changes_only
+        false,
+        realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Plan failed");
 
@@ -428,30 +430,32 @@ async fn test_plan() {
     assert!(!planned_names.contains(&"group-1.yaml".to_string()));
 
     // Test with changes_only=true
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        true,  // changes_only
-        false, // interactive
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: true,
+        interactive: // changes_only
+        false,
+        realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Plan with changes_only failed");
 
     // Test with non-existent realm
-    plan::run(
-        &client,
-        workspace_dir.clone(),
-        false,
-        false,
-        &["non-existent".to_string()],
-        ui,
-        resolver,
-        None,
-    )
+    plan::run(kaji::plan::PlanArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        changes_only: false,
+        interactive: false,
+        realms_to_plan: &["non-existent".to_string()],
+        ui: ui,
+        resolver: resolver,
+        profile: None,
+    })
     .await
     .expect("Plan for non-existent realm failed");
 }

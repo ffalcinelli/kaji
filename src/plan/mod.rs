@@ -63,21 +63,33 @@ pub struct PlanContext<'a> {
     pub profile: Option<String>,
 }
 
+pub struct PlanArgs<'a> {
+    pub client: &'a KeycloakClient,
+    pub workspace_dir: PathBuf,
+    pub changes_only: bool,
+    pub interactive: bool,
+    pub realms_to_plan: &'a [String],
+    pub ui: Arc<dyn Ui>,
+    pub resolver: Arc<dyn SecretResolver>,
+    pub profile: Option<String>,
+}
+
 /// Calculates configuration drift and compiles a list of planned modifications.
 ///
 /// # Errors
 /// Returns an error if directory read fails or Keycloak connection fails.
-#[allow(clippy::too_many_arguments)]
-pub async fn run(
-    client: &KeycloakClient,
-    workspace_dir: PathBuf,
-    changes_only: bool,
-    interactive: bool,
-    realms_to_plan: &[String],
-    ui: Arc<dyn Ui>,
-    resolver: Arc<dyn SecretResolver>,
-    profile: Option<String>,
-) -> Result<()> {
+pub async fn run(args: PlanArgs<'_>) -> Result<()> {
+    let PlanArgs {
+        client,
+        workspace_dir,
+        changes_only,
+        interactive,
+        realms_to_plan,
+        ui,
+        resolver,
+        profile,
+    } = args;
+
     if !workspace_dir.exists() {
         anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
     }
