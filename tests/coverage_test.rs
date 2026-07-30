@@ -34,7 +34,7 @@ async fn test_plan_edge_cases() {
     });
 
     // 1. Test run with non-existent directory
-    let res = plan::run(kaji::plan::PlanArgs {
+    let res = plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.join("non-existent"),
         changes_only: false,
@@ -48,7 +48,7 @@ async fn test_plan_edge_cases() {
     assert!(res.is_err());
 
     // 2. Test run with empty directory (no realms)
-    let res = plan::run(kaji::plan::PlanArgs {
+    let res = plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -79,7 +79,7 @@ async fn test_plan_edge_cases() {
     .unwrap();
 
     // 4. Test auto-discovery of realms
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -94,7 +94,7 @@ async fn test_plan_edge_cases() {
 
     // 5. Test plan_realm with 404 (realm doesn't exist on server)
     // "new-realm" should return 404 in my mock server
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -109,7 +109,7 @@ async fn test_plan_edge_cases() {
 
     // 6. Test with invalid YAML
     fs::write(realm_dir.join("invalid.yaml"), "invalid: [yaml").unwrap();
-    let _res = plan::run(kaji::plan::PlanArgs {
+    let _res = plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -124,7 +124,7 @@ async fn test_plan_edge_cases() {
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
     fs::write(roles_dir.join("invalid.yaml"), "invalid: [yaml").unwrap();
-    let res = plan::run(kaji::plan::PlanArgs {
+    let res = plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -276,7 +276,7 @@ async fn test_check_keys_drift() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir,
         changes_only: true,

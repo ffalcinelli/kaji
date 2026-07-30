@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs as async_fs;
 
-use super::{PlanContext, PlanOptions, PlanSummary, print_diff};
+use super::{print_diff, PlanContext, PlanOptions, PlanSummary};
 
 pub async fn plan_components_or_keys(
     ctx: &PlanContext<'_>,

@@ -48,7 +48,7 @@ async fn test_ultimate_flow() {
     )
     .unwrap();
 
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -96,7 +96,7 @@ async fn test_ultimate_flow() {
     )
     .unwrap();
 
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: true,
@@ -128,7 +128,7 @@ async fn test_ultimate_flow() {
 
     ui.selects.lock().unwrap().push(1); // Say 'no' (index 1) to including change in plan
 
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,

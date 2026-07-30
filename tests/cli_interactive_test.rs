@@ -101,13 +101,11 @@ async fn test_create_client_interactive() {
     cli::client::create_client_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("clients")
-            .join("newclient.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("clients")
+        .join("newclient.yaml")
+        .exists());
 }
 
 #[tokio::test]
@@ -129,13 +127,11 @@ async fn test_create_role_interactive() {
     cli::role::create_role_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("roles")
-            .join("newrole.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("roles")
+        .join("newrole.yaml")
+        .exists());
 }
 
 #[tokio::test]
@@ -153,13 +149,11 @@ async fn test_create_group_interactive() {
     cli::group::create_group_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("groups")
-            .join("newgroup.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("groups")
+        .join("newgroup.yaml")
+        .exists());
 }
 
 #[tokio::test]
@@ -181,13 +175,11 @@ async fn test_create_idp_interactive() {
     cli::idp::create_idp_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("identity-providers")
-            .join("google.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("identity-providers")
+        .join("google.yaml")
+        .exists());
 }
 
 #[tokio::test]
@@ -209,13 +201,11 @@ async fn test_create_client_scope_interactive() {
     cli::client::create_client_scope_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("client-scopes")
-            .join("myscope.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("client-scopes")
+        .join("myscope.yaml")
+        .exists());
 }
 
 #[tokio::test]
@@ -293,13 +283,11 @@ async fn test_create_role_interactive_empty_desc_and_realm_role() {
     cli::role::create_role_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("roles")
-            .join("realm-role.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("roles")
+        .join("realm-role.yaml")
+        .exists());
 }
 
 #[tokio::test]
@@ -323,13 +311,11 @@ async fn test_create_user_interactive_empty_names() {
     cli::user::create_user_interactive(&workspace_dir, &ui)
         .await
         .unwrap();
-    assert!(
-        workspace_dir
-            .join("master")
-            .join("users")
-            .join("nonameuser.yaml")
-            .exists()
-    );
+    assert!(workspace_dir
+        .join("master")
+        .join("users")
+        .join("nonameuser.yaml")
+        .exists());
 }
 
 #[tokio::test]

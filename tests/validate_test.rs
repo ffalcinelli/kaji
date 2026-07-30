@@ -74,12 +74,10 @@ async fn test_validate_empty_role_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Role name is empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Role name is empty"));
 }
 
 #[tokio::test]
@@ -140,12 +138,10 @@ async fn test_validate_duplicate_role_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Duplicate role name: admin")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Duplicate role name: admin"));
 }
 
 #[tokio::test]
@@ -157,12 +153,10 @@ async fn test_validate_missing_realm() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("realm.yaml not found")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("realm.yaml not found"));
 }
 
 #[tokio::test]
@@ -213,12 +207,10 @@ async fn test_validate_empty_client_id() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Client ID is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Client ID is missing or empty"));
 }
 
 #[tokio::test]
@@ -268,12 +260,10 @@ async fn test_validate_empty_idp_alias() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Identity Provider alias is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Identity Provider alias is missing or empty"));
 }
 
 #[tokio::test]
@@ -323,12 +313,10 @@ async fn test_validate_empty_idp_provider_id() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Identity Provider providerId is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Identity Provider providerId is missing or empty"));
 }
 
 #[tokio::test]
@@ -369,12 +357,10 @@ async fn test_validate_empty_client_scope_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Client Scope name is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Client Scope name is missing or empty"));
 }
 
 #[tokio::test]
@@ -414,12 +400,10 @@ async fn test_validate_empty_group_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Group name is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Group name is missing or empty"));
 }
 
 #[tokio::test]
@@ -463,12 +447,10 @@ async fn test_validate_empty_username() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("User username is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("User username is missing or empty"));
 }
 
 #[tokio::test]
@@ -512,12 +494,10 @@ async fn test_validate_missing_username() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("User username is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("User username is missing or empty"));
 }
 
 #[tokio::test]
@@ -561,12 +541,10 @@ async fn test_validate_empty_auth_flow_alias() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Authentication Flow alias is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Authentication Flow alias is missing or empty"));
 }
 
 #[tokio::test]
@@ -610,12 +588,10 @@ async fn test_validate_empty_required_action_alias() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Required Action alias is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Required Action alias is missing or empty"));
 }
 
 #[tokio::test]
@@ -659,12 +635,10 @@ async fn test_validate_empty_required_action_provider_id() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Required Action providerId is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Required Action providerId is missing or empty"));
 }
 
 #[tokio::test]
@@ -708,12 +682,10 @@ async fn test_validate_empty_component_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Component name is empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Component name is empty"));
 }
 
 #[tokio::test]
@@ -804,12 +776,10 @@ async fn test_validate_empty_component_provider_id() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Component providerId is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Component providerId is missing or empty"));
 }
 
 #[tokio::test]
@@ -834,12 +804,10 @@ async fn test_validate_empty_realm_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Realm name is empty in realm.yaml")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Realm name is empty in realm.yaml"));
 }
 
 #[tokio::test]
@@ -883,10 +851,8 @@ async fn test_validate_empty_username_edge_case() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("User username is missing or empty")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("User username is missing or empty"));
 }

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
-use super::{PlanContext, PlanSummary, print_diff};
+use super::{print_diff, PlanContext, PlanSummary};
 
 #[rustfmt::skip]
 pub async fn plan_resources<T>(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSummary)>

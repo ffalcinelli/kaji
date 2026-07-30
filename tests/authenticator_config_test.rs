@@ -39,14 +39,12 @@ async fn test_authenticator_config_inspect_plan_apply() {
     let mut exported_configs = fs::read_dir(&config_dir).unwrap();
     let config_entry = exported_configs.next().unwrap().unwrap();
     let config_path = config_entry.path();
-    assert!(
-        config_path
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("review profile config")
-    );
+    assert!(config_path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("review profile config"));
 
     // Verify flow was exported with the config alias instead of UUID
     let flows_dir = realm_dir.join("authentication-flows");
@@ -73,7 +71,7 @@ async fn test_authenticator_config_inspect_plan_apply() {
         as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = Arc::new(kaji::utils::ui::DialoguerUi::new());
 
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: true,
@@ -148,7 +146,7 @@ async fn test_authenticator_config_inspect_plan_apply() {
         .expect("Validation failed");
 
     // 6. Run plan again (should detect the changes: 1 updated, 1 created)
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: true,
