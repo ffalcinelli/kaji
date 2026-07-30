@@ -277,7 +277,6 @@ pub async fn run_ext(
     Ok(())
 }
 
-
 pub struct ApplyContext<'a> {
     pub client: &'a KeycloakClient,
     pub workspace_dir: PathBuf,
