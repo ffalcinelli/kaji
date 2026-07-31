@@ -16,11 +16,11 @@ macro_rules! plan_generic_resources {
 }
 
 use crate::client::KeycloakClient;
-use crate::utils::secrets::{obfuscate_secrets, SecretResolver};
-use crate::utils::ui::{Ui, ACTION, CHECK, MEMO, WARN};
+use crate::utils::secrets::{SecretResolver, obfuscate_secrets};
+use crate::utils::ui::{ACTION, CHECK, MEMO, Ui, WARN};
 
 use anyhow::Result;
-use console::{style, Style};
+use console::{Style, style};
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
 use std::path::PathBuf;

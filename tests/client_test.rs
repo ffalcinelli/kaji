@@ -51,10 +51,12 @@ async fn test_login_parse_failure() {
         .login("admin-cli", None, Some("bad_json"), Some("admin"))
         .await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Failed to parse token response"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to parse token response")
+    );
 }
 
 #[tokio::test]
@@ -257,10 +259,12 @@ async fn test_identity_providers() {
     };
 
     assert!(client.create_identity_provider(&idp).await.is_ok());
-    assert!(client
-        .update_identity_provider("google", &idp)
-        .await
-        .is_ok());
+    assert!(
+        client
+            .update_identity_provider("google", &idp)
+            .await
+            .is_ok()
+    );
     assert!(client.delete_identity_provider("google").await.is_ok());
 }
 
@@ -409,10 +413,12 @@ async fn test_required_actions() {
         extra: std::collections::HashMap::new(),
     };
 
-    assert!(client
-        .update_required_action("action-1", &action)
-        .await
-        .is_ok());
+    assert!(
+        client
+            .update_required_action("action-1", &action)
+            .await
+            .is_ok()
+    );
     assert!(client.register_required_action(&action).await.is_ok());
     assert!(client.delete_required_action("action-1").await.is_ok());
 }
@@ -471,10 +477,12 @@ async fn test_unauthenticated_error() {
     let client = KeycloakClient::new(mock_url);
     let result = client.get_realms().await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Not authenticated"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Not authenticated")
+    );
 }
 
 #[tokio::test]
@@ -496,10 +504,12 @@ async fn test_login_no_credentials() {
     let mut client = KeycloakClient::new("http://localhost".to_string());
     let result = client.login("admin-cli", None, None, None).await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Either username/password or client_secret must be provided"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Either username/password or client_secret must be provided")
+    );
 }
 
 #[tokio::test]
@@ -542,10 +552,12 @@ async fn test_register_required_action_no_provider_id() {
 
     let result = client.register_required_action(&action).await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Provider ID required for registration"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Provider ID required for registration")
+    );
 }
 
 #[tokio::test]
@@ -569,10 +581,12 @@ async fn test_post_send_failure() {
     };
     let result = client.create_client(&client_rep).await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Failed to send POST request"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to send POST request")
+    );
 }
 
 #[tokio::test]
@@ -581,10 +595,12 @@ async fn test_delete_send_failure() {
     client.set_token("mock_token".to_string());
     let result = client.delete_client("test").await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Failed to send DELETE request"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to send DELETE request")
+    );
 }
 
 #[tokio::test]
@@ -599,8 +615,10 @@ async fn test_api_error() {
 
     let result = client.get_realm().await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("GET request failed"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("GET request failed")
+    );
 }

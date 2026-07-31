@@ -39,12 +39,14 @@ async fn test_authenticator_config_inspect_plan_apply() {
     let mut exported_configs = fs::read_dir(&config_dir).unwrap();
     let config_entry = exported_configs.next().unwrap().unwrap();
     let config_path = config_entry.path();
-    assert!(config_path
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .starts_with("review profile config"));
+    assert!(
+        config_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("review profile config")
+    );
 
     // Verify flow was exported with the config alias instead of UUID
     let flows_dir = realm_dir.join("authentication-flows");
@@ -57,13 +59,13 @@ async fn test_authenticator_config_inspect_plan_apply() {
     // 2. Run plan (should show no changes)
     let secrets_file_path = workspace_dir.join(".secrets");
     let mut vars = std::collections::HashMap::new();
-    if secrets_file_path.exists() {
-        if let Ok(lines) = fs::read_to_string(&secrets_file_path) {
-            for line in lines.lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    let val = v.trim_matches('"').trim_matches('\'').to_string();
-                    vars.insert(k.to_string(), val);
-                }
+    if secrets_file_path.exists()
+        && let Ok(lines) = fs::read_to_string(&secrets_file_path)
+    {
+        for line in lines.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                let val = v.trim_matches('"').trim_matches('\'').to_string();
+                vars.insert(k.to_string(), val);
             }
         }
     }
@@ -88,10 +90,10 @@ async fn test_authenticator_config_inspect_plan_apply() {
     let config_file_path = config_path;
     let mut config_val: serde_json::Value =
         serde_yaml::from_str(&fs::read_to_string(&config_file_path).unwrap()).unwrap();
-    if let Some(obj) = config_val.as_object_mut() {
-        if let Some(config_map) = obj.get_mut("config").and_then(|c| c.as_object_mut()) {
-            config_map.insert("loa-condition-level".to_string(), serde_json::json!("5"));
-        }
+    if let Some(obj) = config_val.as_object_mut()
+        && let Some(config_map) = obj.get_mut("config").and_then(|c| c.as_object_mut())
+    {
+        config_map.insert("loa-condition-level".to_string(), serde_json::json!("5"));
     }
     fs::write(
         &config_file_path,
@@ -119,22 +121,19 @@ async fn test_authenticator_config_inspect_plan_apply() {
 
     // Update the local flow to reference the new config in the second execution
     let mut flow_val: serde_json::Value = serde_yaml::from_str(&flow_content).unwrap();
-    if let Some(obj) = flow_val.as_object_mut() {
-        if let Some(execs) = obj
+    if let Some(obj) = flow_val.as_object_mut()
+        && let Some(execs) = obj
             .get_mut("authenticationExecutions")
             .and_then(|e| e.as_array_mut())
-        {
-            for exec in execs {
-                if exec.get("authenticator").and_then(|a| a.as_str())
-                    == Some("another-authenticator")
-                {
-                    if let Some(exec_obj) = exec.as_object_mut() {
-                        exec_obj.insert(
-                            "authenticatorConfig".to_string(),
-                            serde_json::json!("new config"),
-                        );
-                    }
-                }
+    {
+        for exec in execs {
+            if exec.get("authenticator").and_then(|a| a.as_str()) == Some("another-authenticator")
+                && let Some(exec_obj) = exec.as_object_mut()
+            {
+                exec_obj.insert(
+                    "authenticatorConfig".to_string(),
+                    serde_json::json!("new config"),
+                );
             }
         }
     }

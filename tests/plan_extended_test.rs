@@ -105,7 +105,7 @@ async fn test_plan_extended_scenarios() {
         interactive: false,
         realms_to_plan: &["no-dir-realm".to_string()],
         ui: ui.clone(),
-        resolver: resolver,
+        resolver,
         profile: None,
     })
     .await;

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
-use super::{print_diff, PlanContext, PlanSummary};
+use super::{PlanContext, PlanSummary, print_diff};
 
 pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSummary)> {
     let mut changed_files = Vec::new();

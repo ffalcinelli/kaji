@@ -452,8 +452,8 @@ async fn test_plan() {
         changes_only: false,
         interactive: false,
         realms_to_plan: &["non-existent".to_string()],
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await

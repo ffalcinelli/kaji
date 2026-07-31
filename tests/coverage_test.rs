@@ -131,7 +131,7 @@ async fn test_plan_edge_cases() {
         interactive: false,
         realms_to_plan: &["new-realm".to_string()],
         ui: ui.clone(),
-        resolver: resolver,
+        resolver,
         profile: None,
     })
     .await;
@@ -278,12 +278,12 @@ async fn test_check_keys_drift() {
 
     plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: true,
         interactive: false,
         realms_to_plan: &["test-realm".to_string()],
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await

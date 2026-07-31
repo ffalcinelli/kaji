@@ -71,7 +71,7 @@ async fn test_plan_with_secrets_file() {
 
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &["test-realm".to_string()],
@@ -149,7 +149,7 @@ async fn test_plan_realm_not_found_remote() {
     // "new-realm" will return 404 from mock server
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &["new-realm".to_string()],
@@ -281,7 +281,7 @@ async fn test_plan_resources_invalid_yaml() {
 
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &["test-realm".to_string()],
@@ -316,7 +316,7 @@ async fn test_plan_resources_missing_identity() {
 
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &["test-realm".to_string()],
@@ -472,7 +472,7 @@ async fn test_plan_interactive_include() {
         interactive: true,
         realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui: ui,
+        ui,
         resolver: resolver.clone(),
         profile: None,
     })
@@ -529,7 +529,7 @@ async fn test_plan_interactive_exclude() {
         interactive: true,
         realms_to_plan: // interactive
         &["test-realm".to_string()],
-        ui: ui,
+        ui,
         resolver: resolver.clone(),
         profile: None,
     })
@@ -613,10 +613,11 @@ async fn test_plan_error_paths() {
     })
     .await;
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("Failed to get components"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("Failed to get components")
+    );
 }
 
 #[tokio::test]
@@ -630,7 +631,7 @@ async fn test_plan_empty_realms_list() {
     // Create an empty directory (already empty)
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &[],
@@ -688,7 +689,7 @@ async fn test_plan_auto_discovery_no_realm_yaml() {
 
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &[],
@@ -741,7 +742,7 @@ async fn test_plan_resources_ignore_non_yaml() {
 
     let res = plan::run(plan::PlanArgs {
         client: &client,
-        workspace_dir: workspace_dir,
+        workspace_dir,
         changes_only: false,
         interactive: false,
         realms_to_plan: &["test-realm".to_string()],
@@ -839,10 +840,11 @@ description: ${KEYCLOAK_ROLE_MISSING_SECRET}
     .await;
 
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("Missing required secret or environment variable"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("Missing required secret or environment variable")
+    );
 }
 
 #[tokio::test]
@@ -909,7 +911,7 @@ async fn test_plan_resources_interactive() {
         realms_to_plan: // interactive = true
         &["test-realm".to_string()],
         ui: ui.clone(),
-        resolver: resolver,
+        resolver,
         profile: None,
     })
     .await;
