@@ -159,16 +159,17 @@ async fn test_authenticator_config_inspect_plan_apply() {
     .expect("Plan after modifications failed");
 
     // 7. Run apply (should execute PUT and POST for config updates and creations)
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui,
-        resolver,
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui,
+        resolver: resolver,
+        profile: None,
+    })
     .await
     .expect("Apply modifications failed");
 }

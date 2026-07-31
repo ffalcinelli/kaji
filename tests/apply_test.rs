@@ -394,16 +394,17 @@ async fn test_apply() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply failed");
 
@@ -431,16 +432,17 @@ async fn test_apply() {
     let planned_files = vec![realm_dir.join("realm.yaml")];
     fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
 
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver_with_secrets.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver_with_secrets.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply with plan failed");
 
@@ -451,16 +453,17 @@ async fn test_apply() {
 
     // Test with empty plan
     fs::write(&plan_file, "[]").unwrap();
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver_with_secrets.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver_with_secrets.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply with empty plan failed");
 
@@ -495,16 +498,19 @@ async fn test_apply() {
         confirms.push(false); // No, don't apply this specific role
     }
 
-    apply::run(
-        &review_client,
-        workspace_dir.clone(),
-        &["review-realm".to_string()],
-        false, // yes = false
-        true,  // review = true
+    apply::run(kaji::apply::ApplyArgs {
+        client: &review_client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["review-realm".to_string()],
+        yes: false,
+        review: // yes = false
+        true,
+        prune: false,
+        ui: // review = true
         ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply with review failed");
 
@@ -539,16 +545,19 @@ async fn test_apply_aborted_by_user() {
     });
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
-    let res = apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        false, // yes = false
-        false, // review = false
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: false,
+        review: // yes = false
+        false,
+        prune: false,
+        ui: // review = false
         ui.clone(),
-        resolver,
-        None,
-    )
+        resolver: resolver,
+        profile: None,
+    })
     .await;
 
     assert!(res.is_ok());
@@ -583,16 +592,18 @@ async fn test_apply_component_no_id_no_name() {
     });
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
-    let res = apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true, // yes = true
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: // yes = true
         false,
-        ui.clone(),
-        resolver,
-        None,
-    )
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver,
+        profile: None,
+    })
     .await;
 
     assert!(res.is_ok());
@@ -770,16 +781,18 @@ async fn test_apply_enrichment() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true, // yes = true (auto-accept enrichment)
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: // yes = true (auto-accept enrichment)
         false,
-        ui_yes,
-        resolver.clone(),
-        None,
-    )
+        prune: false,
+        ui: ui_yes,
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply enrichment yes failed");
 
@@ -826,16 +839,18 @@ async fn test_apply_enrichment() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        false, // yes = false (prompt)
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: false,
+        review: // yes = false (prompt)
         false,
-        ui_no,
-        resolver.clone(),
-        None,
-    )
+        prune: false,
+        ui: ui_no,
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply enrichment no failed");
 
@@ -907,17 +922,20 @@ async fn test_apply_pruning() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    apply::run_ext(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        false, // yes = false (prompt)
-        false, // review = false
-        true,  // prune = true
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: false,
+        review: // yes = false (prompt)
+        false,
+        prune: // review = false
+        true,
+        ui: // prune = true
         ui,
-        resolver.clone(),
-        None,
-    )
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .expect("Apply pruning failed");
 }

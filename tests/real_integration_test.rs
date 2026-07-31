@@ -122,16 +122,17 @@ standardFlowEnabled: true
 
     // 6. Apply the changes
     println!("Applying changes...");
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["master".to_string()],
-        true,
-        false,
-        ui,
-        resolver,
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["master".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui,
+        resolver: resolver,
+        profile: None,
+    })
     .await?;
 
     // 7. Verify the client was created by inspecting to a new dir

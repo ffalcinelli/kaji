@@ -65,16 +65,17 @@ async fn test_ultimate_flow() {
     assert!(workspace_dir.join(".kajiplan").exists());
 
     // 2. Apply
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 

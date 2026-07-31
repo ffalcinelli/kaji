@@ -44,16 +44,19 @@ async fn test_coverage_gaps_apply_generic() {
     fs::write(realm_dir.join("roles/r1.prod.yaml"), "name: r1-prod\n").unwrap(); // Overlay
 
     // 1. Test review mode rejection and overlay skipping
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        false, // yes = false
-        true,  // review = true
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: false,
+        review: // yes = false
+        true,
+        prune: false,
+        ui: // review = true
         ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
@@ -63,16 +66,19 @@ async fn test_coverage_gaps_apply_generic() {
     let planned_files = vec![realm_dir.join("roles/r1.yaml")];
     fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
 
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,  // yes = true
-        false, // review = false
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: // yes = true
+        false,
+        prune: false,
+        ui: // review = false
         ui.clone(),
-        resolver.clone(),
-        None,
-    )
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
@@ -81,16 +87,17 @@ async fn test_coverage_gaps_apply_generic() {
     // Also test overlay skip again (hitting DA:75)
     fs::write(realm_dir.join("roles/other.prod.yaml"), "name: other").unwrap();
 
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 }
@@ -110,45 +117,48 @@ async fn test_coverage_gaps_apply_mod_errors() {
     });
 
     // 1. No planned changes, user says NO
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["some-realm".to_string()],
-        false,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["some-realm".to_string()],
+        yes: false,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
     // 2. Non-existent workspace
-    let res = apply::run(
-        &client,
-        PathBuf::from("/non/existent/path"),
-        &[],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: PathBuf::from("/non/existent/path"),
+        realms_to_apply: &[],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 
     // 3. No realms found
     let empty_dir = tempdir().unwrap();
-    apply::run(
-        &client,
-        empty_dir.path().to_path_buf(),
-        &[],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: empty_dir.path().to_path_buf(),
+        realms_to_apply: &[],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 }
@@ -356,16 +366,17 @@ async fn test_apply_secrets_file_loading_coverage() {
         passwords: std::sync::Mutex::new(vec![]),
     });
 
-    let _ = apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        Some("non_existent".to_string()),
-    )
+    let _ = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: Some("non_existent".to_string()),
+    })
     .await;
 
     let profiles_dir = workspace_dir.join("profiles");
@@ -376,16 +387,17 @@ async fn test_apply_secrets_file_loading_coverage() {
     )
     .unwrap();
 
-    let _ = apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        Some("no_secrets".to_string()),
-    )
+    let _ = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: Some("no_secrets".to_string()),
+    })
     .await;
 }
 

@@ -115,44 +115,33 @@ use tokio::task::JoinSet;
 /// Returns an error if the workspace does not exist, network communication fails,
 /// or authentication details are invalid.
 #[allow(clippy::too_many_arguments)]
-pub async fn run(
-    client: &KeycloakClient,
-    workspace_dir: PathBuf,
-    realms_to_apply: &[String],
-    yes: bool,
-    review: bool,
-    ui: Arc<dyn Ui>,
-    resolver: Arc<dyn SecretResolver>,
-    profile: Option<String>,
-) -> Result<()> {
-    run_ext(
-        client,
-        workspace_dir,
-        realms_to_apply,
-        yes,
-        review,
-        false,
-        ui,
-        resolver,
-        profile,
-    )
-    .await
+pub struct ApplyArgs<'a> {
+    pub client: &'a KeycloakClient,
+    pub workspace_dir: PathBuf,
+    pub realms_to_apply: &'a [String],
+    pub yes: bool,
+    pub review: bool,
+    pub prune: bool,
+    pub ui: Arc<dyn Ui>,
+    pub resolver: Arc<dyn SecretResolver>,
+    pub profile: Option<String>,
 }
 
 /// Reconciles local configuration files in the workspace directory with the remote Keycloak server,
 /// optionally pruning orphaned remote resources.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_ext(
-    client: &KeycloakClient,
-    workspace_dir: PathBuf,
-    realms_to_apply: &[String],
-    yes: bool,
-    review: bool,
-    prune: bool,
-    ui: Arc<dyn Ui>,
-    resolver: Arc<dyn SecretResolver>,
-    profile: Option<String>,
-) -> Result<()> {
+pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
+    let ApplyArgs {
+        client,
+        workspace_dir,
+        realms_to_apply,
+        yes,
+        review,
+        prune,
+        ui,
+        resolver,
+        profile,
+    } = args;
     if !workspace_dir.exists() {
         anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
     }

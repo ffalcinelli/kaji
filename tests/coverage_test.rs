@@ -163,30 +163,32 @@ async fn test_apply_edge_cases() {
     });
 
     // 1. Test run with non-existent directory
-    let res = apply::run(
-        &client,
-        workspace_dir.join("non-existent"),
-        &[],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.join("non-existent"),
+        realms_to_apply: &[],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 
     // 2. Test run with empty directory (no realms)
-    let res = apply::run(
-        &client,
-        workspace_dir.clone(),
-        &[],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &[],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -208,31 +210,33 @@ async fn test_apply_edge_cases() {
     .unwrap();
 
     // 4. Test auto-discovery of realms
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &[],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &[],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
     // 5. Test with empty .kajiplan
     fs::write(workspace_dir.join(".kajiplan"), "[]").unwrap();
-    apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui.clone(),
-        resolver.clone(),
-        None,
-    )
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui.clone(),
+        resolver: resolver.clone(),
+        profile: None,
+    })
     .await
     .unwrap();
 
@@ -240,16 +244,17 @@ async fn test_apply_edge_cases() {
     let roles_dir = realm_dir.join("roles");
     fs::create_dir_all(&roles_dir).unwrap();
     fs::write(roles_dir.join("invalid.yaml"), "invalid: [yaml").unwrap();
-    let res = apply::run(
-        &client,
-        workspace_dir.clone(),
-        &["test-realm".to_string()],
-        true,
-        false,
-        ui,
-        resolver,
-        None,
-    )
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui: ui,
+        resolver: resolver,
+        profile: None,
+    })
     .await;
     assert!(res.is_err());
 }
