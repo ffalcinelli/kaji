@@ -390,7 +390,7 @@ async fn test_plan() {
     )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
 
     // Run plan
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -430,7 +430,7 @@ async fn test_plan() {
     assert!(!planned_names.contains(&"group-1.yaml".to_string()));
 
     // Test with changes_only=true
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: true,
@@ -446,14 +446,14 @@ async fn test_plan() {
     .expect("Plan with changes_only failed");
 
     // Test with non-existent realm
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
         interactive: false,
         realms_to_plan: &["non-existent".to_string()],
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await

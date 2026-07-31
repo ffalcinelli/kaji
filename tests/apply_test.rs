@@ -416,12 +416,12 @@ async fn test_apply() {
     // Load secrets for subsequent runs
     let mut secrets_map = HashMap::new();
     let secrets_file = workspace_dir.join(".secrets");
-    if secrets_file.exists() {
-        if let Ok(content) = std::fs::read_to_string(&secrets_file) {
-            for line in content.lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    secrets_map.insert(k.trim().to_string(), v.trim().to_string());
-                }
+    if secrets_file.exists()
+        && let Ok(content) = std::fs::read_to_string(&secrets_file)
+    {
+        for line in content.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                secrets_map.insert(k.trim().to_string(), v.trim().to_string());
             }
         }
     }

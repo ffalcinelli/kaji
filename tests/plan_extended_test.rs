@@ -50,7 +50,7 @@ async fn test_plan_extended_scenarios() {
 
     // This should work because plan::run uses directory names as realm names,
     // and realm::plan_realm just compares local realm.yaml with remote realm.
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -65,7 +65,7 @@ async fn test_plan_extended_scenarios() {
 
     // scenario: .kajiplan exists but is empty
     fs::write(workspace_dir.join(".kajiplan"), "[]").unwrap();
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: true,
@@ -84,7 +84,7 @@ async fn test_plan_extended_scenarios() {
         "[\"test-realm/non-existent.yaml\"]",
     )
     .unwrap();
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
@@ -98,14 +98,14 @@ async fn test_plan_extended_scenarios() {
     .unwrap();
 
     // scenario: run for a specific realm that doesn't have a directory
-    let res = plan::run(kaji::plan::PlanArgs {
+    let res = plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: false,
         interactive: false,
         realms_to_plan: &["no-dir-realm".to_string()],
         ui: ui.clone(),
-        resolver: resolver,
+        resolver,
         profile: None,
     })
     .await;

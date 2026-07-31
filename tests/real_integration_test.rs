@@ -108,7 +108,7 @@ standardFlowEnabled: true
         std::collections::HashMap::new(),
     )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
     let ui = Arc::new(DialoguerUi::new());
-    plan::run(kaji::plan::PlanArgs {
+    plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
         changes_only: true,
