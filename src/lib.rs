@@ -249,17 +249,17 @@ async fn handle_apply(
         .cyan()
         .bold()
     );
-    apply::run_ext(
-        &client,
-        workspace.to_path_buf(),
-        &cli.realms,
-        yes,
-        review,
-        prune,
-        Arc::new(crate::utils::ui::DialoguerUi::new()),
-        resolver,
-        cli.profile.clone(),
-    )
+    apply::run(apply::ApplyArgs {
+        client: &client,
+        workspace_dir: workspace.to_path_buf(),
+        realms_to_apply: &cli.realms,
+        yes: yes,
+        review: review,
+        prune: prune,
+        ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
+        resolver: resolver,
+        profile: cli.profile.clone(),
+    })
     .await?;
     Ok(())
 }
