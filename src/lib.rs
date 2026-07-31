@@ -253,11 +253,11 @@ async fn handle_apply(
         client: &client,
         workspace_dir: workspace.to_path_buf(),
         realms_to_apply: &cli.realms,
-        yes: yes,
-        review: review,
-        prune: prune,
+        yes,
+        review,
+        prune,
         ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
-        resolver: resolver,
+        resolver,
         profile: cli.profile.clone(),
     })
     .await?;
