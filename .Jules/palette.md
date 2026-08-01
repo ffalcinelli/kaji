@@ -12,3 +12,6 @@ Caused by:
 Which is not very pleasing to the eye or easy to parse for users.
 
 **Action:** Instead of returning `anyhow::Result<()>` from `main()`, we can return `std::process::ExitCode`. This allows us to manually iterate through `anyhow::Error::chain().enumerate()`, displaying the root cause in bold, and cleanly indenting nested causes with a `↳` symbol.
+## 2026-08-01 - Enhance CLI error hints
+**Learning:** Added visual styling for actionable hints using an 'anyhow' context prefix.
+**Action:** Use `.context("Hint: ...")` for UX guidance in error chains, as the main CLI error handler now parses this prefix to display the text in blue with an INFO emoji.

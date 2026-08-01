@@ -1,7 +1,7 @@
 use clap::Parser;
 use console::style;
 use kaji::args::Cli;
-use kaji::utils::ui::ERROR;
+use kaji::utils::ui::{ERROR, INFO};
 
 #[cfg(not(tarpaulin_include))]
 #[tokio::main]
@@ -15,10 +15,13 @@ async fn main() -> std::process::ExitCode {
     if let Err(err) = kaji::run_app(cli).await {
         eprintln!("{} {}", ERROR, style("Error:").red().bold());
         for (i, cause) in err.chain().enumerate() {
-            if i == 0 {
-                eprintln!("  {}", style(cause).bold());
+            let cause_str = cause.to_string();
+            if cause_str.starts_with("Hint:") {
+                eprintln!("\n{} {}", INFO, style(cause_str).blue());
+            } else if i == 0 {
+                eprintln!("  {}", style(cause_str).bold());
             } else {
-                eprintln!("    {} {}", style("↳").dim(), cause);
+                eprintln!("    {} {}", style("↳").dim(), cause_str);
             }
         }
         std::process::ExitCode::FAILURE

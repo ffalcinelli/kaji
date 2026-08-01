@@ -4,6 +4,3 @@
 ## 2024-04-12 - Avoid format! inside recursive parsing loops
 **Learning:** Using `format!()` inside deep recursive traversals over JSON objects (like config masking or processing) incurs massive continuous heap allocation overhead which is unnecessary when predicting string sizes.
 **Action:** Use `String::with_capacity()` to allocate string sizes exactly once for the maximum predicted byte count, and combine strings using `.push_str()` or `.push()` in recursive hot loops.
-## 2024-08-01 - Avoid heap allocations on recursive path generation
-**Learning:** In highly recursive functions dealing with tree-like structures (e.g. iterating over `serde_json::Value`), allocating a new `String` for the current path using `format!` at each depth creates significant memory overhead and allocation pressure (O(N) allocations for N nodes).
-**Action:** Instead of passing an owned `String` or allocating `format!("{}/{}", path, k)`, pass a single `&mut String` buffer pre-allocated using `String::with_capacity()`. Modify the buffer in place (`path.push('/')`, `path.push_str(k)` or `write!(path, "{}", i)`) and restore it before the next iteration by recording the original length before modification and calling `path.truncate(original_len)` after the recursive call. This shifts the function from making N allocations to potentially just 1.
