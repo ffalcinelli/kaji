@@ -327,16 +327,20 @@ async fn test_apply_components_gaps() {
     });
 
     let _ = apply::components::apply_components_or_keys(
-        &client,
-        &workspace_dir.join("test-realm"),
+        kaji::apply::ApplyContext {
+            client: &client,
+            workspace_dir: workspace_dir.join("test-realm"),
+            secrets_path: secrets_path,
+            resolver: resolver,
+            planned_files: planned_files,
+            realm_name: "test-realm",
+            profile: None,
+            review: false,
+            ui: ui,
+            yes: true,
+            prune: false,
+        },
         "components",
-        secrets_path,
-        resolver,
-        planned_files,
-        "test-realm",
-        None,
-        ui,
-        true,
     )
     .await;
 }
@@ -444,16 +448,20 @@ async fn test_apply_components_enrichment() {
     });
 
     let _ = apply::components::apply_components_or_keys(
-        &client,
-        &realm_dir,
+        kaji::apply::ApplyContext {
+            client: &client,
+            workspace_dir: realm_dir.clone(),
+            secrets_path: secrets_path.clone(),
+            resolver: resolver.clone(),
+            planned_files: planned_files.clone(),
+            realm_name: "test-realm",
+            profile: None,
+            review: false,
+            ui: ui.clone(),
+            yes: false,
+            prune: false,
+        },
         "components",
-        secrets_path.clone(),
-        resolver.clone(),
-        planned_files.clone(),
-        "test-realm",
-        None,
-        ui.clone(),
-        false,
     )
     .await;
 
@@ -481,16 +489,20 @@ async fn test_apply_components_enrichment() {
     });
 
     let _ = apply::components::apply_components_or_keys(
-        &client,
-        &realm_dir,
+        kaji::apply::ApplyContext {
+            client: &client,
+            workspace_dir: realm_dir.clone(),
+            secrets_path: secrets_path,
+            resolver: resolver,
+            planned_files: planned_files,
+            realm_name: "test-realm",
+            profile: None,
+            review: false,
+            ui: ui2,
+            yes: false,
+            prune: false,
+        },
         "components",
-        secrets_path,
-        resolver,
-        planned_files,
-        "test-realm",
-        None,
-        ui2,
-        false,
     )
     .await;
 }
@@ -822,18 +834,19 @@ async fn test_apply_authenticator_configs_cache_hits() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    let _ = apply::authenticator_config::apply_authenticator_configs(
-        &client,
-        &realm_dir,
-        secrets_path,
-        resolver,
-        planned_files,
-        "cache-realm",
-        None,
-        false,
-        ui,
-        true,
-    )
+    let _ = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
+        client: &client,
+        workspace_dir: realm_dir.clone(),
+        secrets_path: secrets_path,
+        resolver: resolver,
+        planned_files: planned_files,
+        realm_name: "cache-realm",
+        profile: None,
+        review: false,
+        ui: ui,
+        yes: true,
+        prune: false,
+    })
     .await;
 }
 
@@ -1138,18 +1151,19 @@ async fn test_apply_authenticator_configs_missing_execution() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    let res = apply::authenticator_config::apply_authenticator_configs(
-        &client,
-        &realm_dir,
-        secrets_path,
-        resolver,
-        planned_files,
-        "cache-realm",
-        None,
-        false,
-        ui,
-        true,
-    )
+    let res = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
+        client: &client,
+        workspace_dir: realm_dir.clone(),
+        secrets_path: secrets_path,
+        resolver: resolver,
+        planned_files: planned_files,
+        realm_name: "cache-realm",
+        profile: None,
+        review: false,
+        ui: ui,
+        yes: true,
+        prune: false,
+    })
     .await;
     assert!(res.is_err());
 }
