@@ -694,18 +694,19 @@ async fn test_apply_authenticator_configs_review() {
     let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
 
     let secrets_path = Arc::new(workspace_dir.join(".secrets"));
-    let res = apply::authenticator_config::apply_authenticator_configs(
-        &client,
-        &workspace_dir,
-        secrets_path.clone(),
-        resolver.clone(),
-        Arc::new(None),
-        "test-realm",
-        None,
-        true, // review = true
-        ui_reject.clone(),
-        true, // yes = true
-    )
+    let res = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
+        client: &client,
+        workspace_dir: workspace_dir.clone(),
+        secrets_path: secrets_path.clone(),
+        resolver: resolver.clone(),
+        planned_files: Arc::new(None),
+        realm_name: "test-realm",
+        profile: None,
+        review: true,
+        ui: ui_reject.clone(),
+        yes: true,
+        prune: false,
+    })
     .await;
     assert!(res.is_ok());
 
@@ -716,19 +717,21 @@ async fn test_apply_authenticator_configs_review() {
         selects: std::sync::Mutex::new(Vec::new()),
         passwords: std::sync::Mutex::new(Vec::new()),
     });
-    let res2 = apply::authenticator_config::apply_authenticator_configs(
-        &client,
-        &workspace_dir,
-        secrets_path.clone(),
-        resolver.clone(),
-        Arc::new(None),
-        "test-realm",
-        None,
-        true, // review = true
-        ui_accept.clone(),
-        true, // yes = true
-    )
-    .await;
+    let res2 =
+        apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
+            client: &client,
+            workspace_dir: workspace_dir.clone(),
+            secrets_path: secrets_path.clone(),
+            resolver: resolver.clone(),
+            planned_files: Arc::new(None),
+            realm_name: "test-realm",
+            profile: None,
+            review: true,
+            ui: ui_accept.clone(),
+            yes: true,
+            prune: false,
+        })
+        .await;
     assert!(res2.is_ok());
 }
 

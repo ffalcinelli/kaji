@@ -1,31 +1,18 @@
-#![allow(clippy::too_many_arguments, clippy::collapsible_if)]
+#![allow(clippy::collapsible_if)]
 use crate::client::KeycloakClient;
 use crate::models::{KeycloakResource, ResourceMeta};
-use crate::utils::secrets::{SecretResolver, substitute_secrets};
+use crate::utils::secrets::substitute_secrets;
 pub use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE};
 use crate::utils::ui::{Ui, create_progress_bar};
 use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 use tokio::task::JoinSet;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn apply_resources<T>(
-    client: &KeycloakClient,
-    workspace_dir: &std::path::Path,
-    secrets_path: Arc<PathBuf>,
-    resolver: Arc<dyn SecretResolver>,
-    planned_files: Arc<Option<HashSet<PathBuf>>>,
-    realm_name: &str,
-    profile: Option<String>,
-    review: bool,
-    ui: Arc<dyn Ui>,
-    yes: bool,
-    prune: bool,
-) -> Result<()>
+pub async fn apply_resources<T>(ctx: crate::apply::ApplyContext<'_>) -> Result<()>
 where
     T: KeycloakResource
         + ResourceMeta
@@ -37,6 +24,20 @@ where
         + Clone
         + 'static,
 {
+    let crate::apply::ApplyContext {
+        client,
+        workspace_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        realm_name,
+        profile,
+        review,
+        ui,
+        yes,
+        prune,
+    } = ctx;
+
     let dir_name = T::DIR_NAME;
     let resources_dir = workspace_dir.join(dir_name);
     if !async_fs::try_exists(&resources_dir).await? {
@@ -304,6 +305,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn check_and_update_enrichment<T>(
     _client: &KeycloakClient,
     path: &std::path::Path,
