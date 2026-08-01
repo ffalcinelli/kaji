@@ -3,7 +3,7 @@ use crate::client::KeycloakClient;
 use crate::models::{ComponentRepresentation, KeycloakResource};
 use crate::utils::secrets::{SecretResolver, substitute_secrets};
 use anyhow::{Context, Result};
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;

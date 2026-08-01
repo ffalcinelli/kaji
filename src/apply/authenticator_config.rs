@@ -1,22 +1,18 @@
 #![allow(clippy::collapsible_if)]
 
-
 use crate::models::{
     AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, KeycloakResource,
 };
-use crate::utils::secrets::{substitute_secrets};
-use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE,create_progress_bar};
+use crate::utils::secrets::substitute_secrets;
+use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE, create_progress_bar};
 use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
-
-pub async fn apply_authenticator_configs(
-    ctx: crate::apply::ApplyContext<'_>,
-) -> Result<()> {
+pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) -> Result<()> {
     let crate::apply::ApplyContext {
         client,
         workspace_dir,

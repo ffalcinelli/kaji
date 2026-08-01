@@ -834,21 +834,19 @@ async fn test_apply_authenticator_configs_cache_hits() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    let _ = apply::authenticator_config::apply_authenticator_configs(
-        kaji::apply::ApplyContext {
-            client: &client,
-            workspace_dir: realm_dir.clone(),
-            secrets_path: secrets_path,
-            resolver: resolver,
-            planned_files: planned_files,
-            realm_name: "cache-realm",
-            profile: None,
-            review: false,
-            ui: ui,
-            yes: true,
-            prune: false,
-        }
-    )
+    let _ = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
+        client: &client,
+        workspace_dir: realm_dir.clone(),
+        secrets_path: secrets_path,
+        resolver: resolver,
+        planned_files: planned_files,
+        realm_name: "cache-realm",
+        profile: None,
+        review: false,
+        ui: ui,
+        yes: true,
+        prune: false,
+    })
     .await;
 }
 
@@ -1153,21 +1151,19 @@ async fn test_apply_authenticator_configs_missing_execution() {
         passwords: std::sync::Mutex::new(Vec::new()),
     });
 
-    let res = apply::authenticator_config::apply_authenticator_configs(
-        kaji::apply::ApplyContext {
-            client: &client,
-            workspace_dir: realm_dir.clone(),
-            secrets_path: secrets_path,
-            resolver: resolver,
-            planned_files: planned_files,
-            realm_name: "cache-realm",
-            profile: None,
-            review: false,
-            ui: ui,
-            yes: true,
-            prune: false,
-        }
-    )
+    let res = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
+        client: &client,
+        workspace_dir: realm_dir.clone(),
+        secrets_path: secrets_path,
+        resolver: resolver,
+        planned_files: planned_files,
+        realm_name: "cache-realm",
+        profile: None,
+        review: false,
+        ui: ui,
+        yes: true,
+        prune: false,
+    })
     .await;
     assert!(res.is_err());
 }

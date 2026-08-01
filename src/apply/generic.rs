@@ -1,7 +1,7 @@
 #![allow(clippy::collapsible_if)]
 use crate::client::KeycloakClient;
 use crate::models::{KeycloakResource, ResourceMeta};
-use crate::utils::secrets::{substitute_secrets};
+use crate::utils::secrets::substitute_secrets;
 pub use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE};
 use crate::utils::ui::{Ui, create_progress_bar};
 use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
@@ -12,9 +12,7 @@ use tokio::fs as async_fs;
 use tokio::task::JoinSet;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn apply_resources<T>(
-    ctx: crate::apply::ApplyContext<'_>,
-) -> Result<()>
+pub async fn apply_resources<T>(ctx: crate::apply::ApplyContext<'_>) -> Result<()>
 where
     T: KeycloakResource
         + ResourceMeta

@@ -1,19 +1,14 @@
-
 use crate::models::RealmRepresentation;
-use crate::utils::secrets::{substitute_secrets};
-use crate::utils::ui::{SUCCESS_UPDATE};
+use crate::utils::secrets::substitute_secrets;
+use crate::utils::ui::SUCCESS_UPDATE;
 use crate::utils::yaml::load_yaml_with_overlay;
 use anyhow::{Context, Result};
 use console::style;
 
-
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
-
-pub async fn apply_realm(
-    ctx: crate::apply::ApplyContext<'_>,
-) -> Result<()> {
+pub async fn apply_realm(ctx: crate::apply::ApplyContext<'_>) -> Result<()> {
     let crate::apply::ApplyContext {
         client,
         workspace_dir,

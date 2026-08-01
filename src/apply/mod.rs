@@ -296,21 +296,19 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         prune,
     } = ctx;
     // Stage 0: Realms
-    realm::apply_realm(
-        crate::apply::ApplyContext {
-            client,
-            workspace_dir: workspace_dir.clone(),
-            secrets_path: Arc::clone(&secrets_path),
-            resolver: Arc::clone(&resolver),
-            planned_files: Arc::clone(&planned_files),
-            realm_name,
-            profile: profile.clone(),
-            review,
-            ui: Arc::clone(&ui),
-            yes,
-            prune,
-        }
-    )
+    realm::apply_realm(crate::apply::ApplyContext {
+        client,
+        workspace_dir: workspace_dir.clone(),
+        secrets_path: Arc::clone(&secrets_path),
+        resolver: Arc::clone(&resolver),
+        planned_files: Arc::clone(&planned_files),
+        realm_name,
+        profile: profile.clone(),
+        review,
+        ui: Arc::clone(&ui),
+        yes,
+        prune,
+    })
     .await?;
 
     // Stage 1: Identity Providers, Roles
@@ -389,21 +387,19 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let p_ac = profile.clone();
         let ui_ac = Arc::clone(&ui);
         set.spawn(async move {
-            authenticator_config::apply_authenticator_configs(
-                crate::apply::ApplyContext {
-                    client: &client_ac,
-                    workspace_dir: dir_ac,
-                    secrets_path: secrets_path_ac,
-                    resolver: res_ac,
-                    planned_files: plan_ac,
-                    realm_name: &rn_ac,
-                    profile: p_ac,
-                    review,
-                    ui: ui_ac,
-                    yes,
-                    prune: false, // prune not used in this call
-                }
-            )
+            authenticator_config::apply_authenticator_configs(crate::apply::ApplyContext {
+                client: &client_ac,
+                workspace_dir: dir_ac,
+                secrets_path: secrets_path_ac,
+                resolver: res_ac,
+                planned_files: plan_ac,
+                realm_name: &rn_ac,
+                profile: p_ac,
+                review,
+                ui: ui_ac,
+                yes,
+                prune: false, // prune not used in this call
+            })
             .await
         });
 
