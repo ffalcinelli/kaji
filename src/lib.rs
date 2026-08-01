@@ -119,6 +119,7 @@ pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<Keycloa
     let server = profile
         .map(|p| p.server_url.clone())
         .or_else(|| cli.server.clone())
+        .context("Hint: Try running `kaji init` to generate a default config, or pass `--server`.")
         .context("Keycloak server URL not provided (neither via --server nor --profile)")?;
 
     let client_id = profile

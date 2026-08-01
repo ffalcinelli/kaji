@@ -51,16 +51,17 @@ fn main() {
 
         for _ in 0..iters {
             let start = std::time::Instant::now();
-            apply::run(
-                &client,
-                workspace_dir.clone(),
-                &realms,
-                true,
-                false,
-                ui.clone(),
-                resolver.clone(),
-                None,
-            )
+            apply::run(kaji::apply::ApplyArgs {
+                client: &client,
+                workspace_dir: workspace_dir.clone(),
+                realms_to_apply: &realms,
+                yes: true,
+                review: false,
+                prune: false,
+                ui: ui.clone(),
+                resolver: resolver.clone(),
+                profile: None,
+            })
             .await
             .unwrap();
             total_time += start.elapsed();
