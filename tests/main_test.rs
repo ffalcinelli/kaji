@@ -47,6 +47,35 @@ fn test_invalid_command() {
 }
 
 #[test]
+fn test_error_hint_rendering() {
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
+    cmd.arg("apply")
+        .arg("--workspace")
+        .arg("non_existent_dir_123")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Hint:"));
+}
+
+#[test]
+fn test_error_nested_rendering() {
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
+    // Use an operation that guarantees a nested error chain
+    cmd.arg("--server")
+        .arg("http://invalid_domain_that_does_not_exist.com:8080")
+        .arg("--user")
+        .arg("admin")
+        .arg("--password")
+        .arg("admin")
+        .arg("apply")
+        .arg("--workspace")
+        .arg("non_existent_dir_123")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("↳"));
+}
+
+#[test]
 fn test_validate_command() {
     let temp = tempdir().unwrap();
     let workspace = temp.path().join("workspace");

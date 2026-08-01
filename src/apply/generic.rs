@@ -322,8 +322,7 @@ where
         + Clone,
 {
     let mut placeholders = std::collections::HashMap::new();
-    let mut path_buf = String::with_capacity(256);
-    find_placeholders(local_val_before_sub, &mut path_buf, &mut placeholders);
+    find_placeholders(local_val_before_sub, "", &mut placeholders);
 
     let mut enriched_val = serde_json::to_value(enriched.clone())?;
 
@@ -371,32 +370,29 @@ where
 
 fn find_placeholders(
     val: &serde_json::Value,
-    path: &mut String,
+    path: &str,
     placeholders: &mut std::collections::HashMap<String, String>,
 ) {
-    use std::fmt::Write;
     match val {
         serde_json::Value::String(s) => {
             if s.starts_with("${") && s.ends_with('}') {
-                placeholders.insert(path.clone(), s.clone());
+                placeholders.insert(path.to_string(), s.clone());
             }
         }
         serde_json::Value::Object(map) => {
             for (k, v) in map {
-                let original_len = path.len();
-                path.push('/');
-                path.push_str(k);
-                find_placeholders(v, path, placeholders);
-                path.truncate(original_len);
+                let next_path = if path.is_empty() {
+                    format!("/{}", k)
+                } else {
+                    format!("{}/{}", path, k)
+                };
+                find_placeholders(v, &next_path, placeholders);
             }
         }
         serde_json::Value::Array(arr) => {
             for (i, v) in arr.iter().enumerate() {
-                let original_len = path.len();
-                path.push('/');
-                let _ = write!(path, "{}", i);
-                find_placeholders(v, path, placeholders);
-                path.truncate(original_len);
+                let next_path = format!("{}/{}", path, i);
+                find_placeholders(v, &next_path, placeholders);
             }
         }
         _ => {}
