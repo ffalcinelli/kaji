@@ -1,9 +1,9 @@
-#![allow(clippy::too_many_arguments, clippy::collapsible_if)]
+#![allow(clippy::collapsible_if)]
 use crate::client::KeycloakClient;
 use crate::models::{ComponentRepresentation, KeycloakResource};
 use crate::utils::secrets::{SecretResolver, substitute_secrets};
 use anyhow::{Context, Result};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
@@ -42,6 +42,7 @@ pub fn build_component_indices(
 
 use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn process_component_file(
     path: PathBuf,
     client: KeycloakClient,
@@ -129,19 +130,25 @@ pub async fn process_component_file(
 
 use crate::utils::ui::Ui;
 
-#[allow(clippy::too_many_arguments, clippy::collapsible_if)]
+#[allow(clippy::collapsible_if)]
 pub async fn apply_components_or_keys(
-    client: &KeycloakClient,
-    workspace_dir: &std::path::Path,
+    ctx: crate::apply::ApplyContext<'_>,
     dir_name: &str,
-    secrets_path: Arc<PathBuf>,
-    resolver: Arc<dyn SecretResolver>,
-    planned_files: Arc<Option<HashSet<PathBuf>>>,
-    realm_name: &str,
-    profile: Option<String>,
-    ui: Arc<dyn Ui>,
-    yes: bool,
 ) -> Result<()> {
+    let crate::apply::ApplyContext {
+        client,
+        workspace_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        realm_name,
+        profile,
+        review: _,
+        ui,
+        yes,
+        prune: _,
+    } = ctx;
+
     let components_dir = workspace_dir.join(dir_name);
     if !async_fs::try_exists(&components_dir).await? {
         return Ok(());
@@ -290,16 +297,20 @@ mod tests {
         fs::write(comp_existing, "name: Existing Component\nid: existing-id")?;
 
         let res = apply_components_or_keys(
-            &client,
-            temp.path(),
+            crate::apply::ApplyContext {
+                client: &client,
+                workspace_dir: temp.path().to_path_buf(),
+                secrets_path: secrets_path.clone(),
+                resolver: Arc::clone(&resolver) as Arc<dyn SecretResolver>,
+                planned_files: Arc::new(None),
+                realm_name: "test",
+                profile: None,
+                review: false,
+                ui: ui.clone(),
+                yes: true,
+                prune: false,
+            },
             "components",
-            secrets_path.clone(),
-            Arc::clone(&resolver) as Arc<dyn SecretResolver>,
-            Arc::new(None),
-            "test",
-            None,
-            ui.clone(),
-            true,
         )
         .await;
         assert!(res.is_err());
@@ -317,16 +328,20 @@ mod tests {
         fs::write(comp_new, "name: New Component\nproviderId: new-provider")?;
 
         let res = apply_components_or_keys(
-            &client,
-            temp.path(),
+            crate::apply::ApplyContext {
+                client: &client,
+                workspace_dir: temp.path().to_path_buf(),
+                secrets_path: secrets_path.clone(),
+                resolver: Arc::clone(&resolver) as Arc<dyn SecretResolver>,
+                planned_files: Arc::new(None),
+                realm_name: "test",
+                profile: None,
+                review: false,
+                ui: ui.clone(),
+                yes: true,
+                prune: false,
+            },
             "components",
-            secrets_path.clone(),
-            Arc::clone(&resolver) as Arc<dyn SecretResolver>,
-            Arc::new(None),
-            "test",
-            None,
-            ui.clone(),
-            true,
         )
         .await;
         assert!(res.is_err());

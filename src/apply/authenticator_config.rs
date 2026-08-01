@@ -1,31 +1,36 @@
 #![allow(clippy::collapsible_if)]
 
-use crate::client::KeycloakClient;
+
 use crate::models::{
     AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, KeycloakResource,
 };
-use crate::utils::secrets::{SecretResolver, substitute_secrets};
-use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE, Ui, create_progress_bar};
+use crate::utils::secrets::{substitute_secrets};
+use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE,create_progress_bar};
 use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::{HashMap};
+
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
-#[allow(clippy::too_many_arguments)]
+
 pub async fn apply_authenticator_configs(
-    client: &KeycloakClient,
-    workspace_dir: &std::path::Path,
-    secrets_path: Arc<PathBuf>,
-    resolver: Arc<dyn SecretResolver>,
-    planned_files: Arc<Option<HashSet<PathBuf>>>,
-    realm_name: &str,
-    profile: Option<String>,
-    review: bool,
-    ui: Arc<dyn Ui>,
-    yes: bool,
+    ctx: crate::apply::ApplyContext<'_>,
 ) -> Result<()> {
+    let crate::apply::ApplyContext {
+        client,
+        workspace_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        realm_name,
+        profile,
+        review,
+        ui,
+        yes,
+        ..
+    } = ctx;
+
     let resources_dir = workspace_dir.join(AuthenticatorConfigRepresentation::DIR_NAME);
     if !async_fs::try_exists(&resources_dir).await? {
         return Ok(());

@@ -1,27 +1,32 @@
-use crate::client::KeycloakClient;
+
 use crate::models::RealmRepresentation;
-use crate::utils::secrets::{SecretResolver, substitute_secrets};
-use crate::utils::ui::{SUCCESS_UPDATE, Ui};
+use crate::utils::secrets::{substitute_secrets};
+use crate::utils::ui::{SUCCESS_UPDATE};
 use crate::utils::yaml::load_yaml_with_overlay;
 use anyhow::{Context, Result};
 use console::style;
-use std::collections::HashSet;
-use std::path::PathBuf;
+
+
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
-#[allow(clippy::too_many_arguments)]
+
 pub async fn apply_realm(
-    client: &KeycloakClient,
-    workspace_dir: &std::path::Path,
-    secrets_path: Arc<PathBuf>,
-    resolver: Arc<dyn SecretResolver>,
-    planned_files: Arc<Option<HashSet<PathBuf>>>,
-    realm_name: &str,
-    profile: Option<String>,
-    ui: Arc<dyn Ui>,
-    yes: bool,
+    ctx: crate::apply::ApplyContext<'_>,
 ) -> Result<()> {
+    let crate::apply::ApplyContext {
+        client,
+        workspace_dir,
+        secrets_path,
+        resolver,
+        planned_files,
+        realm_name,
+        profile,
+        ui,
+        yes,
+        ..
+    } = ctx;
+
     // 1. Apply Realm
     let realm_path = workspace_dir.join("realm.yaml");
     if let Some(plan) = &*planned_files

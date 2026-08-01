@@ -21,18 +21,21 @@ macro_rules! spawn_apply_stage {
             let yes_clone = $yes;
             let prune_clone = $prune;
             $set.spawn(async move {
+                let ctx = crate::apply::ApplyContext {
+                    client: &client_clone,
+                    workspace_dir: dir_clone,
+                    secrets_path: secrets_path_clone,
+                    resolver: resolver_clone,
+                    planned_files: planned_files_clone,
+                    realm_name: &realm_name_clone,
+                    profile: profile_clone,
+                    review: review_clone,
+                    ui: ui_clone,
+                    yes: yes_clone,
+                    prune: prune_clone,
+                };
                 generic::apply_resources::<$t>(
-                    &client_clone,
-                    &dir_clone,
-                    secrets_path_clone,
-                    resolver_clone,
-                    planned_files_clone,
-                    &realm_name_clone,
-                    profile_clone,
-                    review_clone,
-                    ui_clone,
-                    yes_clone,
-                    prune_clone,
+                    ctx
                 )
                 .await
             });
@@ -114,7 +117,6 @@ use tokio::task::JoinSet;
 /// # Errors
 /// Returns an error if the workspace does not exist, network communication fails,
 /// or authentication details are invalid.
-#[allow(clippy::too_many_arguments)]
 pub struct ApplyArgs<'a> {
     pub client: &'a KeycloakClient,
     pub workspace_dir: PathBuf,
@@ -129,7 +131,6 @@ pub struct ApplyArgs<'a> {
 
 /// Reconciles local configuration files in the workspace directory with the remote Keycloak server,
 /// optionally pruning orphaned remote resources.
-#[allow(clippy::too_many_arguments)]
 pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     let ApplyArgs {
         client,
@@ -296,15 +297,19 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
     } = ctx;
     // Stage 0: Realms
     realm::apply_realm(
-        client,
-        &workspace_dir,
-        Arc::clone(&secrets_path),
-        Arc::clone(&resolver),
-        Arc::clone(&planned_files),
-        realm_name,
-        profile.clone(),
-        Arc::clone(&ui),
-        yes,
+        crate::apply::ApplyContext {
+            client,
+            workspace_dir: workspace_dir.clone(),
+            secrets_path: Arc::clone(&secrets_path),
+            resolver: Arc::clone(&resolver),
+            planned_files: Arc::clone(&planned_files),
+            realm_name,
+            profile: profile.clone(),
+            review,
+            ui: Arc::clone(&ui),
+            yes,
+            prune,
+        }
     )
     .await?;
 
@@ -385,16 +390,19 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let ui_ac = Arc::clone(&ui);
         set.spawn(async move {
             authenticator_config::apply_authenticator_configs(
-                &client_ac,
-                &dir_ac,
-                secrets_path_ac,
-                res_ac,
-                plan_ac,
-                &rn_ac,
-                p_ac,
-                review,
-                ui_ac,
-                yes,
+                crate::apply::ApplyContext {
+                    client: &client_ac,
+                    workspace_dir: dir_ac,
+                    secrets_path: secrets_path_ac,
+                    resolver: res_ac,
+                    planned_files: plan_ac,
+                    realm_name: &rn_ac,
+                    profile: p_ac,
+                    review,
+                    ui: ui_ac,
+                    yes,
+                    prune: false, // prune not used in this call
+                }
             )
             .await
         });
@@ -409,16 +417,20 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let ui_co = Arc::clone(&ui);
         set.spawn(async move {
             components::apply_components_or_keys(
-                &client_co,
-                &dir_co,
+                crate::apply::ApplyContext {
+                    client: &client_co,
+                    workspace_dir: dir_co,
+                    secrets_path: secrets_path_co,
+                    resolver: res_co,
+                    planned_files: plan_co,
+                    realm_name: &rn_co,
+                    profile: p_co,
+                    review: false,
+                    ui: ui_co,
+                    yes,
+                    prune: false,
+                },
                 "components",
-                secrets_path_co,
-                res_co,
-                plan_co,
-                &rn_co,
-                p_co,
-                ui_co,
-                yes,
             )
             .await
         });
@@ -433,16 +445,20 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let ui_ke = Arc::clone(&ui);
         set.spawn(async move {
             components::apply_components_or_keys(
-                &client_ke,
-                &dir_ke,
+                crate::apply::ApplyContext {
+                    client: &client_ke,
+                    workspace_dir: dir_ke,
+                    secrets_path: secrets_path_ke,
+                    resolver: res_ke,
+                    planned_files: plan_ke,
+                    realm_name: &rn_ke,
+                    profile: p_ke,
+                    review: false,
+                    ui: ui_ke,
+                    yes,
+                    prune: false,
+                },
                 "keys",
-                secrets_path_ke,
-                res_ke,
-                plan_ke,
-                &rn_ke,
-                p_ke,
-                ui_ke,
-                yes,
             )
             .await
         });
