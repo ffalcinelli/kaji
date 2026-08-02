@@ -557,23 +557,29 @@ impl KeycloakClient {
         let flows = self.get_authentication_flows_raw().await?;
         let mut configs = Vec::new();
         let mut seen = std::collections::HashSet::new();
+        let mut futures = Vec::new();
+
         for flow in &flows {
             if let Some(alias) = &flow.alias {
                 if let Ok(executions) = self.get_flow_executions(alias).await {
                     for exec in executions {
                         if let Some(config_id) = exec.authenticator_config {
                             if seen.insert(config_id.clone()) {
-                                if let Ok(config) =
+                                futures.push(async move {
                                     self.get_authenticator_config_raw(&config_id).await
-                                {
-                                    configs.push(config);
-                                }
+                                });
                             }
                         }
                     }
                 }
             }
         }
+
+        let results = futures::future::join_all(futures).await;
+        for config in results.into_iter().flatten() {
+            configs.push(config);
+        }
+
         Ok(configs)
     }
 
