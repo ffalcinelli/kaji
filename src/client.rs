@@ -571,9 +571,9 @@ impl KeycloakClient {
             for exec in executions {
                 if let Some(config_id) = exec.authenticator_config {
                     if seen.insert(config_id.clone()) {
-                        futures.push(async move {
-                            self.get_authenticator_config_raw(&config_id).await
-                        });
+                        futures.push(
+                            async move { self.get_authenticator_config_raw(&config_id).await },
+                        );
                     }
                 }
             }
