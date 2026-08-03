@@ -39,3 +39,4 @@ results.sarif
 dummy_workspace/
 .idea
 tarpaulin-report.html
+test_workspace/
