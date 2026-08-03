@@ -800,6 +800,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_get_base_url() {
+        let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+        assert_eq!(client.get_base_url(), "http://127.0.0.1:1");
+    }
+
+    #[test]
     fn test_set_target_realm() {
         let mut client = KeycloakClient::new("http://127.0.0.1:1".to_string());
         assert_eq!(client.target_realm, "");
