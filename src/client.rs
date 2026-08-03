@@ -559,17 +559,21 @@ impl KeycloakClient {
         let mut seen = std::collections::HashSet::new();
         let mut futures = Vec::new();
 
+        let mut exec_futures = Vec::new();
         for flow in &flows {
-            if let Some(alias) = &flow.alias {
-                if let Ok(executions) = self.get_flow_executions(alias).await {
-                    for exec in executions {
-                        if let Some(config_id) = exec.authenticator_config {
-                            if seen.insert(config_id.clone()) {
-                                futures.push(async move {
-                                    self.get_authenticator_config_raw(&config_id).await
-                                });
-                            }
-                        }
+            if let Some(alias) = flow.alias.clone() {
+                exec_futures.push(async move { self.get_flow_executions(&alias).await });
+            }
+        }
+
+        let exec_results = futures::future::join_all(exec_futures).await;
+        for executions in exec_results.into_iter().flatten() {
+            for exec in executions {
+                if let Some(config_id) = exec.authenticator_config {
+                    if seen.insert(config_id.clone()) {
+                        futures.push(
+                            async move { self.get_authenticator_config_raw(&config_id).await },
+                        );
                     }
                 }
             }
