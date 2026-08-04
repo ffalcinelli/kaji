@@ -995,4 +995,18 @@ mod tests {
         );
         mock.assert_async().await;
     }
+
+    #[test]
+    fn test_with_timeout() {
+        let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+
+        let initial_debug = format!("{:?}", client.client);
+
+        let client = client.with_timeout(std::time::Duration::from_secs(42));
+
+        let final_debug = format!("{:?}", client.client);
+
+        assert!(!initial_debug.contains("42s"), "Initial state should not have the new timeout");
+        assert!(final_debug.contains("42s"), "Final state should reflect the updated timeout of 42s");
+    }
 }
