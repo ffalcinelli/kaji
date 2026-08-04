@@ -1006,7 +1006,13 @@ mod tests {
 
         let final_debug = format!("{:?}", client.client);
 
-        assert!(!initial_debug.contains("42s"), "Initial state should not have the new timeout");
-        assert!(final_debug.contains("42s"), "Final state should reflect the updated timeout of 42s");
+        assert!(
+            !initial_debug.contains("42s"),
+            "Initial state should not have the new timeout"
+        );
+        assert!(
+            final_debug.contains("42s"),
+            "Final state should reflect the updated timeout of 42s"
+        );
     }
 }
