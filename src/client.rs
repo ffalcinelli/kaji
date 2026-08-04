@@ -838,6 +838,17 @@ mod tests {
     }
 
     #[test]
+    fn test_set_token() {
+        let mut client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+
+        assert_eq!(client.token, None);
+
+        client.set_token("new_token_value".to_string());
+
+        assert_eq!(client.token, Some("new_token_value".to_string()));
+    }
+
+    #[test]
     fn test_redact_url() {
         assert_eq!(
             redact_url("http://localhost:8080"),
