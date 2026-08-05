@@ -106,8 +106,9 @@ macro_rules! impl_keycloak_resource {
                 None
             }
 
-            fn set_id(&mut self, _id: Option<String>) {
-                $( self.$id_field.set_from_option_string(_id); )?
+            fn set_id(&mut self, id: Option<String>) {
+                let _ = &id;
+                $( self.$id_field.set_from_option_string(id); )?
             }
 
             fn get_identity(&$id_self) -> Option<String> { ($id_expr).map(|s| s.to_string()) }
