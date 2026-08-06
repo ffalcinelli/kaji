@@ -997,6 +997,37 @@ mod tests {
     }
 
     #[test]
+    fn test_invalidate_resource_cache() {
+        use std::any::TypeId;
+
+        #[derive(Clone)]
+        struct MockResource;
+
+        let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+
+        // Insert a mock resource type into the cache manually
+        {
+            let mut cache = client.resource_cache.write().unwrap();
+            cache.insert(TypeId::of::<MockResource>(), Box::new(vec![MockResource]));
+        }
+
+        // Verify it was inserted
+        {
+            let cache = client.resource_cache.read().unwrap();
+            assert!(cache.contains_key(&TypeId::of::<MockResource>()));
+        }
+
+        // Call the method to invalidate
+        client.invalidate_resource_cache::<MockResource>();
+
+        // Verify it was removed
+        {
+            let cache = client.resource_cache.read().unwrap();
+            assert!(!cache.contains_key(&TypeId::of::<MockResource>()));
+        }
+    }
+
+    #[test]
     fn test_with_timeout() {
         let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
 
