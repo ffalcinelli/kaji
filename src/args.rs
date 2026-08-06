@@ -57,24 +57,34 @@ pub struct Cli {
 
 impl fmt::Debug for Cli {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            command,
+            server,
+            realms,
+            user,
+            password,
+            client_id,
+            client_secret,
+            profile,
+            timeout,
+            vault_addr,
+            vault_token,
+            config,
+        } = self;
+
         f.debug_struct("Cli")
-            .field("command", &self.command)
-            .field("server", &self.server)
-            .field("realms", &self.realms)
-            .field("user", &self.user)
-            .field("password", &self.password.as_ref().map(|_| "********"))
-            .field("client_id", &self.client_id)
-            .field(
-                "client_secret",
-                &self.client_secret.as_ref().map(|_| "********"),
-            )
-            .field("profile", &self.profile)
-            .field("timeout", &self.timeout)
-            .field("vault_addr", &self.vault_addr)
-            .field(
-                "vault_token",
-                &self.vault_token.as_ref().map(|_| "********"),
-            )
+            .field("command", command)
+            .field("server", server)
+            .field("realms", realms)
+            .field("user", user)
+            .field("password", &password.as_ref().map(|_| "********"))
+            .field("client_id", client_id)
+            .field("client_secret", &client_secret.as_ref().map(|_| "********"))
+            .field("profile", profile)
+            .field("timeout", timeout)
+            .field("vault_addr", vault_addr)
+            .field("vault_token", &vault_token.as_ref().map(|_| "********"))
+            .field("config", config)
             .finish()
     }
 }
