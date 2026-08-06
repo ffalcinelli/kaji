@@ -653,3 +653,87 @@ async fn test_api_error() {
             .contains("GET request failed")
     );
 }
+
+#[tokio::test]
+async fn test_map_flow_executions() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let flow = kaji::models::AuthenticationFlowRepresentation {
+        id: None,
+        alias: Some("flow-1".to_string()),
+        description: None,
+        provider_id: None,
+        top_level: None,
+        built_in: None,
+        authentication_executions: Some(vec![
+            kaji::models::AuthenticationExecutionExportRepresentation {
+                id: None,
+                authenticator: None,
+                authenticator_config: Some("config-1".to_string()),
+                requirement: None,
+                priority: None,
+                authenticator_flow: None,
+                flow_alias: None,
+                user_setup_allowed: None,
+                extra: std::collections::HashMap::new(),
+            },
+        ]),
+        extra: std::collections::HashMap::new(),
+    };
+
+    let mapped_flow = client.map_flow_executions(flow).await;
+    let executions = mapped_flow.authentication_executions.unwrap();
+    assert_eq!(executions.len(), 1);
+    assert_eq!(
+        executions[0].authenticator_config,
+        Some("review profile config".to_string())
+    );
+}
+
+#[tokio::test]
+async fn test_unmap_flow_executions() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let flow = kaji::models::AuthenticationFlowRepresentation {
+        id: None,
+        alias: Some("flow-1".to_string()),
+        description: None,
+        provider_id: None,
+        top_level: None,
+        built_in: None,
+        authentication_executions: Some(vec![
+            kaji::models::AuthenticationExecutionExportRepresentation {
+                id: None,
+                authenticator: None,
+                authenticator_config: Some("review profile config".to_string()),
+                requirement: None,
+                priority: None,
+                authenticator_flow: None,
+                flow_alias: None,
+                user_setup_allowed: None,
+                extra: std::collections::HashMap::new(),
+            },
+        ]),
+        extra: std::collections::HashMap::new(),
+    };
+
+    let unmapped_flow = client.unmap_flow_executions(flow).await;
+    let executions = unmapped_flow.authentication_executions.unwrap();
+    assert_eq!(executions.len(), 1);
+    assert_eq!(
+        executions[0].authenticator_config,
+        Some("config-1".to_string())
+    );
+}
