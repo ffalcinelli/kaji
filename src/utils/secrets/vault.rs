@@ -59,7 +59,6 @@ impl SecretResolver for VaultResolver {
         let full_path = parts[0];
         let field = parts[1];
 
-
         // Check cache first
         {
             let cache_lock = self.cache.lock().await;
