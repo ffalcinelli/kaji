@@ -376,8 +376,8 @@ pub async fn run_app(cli: Cli) -> Result<()> {
     if cli.server.is_none() {
         cli.server = config.server.clone();
     }
-    if cli.realms.is_empty() && config.realms.is_some() {
-        cli.realms = config.realms.clone().unwrap();
+    if cli.realms.is_empty() {
+        cli.realms = config.realms.clone().unwrap_or_default();
     }
     if cli.user.is_none() {
         cli.user = config.user.clone();
