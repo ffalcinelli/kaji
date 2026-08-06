@@ -18,13 +18,24 @@ impl VaultResolver {
     /// Creates a new `VaultResolver` targeting the Vault address and authenticated with the given token.
     ///
     /// # Errors
-    /// Returns an error if the address is not a valid URL.
+    /// Returns an error if the address is not a valid URL, or if the connection is insecure (HTTP) in a non-local environment.
     pub fn new(address: &str, token: &str) -> Result<Self> {
-        reqwest::Url::parse(address)?;
+        let url = reqwest::Url::parse(address)?;
+        let host = url.host_str().unwrap_or("");
+
+        let is_localhost = host == "localhost" || host == "127.0.0.1";
+        if url.scheme() == "http" && !is_localhost {
+            anyhow::bail!("Insecure HTTP connection to Vault is only allowed for localhost");
+        }
+
+        let client = reqwest::Client::builder()
+            .https_only(!is_localhost)
+            .build()?;
+
         Ok(Self {
             address: address.trim_end_matches('/').to_string(),
             token: token.to_string(),
-            client: reqwest::Client::new(),
+            client,
             cache: Mutex::new(HashMap::new()),
         })
     }
