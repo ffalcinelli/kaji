@@ -418,6 +418,30 @@ async fn test_authentication_flows() {
 }
 
 #[tokio::test]
+async fn test_create_authentication_flow() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let flow = kaji::models::AuthenticationFlowRepresentation {
+        id: None,
+        alias: Some("new-flow".to_string()),
+        description: None,
+        provider_id: Some("basic-flow".to_string()),
+        top_level: Some(true),
+        built_in: Some(false),
+        authentication_executions: None,
+        extra: std::collections::HashMap::new(),
+    };
+
+    assert!(client.create_authentication_flow(&flow).await.is_ok());
+}
+
+#[tokio::test]
 async fn test_required_actions() {
     let mock_url = start_mock_server().await;
     let mut client = KeycloakClient::new(mock_url);
