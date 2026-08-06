@@ -59,11 +59,6 @@ impl SecretResolver for VaultResolver {
         let full_path = parts[0];
         let field = parts[1];
 
-        if full_path.contains("..") {
-            return Err(anyhow::anyhow!(
-                "Invalid vault path: path traversal detected"
-            ));
-        }
 
         // Check cache first
         {
@@ -94,10 +89,18 @@ impl SecretResolver for VaultResolver {
         let mount = path_parts[0];
         let path = path_parts[1];
 
-        let url = format!("{}/v1/{}/data/{}", self.address, mount, path);
+        let base_url = format!("{}/v1/{}/data/", self.address, mount);
+        let parsed_base = reqwest::Url::parse(&base_url)?;
+        let url = parsed_base.join(path)?;
+
+        if !url.as_str().starts_with(parsed_base.as_str()) {
+            return Err(anyhow::anyhow!(
+                "Invalid vault path: path traversal detected"
+            ));
+        }
         let resp = self
             .client
-            .get(&url)
+            .get(url)
             .header("X-Vault-Token", &self.token)
             .send()
             .await?;
@@ -223,6 +226,27 @@ mod tests {
             res.unwrap_err()
                 .to_string()
                 .contains("path traversal detected")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_path_traversal_false_positive() {
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/v1/secret/data/my..secret")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+
+        // This should pass the traversal check and attempt to hit the backend, resulting in a 404
+        let res = resolver.resolve("vault:secret/my..secret#key").await;
+        assert!(res.is_err());
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Vault secret not found")
         );
     }
 
