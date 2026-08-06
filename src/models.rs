@@ -101,9 +101,7 @@ macro_rules! impl_keycloak_resource {
             $(const DIR_NAME: &'static str = $dir_name;)?
 
             fn get_id(&self) -> Option<&str> {
-                $( return self.$id_field.to_option_string(); )?
-                #[allow(unreachable_code)]
-                None
+                None $( .or(self.$id_field.to_option_string()) )?
             }
 
             fn set_id(&mut self, id: Option<String>) {
