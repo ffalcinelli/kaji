@@ -749,15 +749,45 @@ async fn test_unmap_flow_executions() {
                 user_setup_allowed: None,
                 extra: std::collections::HashMap::new(),
             },
+            kaji::models::AuthenticationExecutionExportRepresentation {
+                id: None,
+                authenticator: None,
+                authenticator_config: Some("non-uuid-unknown".to_string()),
+                requirement: None,
+                priority: None,
+                authenticator_flow: None,
+                flow_alias: None,
+                user_setup_allowed: None,
+                extra: std::collections::HashMap::new(),
+            },
+            kaji::models::AuthenticationExecutionExportRepresentation {
+                id: None,
+                authenticator: None,
+                authenticator_config: Some("123e4567-e89b-12d3-a456-426614174000".to_string()),
+                requirement: None,
+                priority: None,
+                authenticator_flow: None,
+                flow_alias: None,
+                user_setup_allowed: None,
+                extra: std::collections::HashMap::new(),
+            },
         ]),
         extra: std::collections::HashMap::new(),
     };
 
     let unmapped_flow = client.unmap_flow_executions(flow).await;
     let executions = unmapped_flow.authentication_executions.unwrap();
-    assert_eq!(executions.len(), 1);
+    assert_eq!(executions.len(), 3);
     assert_eq!(
         executions[0].authenticator_config,
         Some("config-1".to_string())
+    );
+    assert_eq!(
+        executions[1].authenticator_config,
+        None
+    );
+    assert_eq!(
+        executions[2].authenticator_config,
+        Some("123e4567-e89b-12d3-a456-426614174000".to_string())
     );
 }
