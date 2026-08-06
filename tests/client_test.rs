@@ -225,6 +225,37 @@ async fn test_roles() {
 }
 
 #[tokio::test]
+async fn test_create_identity_provider() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let idp = kaji::models::IdentityProviderRepresentation {
+        alias: Some("new-google".to_string()),
+        provider_id: Some("google".to_string()),
+        enabled: Some(true),
+        display_name: None,
+        trust_email: None,
+        store_token: None,
+        add_read_token_role_on_create: None,
+        authenticate_by_default: None,
+        link_only: None,
+        first_broker_login_flow_alias: None,
+        post_broker_login_flow_alias: None,
+        config: Some(std::collections::HashMap::new()),
+        extra: std::collections::HashMap::new(),
+        internal_id: None,
+        update_profile_first_login_mode: None,
+    };
+
+    assert!(client.create_identity_provider(&idp).await.is_ok());
+}
+
+#[tokio::test]
 async fn test_identity_providers() {
     let mock_url = start_mock_server().await;
     let mut client = KeycloakClient::new(mock_url);
