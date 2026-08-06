@@ -782,10 +782,7 @@ async fn test_unmap_flow_executions() {
         executions[0].authenticator_config,
         Some("config-1".to_string())
     );
-    assert_eq!(
-        executions[1].authenticator_config,
-        None
-    );
+    assert_eq!(executions[1].authenticator_config, None);
     assert_eq!(
         executions[2].authenticator_config,
         Some("123e4567-e89b-12d3-a456-426614174000".to_string())
