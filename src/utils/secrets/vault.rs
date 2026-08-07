@@ -290,6 +290,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vault_resolver_insecure_http() {
+        // http to localhost is allowed
+        let res = VaultResolver::new("http://localhost:8200", "token");
+        assert!(res.is_ok());
+
+        let res = VaultResolver::new("http://127.0.0.1:8200", "token");
+        assert!(res.is_ok());
+
+        // http to non-local is denied
+        let res = VaultResolver::new("http://vault.example.com:8200", "token");
+        assert!(res.is_err());
+        if let Err(e) = res {
+            assert!(e.to_string().contains("Insecure HTTP connection"));
+        }
+    }
+
+    #[tokio::test]
     async fn test_vault_resolver_non_string_field() {
         let mut server = Server::new_async().await;
         let mock = server
