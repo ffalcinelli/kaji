@@ -18,13 +18,24 @@ impl VaultResolver {
     /// Creates a new `VaultResolver` targeting the Vault address and authenticated with the given token.
     ///
     /// # Errors
-    /// Returns an error if the address is not a valid URL.
+    /// Returns an error if the address is not a valid URL, or if the connection is insecure (HTTP) in a non-local environment.
     pub fn new(address: &str, token: &str) -> Result<Self> {
-        reqwest::Url::parse(address)?;
+        let url = reqwest::Url::parse(address)?;
+        let host = url.host_str().unwrap_or("");
+
+        let is_localhost = host == "localhost" || host == "127.0.0.1";
+        if url.scheme() == "http" && !is_localhost {
+            anyhow::bail!("Insecure HTTP connection to Vault is only allowed for localhost");
+        }
+
+        let client = reqwest::Client::builder()
+            .https_only(!is_localhost)
+            .build()?;
+
         Ok(Self {
             address: address.trim_end_matches('/').to_string(),
             token: token.to_string(),
-            client: reqwest::Client::new(),
+            client,
             cache: Mutex::new(HashMap::new()),
         })
     }
@@ -275,6 +286,23 @@ mod tests {
         assert!(res.is_err());
         if let Err(e) = res {
             assert!(e.to_string().contains("relative URL without a base"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_insecure_http() {
+        // http to localhost is allowed
+        let res = VaultResolver::new("http://localhost:8200", "token");
+        assert!(res.is_ok());
+
+        let res = VaultResolver::new("http://127.0.0.1:8200", "token");
+        assert!(res.is_ok());
+
+        // http to non-local is denied
+        let res = VaultResolver::new("http://vault.example.com:8200", "token");
+        assert!(res.is_err());
+        if let Err(e) = res {
+            assert!(e.to_string().contains("Insecure HTTP connection"));
         }
     }
 
