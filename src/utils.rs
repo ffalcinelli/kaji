@@ -36,7 +36,85 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("Failed to flush {:?}", path))?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use tokio::io::AsyncWriteExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, GENERIC_ALL, HANDLE, LocalFree};
+        use windows_sys::Win32::Security::Authorization::{
+            SetEntriesInAclW, SetSecurityInfo, EXPLICIT_ACCESS_W, SET_ACCESS, TRUSTEE_IS_SID,
+            TRUSTEE_IS_USER, TRUSTEE_W, SE_FILE_OBJECT
+        };
+        use windows_sys::Win32::Security::{
+            GetTokenInformation, TokenUser, DACL_SECURITY_INFORMATION,
+            PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, NO_INHERITANCE
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+
+        let mut file = options
+            .open(path)
+            .await
+            .with_context(|| format!("Failed to open {:?}", path))?;
+
+        unsafe {
+            let mut token: HANDLE = std::mem::zeroed();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0 {
+                let mut return_length = 0;
+                GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut return_length);
+                if return_length > 0 {
+                    let mut token_user_bytes: Vec<u8> = vec![0; return_length as usize];
+                    if GetTokenInformation(
+                        token,
+                        TokenUser,
+                        token_user_bytes.as_mut_ptr() as *mut _,
+                        return_length,
+                        &mut return_length,
+                    ) != 0
+                    {
+                        let token_user = &*(token_user_bytes.as_ptr() as *const TOKEN_USER);
+                        let mut trustee: TRUSTEE_W = std::mem::zeroed();
+                        trustee.TrusteeForm = TRUSTEE_IS_SID;
+                        trustee.TrusteeType = TRUSTEE_IS_USER;
+                        trustee.ptstrName = token_user.User.Sid as *mut _;
+
+                        let mut access: EXPLICIT_ACCESS_W = std::mem::zeroed();
+                        access.grfAccessPermissions = GENERIC_ALL;
+                        access.grfAccessMode = SET_ACCESS;
+                        access.grfInheritance = NO_INHERITANCE;
+                        access.Trustee = trustee;
+
+                        let mut pacl = std::ptr::null_mut();
+                        let res = SetEntriesInAclW(1, &access, std::ptr::null_mut(), &mut pacl);
+                        if res == ERROR_SUCCESS {
+                            let handle = file.as_raw_handle();
+                            SetSecurityInfo(
+                                handle as _,
+                                SE_FILE_OBJECT,
+                                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                pacl,
+                                std::ptr::null_mut(),
+                            );
+                            LocalFree(pacl as _);
+                        }
+                    }
+                }
+                CloseHandle(token);
+            }
+        }
+
+        file.write_all(content.as_bytes())
+            .await
+            .with_context(|| format!("Failed to write to {:?}", path))?;
+        file.flush()
+            .await
+            .with_context(|| format!("Failed to flush {:?}", path))?;
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         fs::write(path, content)
             .await
