@@ -40,14 +40,16 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
     {
         use std::os::windows::io::AsRawHandle;
         use tokio::io::AsyncWriteExt;
-        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, GENERIC_ALL, HANDLE, LocalFree};
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_SUCCESS, GENERIC_ALL, HANDLE, LocalFree,
+        };
         use windows_sys::Win32::Security::Authorization::{
-            SetEntriesInAclW, SetSecurityInfo, EXPLICIT_ACCESS_W, SET_ACCESS, TRUSTEE_IS_SID,
-            TRUSTEE_IS_USER, TRUSTEE_W, SE_FILE_OBJECT
+            EXPLICIT_ACCESS_W, SE_FILE_OBJECT, SET_ACCESS, SetEntriesInAclW, SetSecurityInfo,
+            TRUSTEE_IS_SID, TRUSTEE_IS_USER, TRUSTEE_W,
         };
         use windows_sys::Win32::Security::{
-            GetTokenInformation, TokenUser, DACL_SECURITY_INFORMATION,
-            PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, NO_INHERITANCE
+            DACL_SECURITY_INFORMATION, GetTokenInformation, NO_INHERITANCE,
+            PROTECTED_DACL_SECURITY_INFORMATION, TOKEN_QUERY, TOKEN_USER, TokenUser,
         };
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -63,7 +65,13 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
             let mut token: HANDLE = std::mem::zeroed();
             if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0 {
                 let mut return_length = 0;
-                GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut return_length);
+                GetTokenInformation(
+                    token,
+                    TokenUser,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut return_length,
+                );
                 if return_length > 0 {
                     let mut token_user_bytes: Vec<u8> = vec![0; return_length as usize];
                     if GetTokenInformation(
