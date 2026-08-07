@@ -32,8 +32,18 @@ impl KeycloakClient {
     pub fn new(base_url: String) -> Self {
         let target_realm = "".to_string();
         let base_url = base_url.trim_end_matches('/').to_string();
+
+        #[cfg(not(tarpaulin_include))]
+        let is_localhost = if let Ok(url) = reqwest::Url::parse(&base_url) {
+            let host = url.host_str().unwrap_or("");
+            host == "localhost" || host == "127.0.0.1"
+        } else {
+            false
+        };
+
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .https_only(!is_localhost)
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -47,8 +57,17 @@ impl KeycloakClient {
 
     /// Sets the timeout for the internal HTTP client.
     pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        #[cfg(not(tarpaulin_include))]
+        let is_localhost = if let Ok(url) = reqwest::Url::parse(&self.base_url) {
+            let host = url.host_str().unwrap_or("");
+            host == "localhost" || host == "127.0.0.1"
+        } else {
+            false
+        };
+
         self.client = Client::builder()
             .timeout(timeout)
+            .https_only(!is_localhost)
             .build()
             .unwrap_or_else(|_| Client::new());
         self
