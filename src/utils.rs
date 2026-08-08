@@ -15,13 +15,6 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
     {
         use tokio::io::AsyncWriteExt;
 
-        // If file exists, ensure permissions are 0o600
-        if fs::try_exists(path).await.unwrap_or(false) {
-            fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                .await
-                .with_context(|| format!("Failed to set permissions for {:?}", path))?;
-        }
-
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true).mode(0o600);
 
@@ -29,6 +22,17 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
             .open(path)
             .await
             .with_context(|| format!("Failed to open {:?}", path))?;
+
+        let mut perms = file
+            .metadata()
+            .await
+            .with_context(|| format!("Failed to get metadata for {:?}", path))?
+            .permissions();
+        perms.set_mode(0o600);
+        file.set_permissions(perms)
+            .await
+            .with_context(|| format!("Failed to set permissions for {:?}", path))?;
+
         file.write_all(content.as_bytes())
             .await
             .with_context(|| format!("Failed to write to {:?}", path))?;
