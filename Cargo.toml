@@ -62,3 +62,6 @@ harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)', 'cfg(tarpaulin)'] }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.52.0", features = ["Win32_Security", "Win32_Security_Authorization", "Win32_Foundation", "Win32_System_Memory", "Win32_System_Threading"] }

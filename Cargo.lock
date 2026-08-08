@@ -1116,6 +1116,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
