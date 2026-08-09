@@ -80,3 +80,18 @@ async fn test_inspect_auto_discovery() {
         "test-realm realm directory missing"
     );
 }
+
+#[test]
+fn test_inspect_aliases() {
+    use clap::Parser;
+    use kaji::args::{Cli, Commands};
+
+    let args_sync = Cli::parse_from(["kaji", "sync"]);
+    assert!(matches!(args_sync.command, Commands::Inspect { .. }));
+
+    let args_pull = Cli::parse_from(["kaji", "pull"]);
+    assert!(matches!(args_pull.command, Commands::Inspect { .. }));
+
+    let args_export = Cli::parse_from(["kaji", "export"]);
+    assert!(matches!(args_export.command, Commands::Inspect { .. }));
+}

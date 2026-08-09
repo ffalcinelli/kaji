@@ -15,7 +15,7 @@ This document serves as the internal developer guide for `kaji`. It explains the
 
 -   `src/client.rs`: Low-level wrapper for the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for Keycloak resources.
 -   `src/models.rs`: Serde-based representations of Keycloak resources. Defines the `KeycloakResource` and `ResourceMeta` traits for generic resource management.
--   `src/inspect.rs`: Deep-scans the remote Keycloak server and serializes resources into local files using a **generic, parallelized inspection pipeline**.
+-   `src/inspect.rs`: Deep-scans the remote Keycloak server and serializes resources into local files using a **generic, parallelized inspection pipeline**. (Supported CLI aliases: `sync`, `pull`, `export`).
 -   `src/plan/`: Contains the logic for calculating diffs. Uses a **generic planning engine** (`generic.rs`) for most resource types.
 -   `src/apply/`: Contains the logic for applying changes. Uses a **generic reconciliation engine** (`generic.rs`) and a **staged application pipeline** to ensure reliability.
 -   `src/utils/secrets/`: Manages secret resolution (Env, Vault, etc.).

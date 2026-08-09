@@ -222,11 +222,12 @@ workspace/
 
 ## 📖 Command Reference
 
-### `inspect`
+### `inspect` *(Aliases: `sync`, `pull`, `export`)*
 Exports the remote server state to local YAML files.
 ```bash
-# Export everything to 'my-workspace'
+# Export everything to 'my-workspace' (using inspect, sync, pull, or export)
 kaji inspect --workspace my-workspace --yes
+kaji sync --workspace my-workspace --yes
 ```
 
 ### `validate`
