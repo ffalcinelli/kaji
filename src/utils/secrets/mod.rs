@@ -338,6 +338,30 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn test_extract_secrets_arrays() {
+        let mut val = json!([
+            {"secret": "val1", "other": "normal1"},
+            {"secret": "val2", "other": "normal2"}
+        ]);
+        let mut secrets = std::collections::BTreeMap::new();
+        extract_secrets(&mut val, "items", &mut secrets);
+
+        assert_eq!(val[0]["secret"], "${KEYCLOAK_ITEMS_0_SECRET}");
+        assert_eq!(val[0]["other"], "normal1");
+        assert_eq!(val[1]["secret"], "${KEYCLOAK_ITEMS_1_SECRET}");
+        assert_eq!(val[1]["other"], "normal2");
+
+        assert_eq!(
+            secrets.get("KEYCLOAK_ITEMS_0_SECRET"),
+            Some(&"val1".to_string())
+        );
+        assert_eq!(
+            secrets.get("KEYCLOAK_ITEMS_1_SECRET"),
+            Some(&"val2".to_string())
+        );
+    }
+
+    #[test]
     fn test_extract_secrets() {
         let mut val = json!({
             "clientId": "my_client",
