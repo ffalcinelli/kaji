@@ -213,31 +213,23 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
                     let executions = if let Some(execs) = remote_executions_cache.get(r_flow_alias)
                     {
                         execs.clone()
+                    } else if let Ok(execs) = client.get_flow_executions(r_flow_alias).await {
+                        remote_executions_cache.insert(r_flow_alias.clone(), execs.clone());
+                        execs
                     } else {
-                        if let Ok(execs) = client.get_flow_executions(r_flow_alias).await {
-                            remote_executions_cache.insert(r_flow_alias.clone(), execs.clone());
-                            execs
-                        } else {
-                            continue;
-                        }
+                        continue;
                     };
 
                     for mut exec in executions {
                         // Check if this execution is supposed to be linked locally
                         // (we find it in local flows by flow_alias and provider_id)
-                        let mut should_link = false;
-
-                        // Search local flows
-                        if let Some(loc_execs) = local_flows_map.get(r_flow_alias) {
-                            for loc_exec in loc_execs {
-                                if loc_exec.authenticator == exec.authenticator {
-                                    if loc_exec.authenticator_config.as_deref() == Some(&alias) {
-                                        should_link = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                        let should_link =
+                            local_flows_map.get(r_flow_alias).is_some_and(|loc_execs| {
+                                loc_execs.iter().any(|loc_exec| {
+                                    loc_exec.authenticator == exec.authenticator
+                                        && loc_exec.authenticator_config.as_deref() == Some(&alias)
+                                })
+                            });
 
                         // If it should link, and is not already linked to this config ID:
                         if should_link && exec.authenticator_config.as_ref() != Some(&new_config_id)
