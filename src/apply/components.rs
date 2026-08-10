@@ -222,54 +222,130 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_build_component_indices() {
-        let comps = vec![
-            ComponentRepresentation {
-                id: Some("id1".to_string()),
-                name: Some("comp1".to_string()),
-                provider_id: Some("prov1".to_string()),
-                provider_type: Some("type1".to_string()),
-                sub_type: Some("sub1".to_string()),
-                parent_id: Some("parent1".to_string()),
-                config: None,
-                extra: Default::default(),
-            },
-            ComponentRepresentation {
-                id: None,
-                name: Some("comp2".to_string()),
-                provider_id: Some("prov2".to_string()),
-                provider_type: Some("type2".to_string()),
-                sub_type: None,
-                parent_id: Some("parent2".to_string()),
-                config: None,
-                extra: Default::default(),
-            },
-        ];
+    fn test_build_component_indices_empty() {
+        let (by_identity, by_details) = build_component_indices(vec![]);
+        assert!(by_identity.is_empty());
+        assert!(by_details.is_empty());
+    }
 
-        let (by_identity, by_details) = build_component_indices(comps);
+    #[test]
+    fn test_build_component_indices_with_id_and_name() {
+        let comp = ComponentRepresentation {
+            id: Some("id1".to_string()),
+            name: Some("comp1".to_string()),
+            provider_id: Some("prov1".to_string()),
+            provider_type: Some("type1".to_string()),
+            sub_type: Some("sub1".to_string()),
+            parent_id: Some("parent1".to_string()),
+            config: None,
+            extra: Default::default(),
+        };
 
-        // get_identity for ComponentRepresentation returns `id.or_else(|| name)`.
-        // First component has id "id1", so it uses "id1".
-        // Second component has no id, so it uses "comp2".
-        assert_eq!(by_identity.len(), 2);
+        let (by_identity, by_details) = build_component_indices(vec![comp]);
+
+        assert_eq!(by_identity.len(), 1);
         assert!(by_identity.contains_key("id1"));
-        assert!(by_identity.contains_key("comp2"));
 
-        assert_eq!(by_details.len(), 2);
-        let key1 = (
+        assert_eq!(by_details.len(), 1);
+        let key = (
             Some("comp1".to_string()),
             Some("sub1".to_string()),
             Some("prov1".to_string()),
             Some("parent1".to_string()),
         );
-        let key2 = (
+        assert!(by_details.contains_key(&key));
+    }
+
+    #[test]
+    fn test_build_component_indices_no_id_fallback_to_name() {
+        let comp = ComponentRepresentation {
+            id: None,
+            name: Some("comp2".to_string()),
+            provider_id: Some("prov2".to_string()),
+            provider_type: Some("type2".to_string()),
+            sub_type: None,
+            parent_id: Some("parent2".to_string()),
+            config: None,
+            extra: Default::default(),
+        };
+
+        let (by_identity, by_details) = build_component_indices(vec![comp]);
+
+        assert_eq!(by_identity.len(), 1);
+        assert!(by_identity.contains_key("comp2"));
+
+        assert_eq!(by_details.len(), 1);
+        let key = (
             Some("comp2".to_string()),
             None,
             Some("prov2".to_string()),
             Some("parent2".to_string()),
         );
-        assert!(by_details.contains_key(&key1));
-        assert!(by_details.contains_key(&key2));
+        assert!(by_details.contains_key(&key));
+    }
+
+    #[test]
+    fn test_build_component_indices_no_identity_at_all() {
+        let comp = ComponentRepresentation {
+            id: None,
+            name: None,
+            provider_id: Some("prov3".to_string()),
+            provider_type: Some("type3".to_string()),
+            sub_type: Some("sub3".to_string()),
+            parent_id: Some("parent3".to_string()),
+            config: None,
+            extra: Default::default(),
+        };
+
+        let (by_identity, by_details) = build_component_indices(vec![comp]);
+
+        // When neither id nor name is present, get_identity() returns None
+        // so it won't be added to by_identity map
+        assert!(by_identity.is_empty());
+
+        assert_eq!(by_details.len(), 1);
+        let key = (
+            None,
+            Some("sub3".to_string()),
+            Some("prov3".to_string()),
+            Some("parent3".to_string()),
+        );
+        assert!(by_details.contains_key(&key));
+    }
+
+    #[test]
+    fn test_build_component_indices_overwrites_on_duplicate_identity() {
+        let comp1 = ComponentRepresentation {
+            id: Some("duplicate-id".to_string()),
+            name: Some("comp-a".to_string()),
+            provider_id: None,
+            provider_type: None,
+            sub_type: None,
+            parent_id: None,
+            config: None,
+            extra: Default::default(),
+        };
+
+        let comp2 = ComponentRepresentation {
+            id: Some("duplicate-id".to_string()),
+            name: Some("comp-b".to_string()),
+            provider_id: None,
+            provider_type: None,
+            sub_type: None,
+            parent_id: None,
+            config: None,
+            extra: Default::default(),
+        };
+
+        let (by_identity, by_details) = build_component_indices(vec![comp1, comp2]);
+
+        assert_eq!(by_identity.len(), 1);
+        assert_eq!(
+            by_identity.get("duplicate-id").unwrap().name,
+            Some("comp-b".to_string())
+        );
+
+        assert_eq!(by_details.len(), 2);
     }
 
     #[tokio::test]
