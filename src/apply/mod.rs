@@ -60,8 +60,9 @@ macro_rules! handle_upsert {
     ) => {
         if let Some(id) = $id_expr {
             $rep.$id_field = Some(id.clone());
-            #[allow(unused_variables)]
+
             let $update_id = id;
+            let _ = &$update_id;
             let $update_rep = &$rep;
             $update_expr.await.with_context(|| {
                 format!(
