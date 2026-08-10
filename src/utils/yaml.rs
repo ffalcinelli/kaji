@@ -302,4 +302,75 @@ mod tests {
 
         assert!(result);
     }
+
+    #[test]
+    #[cfg(not(windows))] // Cannot delete active current directory on Windows
+    fn test_is_overlay_file_cwd_fallback_err() {
+        // Run this test in a subprocess to avoid polluting global state (CWD) in concurrent tests
+        if std::env::var("RUN_CWD_ERR_TEST").is_ok() {
+            let temp = tempdir().unwrap();
+            let deleted_dir = temp.path().join("deleted");
+            std::fs::create_dir(&deleted_dir).unwrap();
+            std::env::set_current_dir(&deleted_dir).unwrap();
+            std::fs::remove_dir(&deleted_dir).unwrap();
+
+            let path = Path::new("role.prod.yaml");
+            let result = is_overlay_file(path, None);
+
+            assert!(result); // Falls back to common profiles ("prod")
+            std::process::exit(0);
+        }
+
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new(exe)
+            .arg("utils::yaml::tests::test_is_overlay_file_cwd_fallback_err")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("RUN_CWD_ERR_TEST", "1")
+            .output()
+            .unwrap();
+
+        // Ensure the subprocess actually ran the test and didn't just filter out 0 tests
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
+        );
+        assert!(output.status.success(), "Subprocess failed: {:?}", output);
+    }
+
+    #[test]
+    fn test_is_overlay_file_cwd_fallback_no_profiles_dir() {
+        // Run this test in a subprocess to avoid polluting global state (CWD) in concurrent tests
+        if std::env::var("RUN_CWD_NO_PROFILES_TEST").is_ok() {
+            let temp = tempdir().unwrap();
+            std::env::set_current_dir(temp.path()).unwrap();
+
+            // Path with common profile token
+            let path = Path::new("role.dev.yaml");
+            let result = is_overlay_file(path, None);
+
+            assert!(result); // Falls back to common profiles ("dev")
+            std::process::exit(0);
+        }
+
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new(exe)
+            .arg("utils::yaml::tests::test_is_overlay_file_cwd_fallback_no_profiles_dir")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("RUN_CWD_NO_PROFILES_TEST", "1")
+            .output()
+            .unwrap();
+
+        // Ensure the subprocess actually ran the test and didn't just filter out 0 tests
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
+        );
+        assert!(output.status.success(), "Subprocess failed: {:?}", output);
+    }
 }
