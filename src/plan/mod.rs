@@ -348,3 +348,88 @@ pub fn print_diff<T: Serialize>(
     }
     Ok(changed)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Clone)]
+    struct DummyResource {
+        name: String,
+        value: i32,
+        secret: String,
+    }
+
+    #[test]
+    fn test_print_diff_no_changes() {
+        let dummy = DummyResource {
+            name: "test".to_string(),
+            value: 42,
+            secret: "secret_value".to_string(),
+        };
+
+        let result = print_diff("Dummy", Some(&dummy), &dummy, false, false, "").unwrap();
+        assert_eq!(result, false);
+    }
+
+    #[test]
+    fn test_print_diff_with_changes_hunk() {
+        let old = DummyResource {
+            name: "test".to_string(),
+            value: 42,
+            secret: "secret_value".to_string(),
+        };
+        let new = DummyResource {
+            name: "test".to_string(),
+            value: 43,
+            secret: "secret_value".to_string(),
+        };
+
+        // changes_only = true, non-verbose (hunk printing)
+        let result = print_diff("Dummy", Some(&old), &new, true, false, "").unwrap();
+        assert_eq!(result, true);
+    }
+
+    #[test]
+    fn test_print_diff_no_changes_changes_only() {
+        let dummy = DummyResource {
+            name: "test".to_string(),
+            value: 42,
+            secret: "secret_value".to_string(),
+        };
+
+        let result = print_diff("Dummy", Some(&dummy), &dummy, true, false, "").unwrap();
+        assert_eq!(result, false);
+    }
+
+    #[test]
+    fn test_print_diff_new_resource() {
+        let new = DummyResource {
+            name: "test".to_string(),
+            value: 42,
+            secret: "secret_value".to_string(),
+        };
+
+        let result = print_diff("Dummy", None, &new, false, false, "").unwrap();
+        assert_eq!(result, true);
+    }
+
+    #[test]
+    fn test_print_diff_verbose() {
+        let old = DummyResource {
+            name: "test".to_string(),
+            value: 42,
+            secret: "secret_value".to_string(),
+        };
+        let new = DummyResource {
+            name: "test".to_string(),
+            value: 43,
+            secret: "secret_value".to_string(),
+        };
+
+        // Verbose diff printing
+        let result = print_diff("Dummy", Some(&old), &new, false, true, "").unwrap();
+        assert_eq!(result, true);
+    }
+}
