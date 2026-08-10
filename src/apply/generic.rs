@@ -395,7 +395,7 @@ fn find_placeholders(
             for (i, v) in arr.iter().enumerate() {
                 let original_len = path.len();
                 use std::fmt::Write;
-                write!(path, "/{}", i).unwrap();
+                write!(path, "/{}", i).expect("Writing to a String should never fail");
                 find_placeholders(v, path, placeholders);
                 path.truncate(original_len);
             }
