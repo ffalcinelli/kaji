@@ -7,3 +7,6 @@
 ## 2026-08-03 - Concurrent Network Requests
 **Learning:** Sequential network I/O in loops can create significant bottlenecks, especially when fetching related resources (like flow executions for multiple flows).
 **Action:** Extract network calls into a vector of futures and execute them concurrently using `futures::future::join_all` (or similar primitives) to parallelize network I/O and reduce latency.
+## 2024-06-25 - Redundant fs reads in append_secrets
+**Learning:** Checking for file existence before reading, and then reading again later, introduces unnecessary latency and TOCTOU vulnerabilities.
+**Action:** Use `.unwrap_or_default()` directly on `tokio::fs::read_to_string` to avoid the `try_exists` check and cache the read contents in memory instead of re-reading from disk on the same execution path.

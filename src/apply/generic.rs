@@ -450,14 +450,15 @@ pub async fn append_secrets(
     if new_secrets.is_empty() {
         return Ok(());
     }
+
+    let mut content = tokio::fs::read_to_string(secrets_path)
+        .await
+        .unwrap_or_default();
+
     let mut existing = std::collections::HashMap::new();
-    if tokio::fs::try_exists(secrets_path).await.unwrap_or(false) {
-        if let Ok(content) = tokio::fs::read_to_string(secrets_path).await {
-            for line in content.lines() {
-                if let Some((k, v)) = line.split_once('=') {
-                    existing.insert(k.trim().to_string(), v.trim().to_string());
-                }
-            }
+    for line in content.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            existing.insert(k.trim().to_string(), v.trim().to_string());
         }
     }
 
@@ -469,13 +470,6 @@ pub async fn append_secrets(
     }
 
     if !to_append.is_empty() {
-        let mut content = if tokio::fs::try_exists(secrets_path).await.unwrap_or(false) {
-            tokio::fs::read_to_string(secrets_path)
-                .await
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
         if !content.is_empty() && !content.ends_with('\n') {
             content.push('\n');
         }
