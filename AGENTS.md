@@ -21,7 +21,7 @@ All business logic is located in the `src/` directory:
 
 *   [`src/client.rs`](src/client.rs): Wrapper around the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for resources.
 *   [`src/models.rs`](src/models.rs): Strongly-typed Serde representations of Keycloak resources. Implements the `KeycloakResource` and `ResourceMeta` traits.
-*   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline.
+*   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline. Supported CLI aliases: `sync`, `pull`, `export`.
 *   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation.
 *   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules. Supports optional pruning/deletion of orphaned remote resources via the `--prune` flag.
 *   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints.

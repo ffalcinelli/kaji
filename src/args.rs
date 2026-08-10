@@ -93,6 +93,11 @@ impl fmt::Debug for Cli {
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     /// Inspect the current Keycloak configuration and dump to files
+    #[command(
+        visible_alias = "sync",
+        visible_alias = "pull",
+        visible_alias = "export"
+    )]
     Inspect {
         /// Workspace directory for configuration files
         #[arg(long, short = 'w')]
