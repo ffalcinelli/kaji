@@ -332,7 +332,11 @@ mod tests {
 
         // Ensure the subprocess actually ran the test and didn't just filter out 0 tests
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("running 1 test"), "Subprocess didn't run the test. Output: {}", stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
+        );
         assert!(output.status.success(), "Subprocess failed: {:?}", output);
     }
 
@@ -362,7 +366,11 @@ mod tests {
 
         // Ensure the subprocess actually ran the test and didn't just filter out 0 tests
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("running 1 test"), "Subprocess didn't run the test. Output: {}", stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
+        );
         assert!(output.status.success(), "Subprocess failed: {:?}", output);
     }
 }
