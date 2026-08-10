@@ -221,15 +221,12 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
                     };
 
                     for mut exec in executions {
-                        // Check if this execution is supposed to be linked locally
-                        // (we find it in local flows by flow_alias and provider_id)
-                        let should_link =
-                            local_flows_map.get(r_flow_alias).is_some_and(|loc_execs| {
-                                loc_execs.iter().any(|loc_exec| {
-                                    loc_exec.authenticator == exec.authenticator
-                                        && loc_exec.authenticator_config.as_deref() == Some(&alias)
-                                })
-                            });
+                        let should_link = should_link_execution(
+                            &local_flows_map,
+                            r_flow_alias,
+                            &exec,
+                            &alias,
+                        );
 
                         // If it should link, and is not already linked to this config ID:
                         if should_link && exec.authenticator_config.as_ref() != Some(&new_config_id)
@@ -267,4 +264,23 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
     }
     pb.finish_with_message("Applied authenticator configs");
     Ok(())
+}
+
+fn should_link_execution(
+    local_flows_map: &HashMap<
+        String,
+        Vec<crate::models::AuthenticationExecutionExportRepresentation>,
+    >,
+    r_flow_alias: &str,
+    exec: &crate::models::AuthenticationExecutionExportRepresentation,
+    alias: &str,
+) -> bool {
+    // Check if this execution is supposed to be linked locally
+    // (we find it in local flows by flow_alias and provider_id)
+    local_flows_map.get(r_flow_alias).is_some_and(|loc_execs| {
+        loc_execs.iter().any(|loc_exec| {
+            loc_exec.authenticator == exec.authenticator
+                && loc_exec.authenticator_config.as_deref() == Some(alias)
+        })
+    })
 }
