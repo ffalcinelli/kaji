@@ -221,12 +221,8 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
                     };
 
                     for mut exec in executions {
-                        let should_link = should_link_execution(
-                            &local_flows_map,
-                            r_flow_alias,
-                            &exec,
-                            &alias,
-                        );
+                        let should_link =
+                            should_link_execution(&local_flows_map, r_flow_alias, &exec, &alias);
 
                         // If it should link, and is not already linked to this config ID:
                         if should_link && exec.authenticator_config.as_ref() != Some(&new_config_id)
