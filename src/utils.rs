@@ -229,7 +229,9 @@ mod tests {
         let val = serde_json::json!({
             "z": "val_z",
             "a": "val_a",
-            "m": ["item3", "item1", "item2"]
+            "m": ["item3", "item1", "item2"],
+            "b": [true, false, true],
+            "n": [3, 1, 2]
         });
 
         let yaml = to_sorted_yaml(&val)?;
@@ -237,11 +239,19 @@ mod tests {
 
         let lines: Vec<&str> = yaml.lines().collect();
         assert_eq!(lines[0], "a: val_a");
-        assert_eq!(lines[1], "m:");
-        assert_eq!(lines[2], "- item1");
-        assert_eq!(lines[3], "- item2");
-        assert_eq!(lines[4], "- item3");
-        assert_eq!(lines[5], "z: val_z");
+        assert_eq!(lines[1], "b:");
+        assert_eq!(lines[2], "- false");
+        assert_eq!(lines[3], "- true");
+        assert_eq!(lines[4], "- true");
+        assert_eq!(lines[5], "m:");
+        assert_eq!(lines[6], "- item1");
+        assert_eq!(lines[7], "- item2");
+        assert_eq!(lines[8], "- item3");
+        assert_eq!(lines[9], "n:");
+        assert_eq!(lines[10], "- 1");
+        assert_eq!(lines[11], "- 2");
+        assert_eq!(lines[12], "- 3");
+        assert_eq!(lines[13], "z: val_z");
         Ok(())
     }
 
