@@ -11,7 +11,7 @@ use tokio::fs;
 use std::os::unix::fs::PermissionsExt;
 
 #[cfg(not(tarpaulin_include))]
-#[allow(unused_variables, unreachable_code, dead_code)]
+#[allow(unused_variables, dead_code)]
 async fn write_secure_windows(path: &Path, content: &str) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
