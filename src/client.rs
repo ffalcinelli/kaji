@@ -570,29 +570,62 @@ impl KeycloakClient {
         self.get(&url).await
     }
 
+    pub async fn get_raw_flows_with_executions(
+        &self,
+    ) -> Result<Vec<AuthenticationFlowRepresentation>> {
+        #[derive(Clone, Debug)]
+        struct RawAuthenticationFlows(Vec<AuthenticationFlowRepresentation>);
+
+        let type_id = TypeId::of::<RawAuthenticationFlows>();
+        if let Ok(cache) = self.resource_cache.read() {
+            if let Some(cached) = cache.get(&type_id) {
+                if let Some(wrapper) = cached.downcast_ref::<RawAuthenticationFlows>() {
+                    return Ok(wrapper.0.clone());
+                }
+            }
+        }
+
+        let flows = self.get_authentication_flows_raw().await?;
+        let futures = flows.into_iter().map(|mut flow| async move {
+            if let Some(alias) = &flow.alias {
+                if let Ok(executions) = self.get_flow_executions(alias).await {
+                    flow.authentication_executions = Some(executions);
+                }
+            }
+            flow
+        });
+
+        use futures::stream::StreamExt;
+        let flows_with_execs: Vec<AuthenticationFlowRepresentation> =
+            futures::stream::iter(futures).buffered(10).collect().await;
+
+        if let Ok(mut cache) = self.resource_cache.write() {
+            cache.insert(
+                type_id,
+                Box::new(RawAuthenticationFlows(flows_with_execs.clone())),
+            );
+        }
+
+        Ok(flows_with_execs)
+    }
+
     pub async fn get_authenticator_configs_internal(
         &self,
     ) -> Result<Vec<AuthenticatorConfigRepresentation>> {
-        let flows = self.get_authentication_flows_raw().await?;
+        let flows = self.get_raw_flows_with_executions().await?;
         let mut configs = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut futures = Vec::new();
 
-        let mut exec_futures = Vec::new();
-        for flow in &flows {
-            if let Some(alias) = flow.alias.clone() {
-                exec_futures.push(async move { self.get_flow_executions(&alias).await });
-            }
-        }
-
-        let exec_results = futures::future::join_all(exec_futures).await;
-        for executions in exec_results.into_iter().flatten() {
-            for exec in executions {
-                if let Some(config_id) = exec.authenticator_config {
-                    if seen.insert(config_id.clone()) {
-                        futures.push(
-                            async move { self.get_authenticator_config_raw(&config_id).await },
-                        );
+        for flow in flows {
+            if let Some(executions) = flow.authentication_executions {
+                for exec in executions {
+                    if let Some(config_id) = exec.authenticator_config {
+                        if seen.insert(config_id.clone()) {
+                            futures.push(async move {
+                                self.get_authenticator_config_raw(&config_id).await
+                            });
+                        }
                     }
                 }
             }
@@ -796,16 +829,10 @@ impl KeycloakResourceMapping for AuthenticatorConfigRepresentation {
 #[async_trait]
 impl KeycloakResourceMapping for AuthenticationFlowRepresentation {
     async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>> {
-        let flows: Vec<AuthenticationFlowRepresentation> =
-            client.get(&client.resource_url::<Self>()).await?;
-        let futures = flows.into_iter().map(|mut flow| async move {
-            if let Some(alias) = &flow.alias {
-                if let Ok(executions) = client.get_flow_executions(alias).await {
-                    flow.authentication_executions = Some(executions);
-                }
-            }
-            client.map_flow_executions(flow).await
-        });
+        let flows = client.get_raw_flows_with_executions().await?;
+        let futures = flows
+            .into_iter()
+            .map(|flow| async move { client.map_flow_executions(flow).await });
         Ok(futures::future::join_all(futures).await)
     }
 
