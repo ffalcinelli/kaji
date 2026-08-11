@@ -109,7 +109,6 @@ pub async fn run(
             &new_content,
             yes,
             Arc::clone(&prompt_mutex),
-            true,
         )
         .await?;
         eprintln!(
@@ -127,7 +126,7 @@ async fn write_if_changed_with_mutex(
     content: &str,
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
-    secure: bool,
+
 ) -> Result<()> {
     if fs::try_exists(path).await.unwrap_or(false) {
         let existing = fs::read_to_string(path).await.unwrap_or_default();
@@ -155,33 +154,7 @@ async fn write_if_changed_with_mutex(
         }
     }
 
-    if secure {
-        crate::utils::write_secure(path, content).await?;
-    } else {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            use tokio::io::AsyncWriteExt;
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create(true).truncate(true).mode(0o600);
-            let mut file = fs::OpenOptions::from(options)
-                .open(path)
-                .await
-                .with_context(|| format!("Failed to open {:?}", path))?;
-            file.write_all(content.as_bytes())
-                .await
-                .with_context(|| format!("Failed to write {:?}", path))?;
-            file.flush()
-                .await
-                .with_context(|| format!("Failed to flush {:?}", path))?;
-        }
-        #[cfg(not(unix))]
-        {
-            fs::write(path, content)
-                .await
-                .with_context(|| format!("Failed to write {:?}", path))?;
-        }
-    }
+    crate::utils::write_secure(path, content).await?;
 
     Ok(())
 }
@@ -233,7 +206,7 @@ where
                 format!("Failed to serialize {} {}", T::LABEL, res.get_name()),
             )?;
             all_secrets.lock().await.extend(local_secrets);
-            write_if_changed_with_mutex(&path, &yaml, yes, prompt_mutex, true).await
+            write_if_changed_with_mutex(&path, &yaml, yes, prompt_mutex).await
         });
     }
     crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
@@ -298,7 +271,6 @@ async fn inspect_realm(
                 &realm_yaml,
                 yes,
                 Arc::clone(&prompt_mutex),
-                true,
             )
             .await?;
             {
@@ -453,7 +425,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn test_write_if_changed_with_mutex_insecure() {
+    async fn test_write_if_changed_with_mutex() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("insecure.txt");
         let prompt_mutex = Arc::new(Mutex::new(()));
@@ -464,7 +436,6 @@ mod tests {
             "test content",
             true,
             Arc::clone(&prompt_mutex),
-            false,
         )
         .await
         .unwrap();
@@ -477,7 +448,6 @@ mod tests {
             "new content",
             true,
             Arc::clone(&prompt_mutex),
-            false,
         )
         .await
         .unwrap();
