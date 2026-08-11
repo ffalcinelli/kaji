@@ -570,7 +570,9 @@ impl KeycloakClient {
         self.get(&url).await
     }
 
-    pub async fn get_raw_flows_with_executions(&self) -> Result<Vec<AuthenticationFlowRepresentation>> {
+    pub async fn get_raw_flows_with_executions(
+        &self,
+    ) -> Result<Vec<AuthenticationFlowRepresentation>> {
         #[derive(Clone, Debug)]
         struct RawAuthenticationFlows(Vec<AuthenticationFlowRepresentation>);
 
@@ -594,13 +596,14 @@ impl KeycloakClient {
         });
 
         use futures::stream::StreamExt;
-        let flows_with_execs: Vec<AuthenticationFlowRepresentation> = futures::stream::iter(futures)
-            .buffered(10)
-            .collect()
-            .await;
+        let flows_with_execs: Vec<AuthenticationFlowRepresentation> =
+            futures::stream::iter(futures).buffered(10).collect().await;
 
         if let Ok(mut cache) = self.resource_cache.write() {
-            cache.insert(type_id, Box::new(RawAuthenticationFlows(flows_with_execs.clone())));
+            cache.insert(
+                type_id,
+                Box::new(RawAuthenticationFlows(flows_with_execs.clone())),
+            );
         }
 
         Ok(flows_with_execs)
@@ -619,9 +622,9 @@ impl KeycloakClient {
                 for exec in executions {
                     if let Some(config_id) = exec.authenticator_config {
                         if seen.insert(config_id.clone()) {
-                            futures.push(
-                                async move { self.get_authenticator_config_raw(&config_id).await },
-                            );
+                            futures.push(async move {
+                                self.get_authenticator_config_raw(&config_id).await
+                            });
                         }
                     }
                 }
@@ -827,9 +830,9 @@ impl KeycloakResourceMapping for AuthenticatorConfigRepresentation {
 impl KeycloakResourceMapping for AuthenticationFlowRepresentation {
     async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>> {
         let flows = client.get_raw_flows_with_executions().await?;
-        let futures = flows.into_iter().map(|flow| async move {
-            client.map_flow_executions(flow).await
-        });
+        let futures = flows
+            .into_iter()
+            .map(|flow| async move { client.map_flow_executions(flow).await });
         Ok(futures::future::join_all(futures).await)
     }
 
