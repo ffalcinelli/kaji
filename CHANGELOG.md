@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3] - 2026-08-11
+### Security
+- **Strict File Permissions**: Guaranteed restrictive file permissions on exported configuration files by removing `fs::write` fallbacks in `write_if_changed_with_mutex`.
+- **Vault Path Traversal Prevention**: Fixed path traversal vulnerability in `VaultResolver` by implementing a chroot-style base URL containment check.
+
+### Changed
+- **N+1 API Call Optimization**: Eliminated N+1 request spikes when retrieving authenticator configurations by using a cached, stream-buffered (`buffered(10)`) approach for `AuthenticationFlow` execution fetching.
+- **Redundant Disk I/O Reduction**: Optimized `append_secrets` performance by eliminating redundant file existence checks and disk re-reads.
+- **Code Health & Refactoring**: Streamlined `authenticator_config` execution linking with idiomatic Rust iterators (`.is_some_and`, `.any`), replaced raw `unwrap()` calls in `generic.rs` with descriptive `expect()` messages, and cleaned up macro hygiene.
+
+### Added
+- **Test Suite Expansion**: Added comprehensive unit tests for `is_overlay_file` edge cases, `print_diff`, component indexing, primitive array sorting, and secret extraction within arrays.
+
 ## [0.0.2] - 2026-08-09
 ### Security
 - **Secure File Writes**: Fixed TOCTOU race condition vulnerability on Unix systems in `write_secure` by setting permissions directly on open file descriptors.

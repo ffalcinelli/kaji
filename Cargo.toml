@@ -1,6 +1,6 @@
 [package]
 name = "kaji"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "Steer your Keycloak configuration to a stable, declared state."
 repository = "https://github.com/ffalcinelli/kaji"
