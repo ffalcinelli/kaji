@@ -104,13 +104,8 @@ pub async fn run(
         }
 
         let new_content = format!("{}{}", existing_env, env_content);
-        write_if_changed_with_mutex(
-            &env_path,
-            &new_content,
-            yes,
-            Arc::clone(&prompt_mutex),
-        )
-        .await?;
+        write_if_changed_with_mutex(&env_path, &new_content, yes, Arc::clone(&prompt_mutex))
+            .await?;
         eprintln!(
             "{} {}",
             CHECK,
@@ -126,7 +121,6 @@ async fn write_if_changed_with_mutex(
     content: &str,
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
-
 ) -> Result<()> {
     if fs::try_exists(path).await.unwrap_or(false) {
         let existing = fs::read_to_string(path).await.unwrap_or_default();
@@ -266,13 +260,8 @@ async fn inspect_realm(
             all_secrets.lock().await.extend(local_secrets);
 
             let realm_path = workspace_dir.join("realm.yaml");
-            write_if_changed_with_mutex(
-                &realm_path,
-                &realm_yaml,
-                yes,
-                Arc::clone(&prompt_mutex),
-            )
-            .await?;
+            write_if_changed_with_mutex(&realm_path, &realm_yaml, yes, Arc::clone(&prompt_mutex))
+                .await?;
             {
                 let _lock = prompt_mutex.lock().await;
                 eprintln!(
@@ -431,26 +420,16 @@ mod tests {
         let prompt_mutex = Arc::new(Mutex::new(()));
 
         // Write new file
-        write_if_changed_with_mutex(
-            &file_path,
-            "test content",
-            true,
-            Arc::clone(&prompt_mutex),
-        )
-        .await
-        .unwrap();
+        write_if_changed_with_mutex(&file_path, "test content", true, Arc::clone(&prompt_mutex))
+            .await
+            .unwrap();
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content, "test content");
 
         // Overwrite file
-        write_if_changed_with_mutex(
-            &file_path,
-            "new content",
-            true,
-            Arc::clone(&prompt_mutex),
-        )
-        .await
-        .unwrap();
+        write_if_changed_with_mutex(&file_path, "new content", true, Arc::clone(&prompt_mutex))
+            .await
+            .unwrap();
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content, "new content");
     }
