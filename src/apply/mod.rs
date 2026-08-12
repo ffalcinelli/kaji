@@ -1,10 +1,12 @@
 #![allow(missing_docs)]
 //! Apply module for applying local configuration changes to Keycloak.
 
+pub mod auth_flow;
 pub mod authenticator_config;
 pub mod components;
 pub mod generic;
 pub mod realm;
+pub mod roles;
 
 macro_rules! spawn_apply_stage {
     ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, $prune:expr, [ $($t:ty),* ]) => {
@@ -99,9 +101,8 @@ macro_rules! handle_upsert {
 
 use crate::client::KeycloakClient;
 use crate::models::{
-    AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
-    GroupRepresentation, IdentityProviderRepresentation, RequiredActionProviderRepresentation,
-    RoleRepresentation, UserRepresentation,
+    ClientRepresentation, ClientScopeRepresentation, GroupRepresentation,
+    IdentityProviderRepresentation, RequiredActionProviderRepresentation, UserRepresentation,
 };
 use crate::utils::secrets::SecretResolver;
 pub use crate::utils::ui::{ACTION, SUCCESS_CREATE, SUCCESS_UPDATE, Ui, WARN};
@@ -328,8 +329,34 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             ui,
             yes,
             prune,
-            [IdentityProviderRepresentation, RoleRepresentation]
+            [IdentityProviderRepresentation]
         );
+
+        let client_ro = client.clone();
+        let dir_ro = workspace_dir.clone();
+        let secrets_path_ro = Arc::clone(&secrets_path);
+        let res_ro = Arc::clone(&resolver);
+        let plan_ro = Arc::clone(&planned_files);
+        let rn_ro = realm_name.to_string();
+        let p_ro = profile.clone();
+        let ui_ro = Arc::clone(&ui);
+        set.spawn(async move {
+            roles::apply_roles(crate::apply::ApplyContext {
+                client: &client_ro,
+                workspace_dir: dir_ro,
+                secrets_path: secrets_path_ro,
+                resolver: res_ro,
+                planned_files: plan_ro,
+                realm_name: &rn_ro,
+                profile: p_ro,
+                review,
+                ui: ui_ro,
+                yes,
+                prune,
+            })
+            .await
+        });
+
         crate::utils::join_all_tasks(set, None).await?;
     }
 
@@ -352,11 +379,36 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             [
                 ClientRepresentation,
                 ClientScopeRepresentation,
-                AuthenticationFlowRepresentation,
                 RequiredActionProviderRepresentation,
                 GroupRepresentation
             ]
         );
+
+        let client_af = client.clone();
+        let dir_af = workspace_dir.clone();
+        let secrets_path_af = Arc::clone(&secrets_path);
+        let res_af = Arc::clone(&resolver);
+        let plan_af = Arc::clone(&planned_files);
+        let rn_af = realm_name.to_string();
+        let p_af = profile.clone();
+        let ui_af = Arc::clone(&ui);
+        set.spawn(async move {
+            auth_flow::apply_authentication_flows(crate::apply::ApplyContext {
+                client: &client_af,
+                workspace_dir: dir_af,
+                secrets_path: secrets_path_af,
+                resolver: res_af,
+                planned_files: plan_af,
+                realm_name: &rn_af,
+                profile: p_af,
+                review,
+                ui: ui_af,
+                yes,
+                prune,
+            })
+            .await
+        });
+
         crate::utils::join_all_tasks(set, None).await?;
     }
 

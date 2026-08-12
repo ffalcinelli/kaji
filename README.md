@@ -213,9 +213,12 @@ workspace/
     ├── realm.yaml             # Main realm settings
     ├── clients/
     │   ├── my-app.yaml        # Base resource
-    │   └── my-app.prod.yaml   # Environment overlay
+    │   ├── my-app.prod.yaml   # Environment overlay
+    │   └── my-app/
+    │       └── roles/
+    │           └── app-admin.yaml  # Client-scoped role
     └── roles/
-        └── admin.yaml
+        └── admin.yaml         # Realm-scoped role
 ```
 
 ---

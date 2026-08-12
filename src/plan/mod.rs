@@ -1,9 +1,11 @@
 #![allow(missing_docs)]
 //! Plan module for calculating diffs and detecting configuration drift.
 
+pub mod auth_flow;
 pub mod components;
 pub mod generic;
 pub mod realm;
+pub mod roles;
 
 macro_rules! plan_generic_resources {
     ($ctx:expr, $changed_files:expr, $summary:expr, [ $($t:ty),* ]) => {
@@ -199,9 +201,9 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
 }
 
 use crate::models::{
-    AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
-    ClientScopeRepresentation, GroupRepresentation, IdentityProviderRepresentation,
-    RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
+    AuthenticatorConfigRepresentation, ClientRepresentation, ClientScopeRepresentation,
+    GroupRepresentation, IdentityProviderRepresentation, RequiredActionProviderRepresentation,
+    UserRepresentation,
 };
 
 async fn plan_single_realm(
@@ -214,19 +216,27 @@ async fn plan_single_realm(
     changed_files.append(&mut realm_changes);
     summary.add(&realm_summary);
 
-    // 2. Plan generic resources
+    // 2. Plan roles (realm roles & client roles)
+    let (mut role_changes, role_summary) = roles::plan_roles(&ctx).await?;
+    changed_files.append(&mut role_changes);
+    summary.add(&role_summary);
+
+    // 3. Plan authentication flows (with subflows & executions)
+    let (mut flow_changes, flow_summary) = auth_flow::plan_authentication_flows(&ctx).await?;
+    changed_files.append(&mut flow_changes);
+    summary.add(&flow_summary);
+
+    // 4. Plan generic resources
     plan_generic_resources!(
         &ctx,
         changed_files,
         summary,
         [
-            RoleRepresentation,
             ClientRepresentation,
             IdentityProviderRepresentation,
             ClientScopeRepresentation,
             GroupRepresentation,
             UserRepresentation,
-            AuthenticationFlowRepresentation,
             RequiredActionProviderRepresentation,
             AuthenticatorConfigRepresentation
         ]

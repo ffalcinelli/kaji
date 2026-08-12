@@ -199,6 +199,111 @@ impl KeycloakClient {
         self.delete_resource::<RoleRepresentation>(id).await
     }
 
+    pub async fn get_client_uuid_map(&self) -> Result<HashMap<String, String>> {
+        let clients = self.get_clients().await?;
+        let mut map = HashMap::new();
+        for client in clients {
+            if let (Some(client_id), Some(id)) = (client.client_id, client.id) {
+                map.insert(client_id, id);
+            }
+        }
+        Ok(map)
+    }
+
+    pub async fn get_client_roles(&self, client_uuid: &str) -> Result<Vec<RoleRepresentation>> {
+        let url = format!("{}/clients/{}/roles", self.realm_admin_url(), client_uuid);
+        self.get(&url).await
+    }
+
+    pub async fn create_client_role(
+        &self,
+        client_uuid: &str,
+        role_rep: &RoleRepresentation,
+    ) -> Result<()> {
+        let url = format!("{}/clients/{}/roles", self.realm_admin_url(), client_uuid);
+        self.post(&url, role_rep).await
+    }
+
+    pub async fn update_client_role(
+        &self,
+        client_uuid: &str,
+        role_name: &str,
+        role_rep: &RoleRepresentation,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/clients/{}/roles/{}",
+            self.realm_admin_url(),
+            client_uuid,
+            role_name
+        );
+        self.put(&url, role_rep).await
+    }
+
+    pub async fn delete_client_role(&self, client_uuid: &str, role_name: &str) -> Result<()> {
+        let url = format!(
+            "{}/clients/{}/roles/{}",
+            self.realm_admin_url(),
+            client_uuid,
+            role_name
+        );
+        self.delete(&url).await
+    }
+
+    pub async fn add_subflow_to_flow(
+        &self,
+        parent_flow_alias: &str,
+        subflow_alias: &str,
+        provider_id: &str,
+        description: Option<&str>,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/authentication/flows/{}/executions/flow",
+            self.realm_admin_url(),
+            parent_flow_alias
+        );
+        #[derive(Serialize)]
+        struct AddSubflowBody<'a> {
+            alias: &'a str,
+            provider: &'a str,
+            #[serde(rename = "type")]
+            type_: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            description: Option<&'a str>,
+        }
+        let body = AddSubflowBody {
+            alias: subflow_alias,
+            provider: provider_id,
+            type_: provider_id,
+            description,
+        };
+        self.post(&url, &body).await
+    }
+
+    pub async fn add_execution_to_flow(&self, flow_alias: &str, provider_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/authentication/flows/{}/executions/execution",
+            self.realm_admin_url(),
+            flow_alias
+        );
+        #[derive(Serialize)]
+        struct AddExecutionBody<'a> {
+            provider: &'a str,
+        }
+        let body = AddExecutionBody {
+            provider: provider_id,
+        };
+        self.post(&url, &body).await
+    }
+
+    pub async fn delete_execution(&self, execution_id: &str) -> Result<()> {
+        let url = format!(
+            "{}/authentication/executions/{}",
+            self.realm_admin_url(),
+            execution_id
+        );
+        self.delete(&url).await
+    }
+
     pub async fn create_identity_provider(
         &self,
         idp_rep: &IdentityProviderRepresentation,

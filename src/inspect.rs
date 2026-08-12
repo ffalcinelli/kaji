@@ -366,8 +366,92 @@ async fn inspect_realm(
         &prompt_mutex,
     );
 
+    {
+        let client = client.clone();
+        let realm_name = realm_name.to_string();
+        let workspace_dir = Arc::clone(&workspace_dir);
+        let all_secrets = Arc::clone(&all_secrets);
+        let prompt_mutex = Arc::clone(&prompt_mutex);
+        set.spawn(async move {
+            inspect_client_roles(
+                &client,
+                &realm_name,
+                workspace_dir,
+                all_secrets,
+                yes,
+                prompt_mutex,
+            )
+            .await
+        });
+    }
+
     crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
 
+    Ok(())
+}
+
+async fn inspect_client_roles(
+    client: &KeycloakClient,
+    realm_name: &str,
+    workspace_dir: Arc<PathBuf>,
+    all_secrets: Arc<Mutex<BTreeMap<String, String>>>,
+    yes: bool,
+    prompt_mutex: Arc<Mutex<()>>,
+) -> Result<()> {
+    let clients = match client.get_clients().await {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+
+    let mut set = tokio::task::JoinSet::new();
+
+    for cl in clients {
+        let (client_id, client_uuid) = match (cl.client_id, cl.id) {
+            (Some(cid), Some(uid)) => (cid, uid),
+            _ => continue,
+        };
+
+        let client = client.clone();
+        let realm_name = realm_name.to_string();
+        let target_dir = workspace_dir
+            .join("clients")
+            .join(sanitize(&client_id))
+            .join("roles");
+        let all_secrets = Arc::clone(&all_secrets);
+        let prompt_mutex = Arc::clone(&prompt_mutex);
+
+        set.spawn(async move {
+            let roles = match client.get_client_roles(&client_uuid).await {
+                Ok(r) => r,
+                Err(_) => return Ok(()),
+            };
+
+            if roles.is_empty() {
+                return Ok(());
+            }
+
+            if !fs::try_exists(&target_dir).await.unwrap_or(false) {
+                let _ = fs::create_dir_all(&target_dir).await;
+            }
+
+            for res in roles {
+                let filename = format!("{}.yaml", sanitize(res.get_filename()));
+                let path = target_dir.join(filename);
+                let mut local_secrets = BTreeMap::new();
+                let prefix = format!("realm_{}_client_{}_role", realm_name, sanitize(&client_id));
+                let yaml = match to_sorted_yaml_with_secrets(&res, &prefix, &mut local_secrets) {
+                    Ok(y) => y,
+                    Err(_) => continue,
+                };
+                all_secrets.lock().await.extend(local_secrets);
+                let _ =
+                    write_if_changed_with_mutex(&path, &yaml, yes, Arc::clone(&prompt_mutex)).await;
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
+    crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
     Ok(())
 }
 

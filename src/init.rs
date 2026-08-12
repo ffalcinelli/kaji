@@ -164,6 +164,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_non_interactive_empty() {
+        let _guard = INIT_TEST_MUTEX.lock().await;
         let dir = tempdir().unwrap();
         let output_path = dir.path().join("kaji.toml");
 
@@ -203,6 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_non_interactive_prefilled() {
+        let _guard = INIT_TEST_MUTEX.lock().await;
         let dir = tempdir().unwrap();
         let output_path = dir.path().join("kaji.toml");
 
