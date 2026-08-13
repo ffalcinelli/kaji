@@ -288,3 +288,193 @@ async fn reconcile_flow_executions(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::KeycloakClient;
+    use crate::utils::secrets::EnvResolver;
+    use crate::utils::ui::MockUi;
+    use mockito::Server;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_apply_auth_flow_no_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = ApplyContext {
+            client: &client,
+            workspace_dir: dir.path().to_path_buf(),
+            secrets_path: Arc::new(dir.path().join(".secrets")),
+            resolver,
+            planned_files: Arc::new(None),
+            realm_name: "test",
+            profile: None,
+            review: false,
+            ui,
+            yes: true,
+            prune: false,
+        };
+
+        apply_authentication_flows(ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_apply_auth_flow_reconcile_and_prune() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+
+        let _m_flows = server
+            .mock("GET", "/admin/realms/test/authentication/flows")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "f-1", "alias": "existing-flow", "providerId": "basic-flow"}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let _m_post_flow = server
+            .mock("POST", "/admin/realms/test/authentication/flows")
+            .with_status(201)
+            .create_async()
+            .await;
+
+        let _m_put_flow = server
+            .mock("PUT", "/admin/realms/test/authentication/flows/f-1")
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let _m_execs_existing = server
+            .mock(
+                "GET",
+                "/admin/realms/test/authentication/flows/existing-flow/executions",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "e-1", "authenticator": "auth-cookie", "requirement": "ALTERNATIVE"},
+                    {"id": "e-orphan", "authenticator": "auth-otp", "requirement": "DISABLED"}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let _m_execs_new = server
+            .mock(
+                "GET",
+                "/admin/realms/test/authentication/flows/new-flow/executions",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[]"#)
+            .create_async()
+            .await;
+
+        let _m_add_exec = server
+            .mock(
+                "POST",
+                "/admin/realms/test/authentication/flows/new-flow/executions/execution",
+            )
+            .with_status(201)
+            .create_async()
+            .await;
+
+        let _m_add_subflow = server
+            .mock(
+                "POST",
+                "/admin/realms/test/authentication/flows/new-flow/executions/flow",
+            )
+            .with_status(201)
+            .create_async()
+            .await;
+
+        let _m_update_exec = server
+            .mock(
+                "PUT",
+                "/admin/realms/test/authentication/flows/existing-flow/executions",
+            )
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let _m_del_exec = server
+            .mock(
+                "DELETE",
+                "/admin/realms/test/authentication/executions/e-orphan",
+            )
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(url);
+        client.set_target_realm("test".to_string());
+        client.set_token("token".to_string());
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws_dir = dir.path().to_path_buf();
+        let flows_dir = ws_dir.join("authentication-flows");
+        fs::create_dir_all(&flows_dir).unwrap();
+
+        fs::write(
+            flows_dir.join("existing-flow.yaml"),
+            r#"
+alias: existing-flow
+authenticationExecutions:
+  - authenticator: auth-cookie
+    requirement: REQUIRED
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            flows_dir.join("new-flow.yaml"),
+            r#"
+alias: new-flow
+authenticationExecutions:
+  - authenticator: auth-password
+    requirement: REQUIRED
+  - authenticator: sub-flow-1
+    authenticatorFlow: true
+    requirement: REQUIRED
+"#,
+        )
+        .unwrap();
+
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = ApplyContext {
+            client: &client,
+            workspace_dir: ws_dir,
+            secrets_path: Arc::new(dir.path().join(".secrets")),
+            resolver,
+            planned_files: Arc::new(None),
+            realm_name: "test",
+            profile: None,
+            review: false,
+            ui,
+            yes: true,
+            prune: true,
+        };
+
+        apply_authentication_flows(ctx).await.unwrap();
+    }
+}

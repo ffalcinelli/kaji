@@ -396,3 +396,286 @@ pub async fn apply_roles(ctx: ApplyContext<'_>) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::KeycloakClient;
+    use crate::utils::secrets::EnvResolver;
+    use crate::utils::ui::MockUi;
+    use mockito::Server;
+    use std::fs;
+
+    #[tokio::test]
+    async fn test_apply_roles_no_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = ApplyContext {
+            client: &client,
+            workspace_dir: dir.path().to_path_buf(),
+            secrets_path: Arc::new(dir.path().join(".secrets")),
+            resolver,
+            planned_files: Arc::new(None),
+            realm_name: "test",
+            profile: None,
+            review: false,
+            ui,
+            yes: true,
+            prune: false,
+        };
+
+        apply_roles(ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_apply_roles_create_update_and_prune() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+
+        let _m_clients = server
+            .mock("GET", "/admin/realms/test/clients")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"id": "c-uuid-1", "clientId": "app-1"}]"#)
+            .create_async()
+            .await;
+
+        let _m_realm_roles = server
+            .mock("GET", "/admin/realms/test/roles")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "r-id-1", "name": "existing-realm-role"},
+                    {"id": "r-id-orphan", "name": "orphan-realm-role"},
+                    {"id": "r-id-offline", "name": "offline_access"}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let _m_client_roles = server
+            .mock("GET", "/admin/realms/test/clients/c-uuid-1/roles")
+            .expect_at_least(1)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "cr-id-1", "name": "existing-client-role", "clientRole": true},
+                    {"id": "cr-id-orphan", "name": "orphan-client-role", "clientRole": true}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let _m_put_realm_role = server
+            .mock("PUT", "/admin/realms/test/roles-by-id/r-id-1")
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let _m_post_realm_role = server
+            .mock("POST", "/admin/realms/test/roles")
+            .with_status(201)
+            .create_async()
+            .await;
+
+        let _m_put_client_role = server
+            .mock(
+                "PUT",
+                "/admin/realms/test/clients/c-uuid-1/roles/existing-client-role",
+            )
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let _m_post_client_role = server
+            .mock("POST", "/admin/realms/test/clients/c-uuid-1/roles")
+            .with_status(201)
+            .create_async()
+            .await;
+
+        let _m_del_realm_role = server
+            .mock("DELETE", "/admin/realms/test/roles-by-id/r-id-orphan")
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let _m_del_client_role = server
+            .mock(
+                "DELETE",
+                "/admin/realms/test/clients/c-uuid-1/roles/orphan-client-role",
+            )
+            .with_status(204)
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(url);
+        client.set_target_realm("test".to_string());
+        client.set_token("token".to_string());
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws_dir = dir.path().to_path_buf();
+
+        let realm_roles_dir = ws_dir.join("roles");
+        fs::create_dir_all(&realm_roles_dir).unwrap();
+        fs::write(
+            realm_roles_dir.join("existing-realm-role.yaml"),
+            "name: existing-realm-role\n",
+        )
+        .unwrap();
+        fs::write(
+            realm_roles_dir.join("new-realm-role.yaml"),
+            "name: new-realm-role\n",
+        )
+        .unwrap();
+
+        let client_roles_dir = ws_dir.join("clients/app-1/roles");
+        fs::create_dir_all(&client_roles_dir).unwrap();
+        fs::write(
+            client_roles_dir.join("existing-client-role.yaml"),
+            "name: existing-client-role\n",
+        )
+        .unwrap();
+        fs::write(
+            client_roles_dir.join("new-client-role.yaml"),
+            "name: new-client-role\n",
+        )
+        .unwrap();
+
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = ApplyContext {
+            client: &client,
+            workspace_dir: ws_dir,
+            secrets_path: Arc::new(dir.path().join(".secrets")),
+            resolver,
+            planned_files: Arc::new(None),
+            realm_name: "test",
+            profile: None,
+            review: false,
+            ui,
+            yes: true,
+            prune: true,
+        };
+
+        apply_roles(ctx).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_apply_roles_review_reject_and_unresolved_client() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+
+        let _m_clients = server
+            .mock("GET", "/admin/realms/test/clients")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"id": "c-uuid-1", "clientId": "app-1"}]"#)
+            .create_async()
+            .await;
+
+        let _m_realm_roles = server
+            .mock("GET", "/admin/realms/test/roles")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"id": "r1", "name": "realm-role"}]"#)
+            .create_async()
+            .await;
+
+        let _m_client_roles = server
+            .mock("GET", "/admin/realms/test/clients/c-uuid-1/roles")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"id": "cr1", "name": "client-role"}]"#)
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(url);
+        client.set_target_realm("test".to_string());
+        client.set_token("token".to_string());
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws_dir = dir.path().to_path_buf();
+
+        let realm_roles_dir = ws_dir.join("roles");
+        fs::create_dir_all(&realm_roles_dir).unwrap();
+        fs::write(
+            realm_roles_dir.join("realm-role.yaml"),
+            "name: realm-role\n",
+        )
+        .unwrap();
+
+        let client_roles_dir = ws_dir.join("clients/app-1/roles");
+        fs::create_dir_all(&client_roles_dir).unwrap();
+        fs::write(
+            client_roles_dir.join("client-role.yaml"),
+            "name: client-role\n",
+        )
+        .unwrap();
+
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![false, false]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = ApplyContext {
+            client: &client,
+            workspace_dir: ws_dir.clone(),
+            secrets_path: Arc::new(dir.path().join(".secrets")),
+            resolver: resolver.clone(),
+            planned_files: Arc::new(None),
+            realm_name: "test",
+            profile: None,
+            review: true,
+            ui,
+            yes: false,
+            prune: false,
+        };
+
+        apply_roles(ctx).await.unwrap();
+
+        // Unresolved client ID error
+        let unknown_client_dir = ws_dir.join("clients/unknown-app/roles");
+        fs::create_dir_all(&unknown_client_dir).unwrap();
+        fs::write(unknown_client_dir.join("role.yaml"), "name: role\n").unwrap();
+
+        let ui_err = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let ctx_err = ApplyContext {
+            client: &client,
+            workspace_dir: ws_dir,
+            secrets_path: Arc::new(dir.path().join(".secrets")),
+            resolver,
+            planned_files: Arc::new(None),
+            realm_name: "test",
+            profile: None,
+            review: false,
+            ui: ui_err,
+            yes: true,
+            prune: false,
+        };
+
+        let res = apply_roles(ctx_err).await;
+        assert!(res.is_err());
+    }
+}

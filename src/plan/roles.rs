@@ -208,3 +208,208 @@ pub async fn plan_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
 
     Ok((changed_files, summary))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::KeycloakClient;
+    use crate::plan::PlanOptions;
+    use crate::utils::secrets::EnvResolver;
+    use crate::utils::ui::MockUi;
+    use mockito::Server;
+    use std::fs;
+
+    #[tokio::test]
+    async fn test_plan_roles_no_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = KeycloakClient::new("http://127.0.0.1:1".to_string());
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = PlanContext {
+            client: &client,
+            workspace_dir: dir.path(),
+            options: PlanOptions {
+                changes_only: false,
+                interactive: false,
+                verbose: false,
+            },
+            realm_name: "test",
+            ui: ui.as_ref(),
+            resolver,
+            profile: None,
+        };
+
+        let (files, summary) = plan_roles(&ctx).await.unwrap();
+        assert!(files.is_empty());
+        assert_eq!(summary.created, 0);
+        assert_eq!(summary.updated, 0);
+    }
+
+    #[tokio::test]
+    async fn test_plan_roles_realm_and_client_roles() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+
+        let _m_realm_roles = server
+            .mock("GET", "/admin/realms/test/roles")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "r1-id", "name": "existing-realm-role"}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let _m_clients = server
+            .mock("GET", "/admin/realms/test/clients")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "c-uuid-1", "clientId": "app-1"}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let _m_client_roles = server
+            .mock("GET", "/admin/realms/test/clients/c-uuid-1/roles")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"[
+                    {"id": "cr1-id", "name": "existing-client-role", "clientRole": true}
+                ]"#,
+            )
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(url);
+        client.set_target_realm("test".to_string());
+        client.set_token("token".to_string());
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws_dir = dir.path().to_path_buf();
+
+        // Create realm role files
+        let realm_roles_dir = ws_dir.join("roles");
+        fs::create_dir_all(&realm_roles_dir).unwrap();
+        fs::write(
+            realm_roles_dir.join("existing-realm-role.yaml"),
+            "name: existing-realm-role\ndescription: Updated\n",
+        )
+        .unwrap();
+        fs::write(
+            realm_roles_dir.join("new-realm-role.yaml"),
+            "name: new-realm-role\n",
+        )
+        .unwrap();
+        fs::write(realm_roles_dir.join("skip.txt"), "not yaml").unwrap();
+        fs::write(realm_roles_dir.join("role.prod.yaml"), "overlay").unwrap();
+
+        // Create client role files
+        let client_roles_dir = ws_dir.join("clients/app-1/roles");
+        fs::create_dir_all(&client_roles_dir).unwrap();
+        fs::write(
+            client_roles_dir.join("existing-client-role.yaml"),
+            "name: existing-client-role\ndescription: Updated\n",
+        )
+        .unwrap();
+        fs::write(
+            client_roles_dir.join("new-client-role.yaml"),
+            "name: new-client-role\n",
+        )
+        .unwrap();
+
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = PlanContext {
+            client: &client,
+            workspace_dir: &ws_dir,
+            options: PlanOptions {
+                changes_only: false,
+                interactive: false,
+                verbose: true,
+            },
+            realm_name: "test",
+            ui: ui.as_ref(),
+            resolver,
+            profile: None,
+        };
+
+        let (files, summary) = plan_roles(&ctx).await.unwrap();
+        assert_eq!(files.len(), 4);
+        assert_eq!(summary.created, 2);
+        assert_eq!(summary.updated, 2);
+    }
+
+    #[tokio::test]
+    async fn test_plan_roles_interactive() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+
+        let _m_realm_roles = server
+            .mock("GET", "/admin/realms/test/roles")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[]"#)
+            .create_async()
+            .await;
+
+        let _m_clients = server
+            .mock("GET", "/admin/realms/test/clients")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[]"#)
+            .create_async()
+            .await;
+
+        let mut client = KeycloakClient::new(url);
+        client.set_target_realm("test".to_string());
+        client.set_token("token".to_string());
+
+        let dir = tempfile::tempdir().unwrap();
+        let ws_dir = dir.path().to_path_buf();
+        let roles_dir = ws_dir.join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+        fs::write(roles_dir.join("r1.yaml"), "name: r1\n").unwrap();
+        fs::write(roles_dir.join("r2.yaml"), "name: r2\n").unwrap();
+
+        let ui = Arc::new(MockUi {
+            inputs: std::sync::Mutex::new(vec![]),
+            confirms: std::sync::Mutex::new(vec![]),
+            selects: std::sync::Mutex::new(vec![0, 1]),
+            passwords: std::sync::Mutex::new(vec![]),
+        });
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let ctx = PlanContext {
+            client: &client,
+            workspace_dir: &ws_dir,
+            options: PlanOptions {
+                changes_only: false,
+                interactive: true,
+                verbose: false,
+            },
+            realm_name: "test",
+            ui: ui.as_ref(),
+            resolver,
+            profile: None,
+        };
+
+        let (files, summary) = plan_roles(&ctx).await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(summary.created, 1);
+    }
+}
