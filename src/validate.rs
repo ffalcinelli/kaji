@@ -51,7 +51,7 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
 /// Returns an error if validation fails or a file cannot be parsed.
 pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Result<()> {
     if !fs::try_exists(&workspace_dir).await? {
-        anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
+        return Err(anyhow::anyhow!("Hint: Create the workspace directory first or use `kaji init`.").context(format!("Input directory {:?} does not exist", workspace_dir)));
     }
 
     let realms = if realms_to_validate.is_empty() {

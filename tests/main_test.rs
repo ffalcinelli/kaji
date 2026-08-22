@@ -49,7 +49,7 @@ fn test_invalid_command() {
 #[test]
 fn test_error_hint_rendering() {
     let mut cmd = Command::cargo_bin("kaji").unwrap();
-    cmd.arg("apply")
+    cmd.arg("validate")
         .arg("--workspace")
         .arg("non_existent_dir_123")
         .assert()

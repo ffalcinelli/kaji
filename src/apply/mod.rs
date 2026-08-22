@@ -145,7 +145,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
         profile,
     } = args;
     if !workspace_dir.exists() {
-        anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
+        return Err(anyhow::anyhow!("Hint: Create the workspace directory first or use `kaji init`.").context(format!("Input directory {:?} does not exist", workspace_dir)));
     }
 
     let secrets_file = if let Some(p) = &profile {

@@ -15,3 +15,6 @@ Which is not very pleasing to the eye or easy to parse for users.
 ## 2026-08-01 - Enhance CLI error hints
 **Learning:** Added visual styling for actionable hints using an 'anyhow' context prefix.
 **Action:** Use `.context("Hint: ...")` for UX guidance in error chains, as the main CLI error handler now parses this prefix to display the text in blue with an INFO emoji.
+## 2023-10-27 - Actionable Hints via Anyhow Context
+**Learning:** `anyhow::Error`'s `context()` method is highly effective for appending actionable hints to generic errors in the CLI. When combined with a global error handler that iterates over `Error::chain()`, a context like `Hint: Run kaji init` is styled cleanly as a nested, causal message without changing the underlying error struct. Also, when embedding backticks in these hints (like `kaji init`), Rust requires raw string literals (`r#"..."#`) to avoid escape character compilation errors.
+**Action:** When adding hints to existing `bail!` or `Result` types, wrap the hint in `anyhow!("Hint: ...")` and attach the original message via `.context()`. Always use `r#""#` for hints containing terminal commands.
