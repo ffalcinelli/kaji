@@ -109,12 +109,9 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
 
 async fn validate_realm_config(workspace_dir: &Path) -> Result<()> {
     let realm_path = workspace_dir.join("realm.yaml");
-    if !fs::try_exists(&realm_path).await? {
-        anyhow::bail!("realm.yaml not found in {:?}", workspace_dir);
-    }
     let realm_content = fs::read_to_string(&realm_path)
         .await
-        .context("Failed to read realm.yaml")?;
+        .with_context(|| format!("realm.yaml not found or failed to read in {:?}", workspace_dir))?;
     let realm: RealmRepresentation =
         serde_yaml::from_str(&realm_content).context("Failed to parse realm.yaml")?;
 
