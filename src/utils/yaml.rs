@@ -31,9 +31,10 @@ pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> 
         let overlay_path = base_path.with_file_name(format!("{}.{}.{}", stem, profile_name, ext));
         match async_fs::read_to_string(&overlay_path).await {
             Ok(overlay_content) => {
-                let overlay_val: Value = serde_yaml::from_str(&overlay_content).with_context(|| {
-                    format!("Failed to parse overlay YAML file: {:?}", overlay_path)
-                })?;
+                let overlay_val: Value =
+                    serde_yaml::from_str(&overlay_content).with_context(|| {
+                        format!("Failed to parse overlay YAML file: {:?}", overlay_path)
+                    })?;
                 deep_merge(&mut val, &overlay_val);
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
