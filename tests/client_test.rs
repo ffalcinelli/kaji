@@ -563,7 +563,7 @@ async fn test_login_no_credentials() {
         result
             .unwrap_err()
             .to_string()
-            .contains("Either username/password or client_secret must be provided")
+            .contains("Missing authentication credentials")
     );
 }
 

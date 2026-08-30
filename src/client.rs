@@ -444,7 +444,9 @@ impl KeycloakClient {
             params.push(("client_secret", s));
             params.push(("grant_type", "client_credentials"));
         } else {
-            anyhow::bail!("Either username/password or client_secret must be provided");
+            return Err(anyhow::anyhow!(
+                "Hint: Provide credentials via --user/--password flags, KEYCLOAK_USER/KEYCLOAK_PASSWORD env vars, or in your config file."
+            )).context("Missing authentication credentials");
         }
 
         debug!("Logging in to {}", redact_url(&url));
