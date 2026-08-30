@@ -92,15 +92,9 @@ pub async fn run(
             env_content.push_str(&format!("{}={}\n", key, value));
         }
 
-        let mut existing_env = String::new();
-        if fs::try_exists(&env_path).await.unwrap_or(false) {
-            #[allow(clippy::collapsible_if)]
-            if let Ok(content) = fs::read_to_string(&env_path).await {
-                existing_env = content;
-                if !existing_env.ends_with('\n') && !existing_env.is_empty() {
-                    existing_env.push('\n');
-                }
-            }
+        let mut existing_env = fs::read_to_string(&env_path).await.unwrap_or_default();
+        if !existing_env.ends_with('\n') && !existing_env.is_empty() {
+            existing_env.push('\n');
         }
 
         let new_content = format!("{}{}", existing_env, env_content);
@@ -122,8 +116,7 @@ async fn write_if_changed_with_mutex(
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
 ) -> Result<()> {
-    if fs::try_exists(path).await.unwrap_or(false) {
-        let existing = fs::read_to_string(path).await.unwrap_or_default();
+    if let Ok(existing) = fs::read_to_string(path).await {
         if existing == content {
             return Ok(());
         }

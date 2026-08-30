@@ -10,3 +10,6 @@
 ## 2024-06-25 - Redundant fs reads in append_secrets
 **Learning:** Checking for file existence before reading, and then reading again later, introduces unnecessary latency and TOCTOU vulnerabilities.
 **Action:** Use `.unwrap_or_default()` directly on `tokio::fs::read_to_string` to avoid the `try_exists` check and cache the read contents in memory instead of re-reading from disk on the same execution path.
+## 2026-11-20 - Redundant fs reads when checking file existence
+**Learning:** Checking for file existence with `fs::try_exists()` and then calling `fs::read_to_string()` requires two system calls (stat and read/open). This causes unnecessary overhead, and creates a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where the file can change between operations.
+**Action:** Remove `try_exists()` checks before file reads. Read the file directly with `fs::read_to_string()` and handle the resulting `Result`. Use `.unwrap_or_default()` if it's acceptable to swallow all errors (like missing optional configs), or match explicitly on `std::io::ErrorKind::NotFound` to safely ignore missing files while retaining context on real I/O errors.
