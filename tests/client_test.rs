@@ -557,13 +557,36 @@ async fn test_delete_client() {
 #[tokio::test]
 async fn test_login_no_credentials() {
     let mut client = KeycloakClient::new("http://localhost".to_string());
+
+    // Case 1: No credentials at all
     let result = client.login("admin-cli", None, None, None).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Missing authentication credentials")
+    );
+    let chain_hints: Vec<_> = err.chain().map(|c| c.to_string()).collect();
+    assert!(chain_hints.iter().any(|c| c.starts_with("Hint:")));
+
+    // Case 2: Only username provided
+    let result = client.login("admin-cli", None, Some("user"), None).await;
     assert!(result.is_err());
     assert!(
         result
             .unwrap_err()
             .to_string()
-            .contains("Either username/password or client_secret must be provided")
+            .contains("Missing authentication credentials")
+    );
+
+    // Case 3: Only password provided
+    let result = client.login("admin-cli", None, None, Some("pass")).await;
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing authentication credentials")
     );
 }
 

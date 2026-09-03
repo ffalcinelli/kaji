@@ -58,6 +58,60 @@ fn test_error_hint_rendering() {
 }
 
 #[test]
+fn test_error_hint_missing_credentials() {
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
+    cmd.arg("--server")
+        .arg("http://localhost:8080")
+        .arg("plan")
+        .arg("--workspace")
+        .arg("tests")
+        .env_remove("KEYCLOAK_USER")
+        .env_remove("KEYCLOAK_PASSWORD")
+        .env_remove("KEYCLOAK_CLIENT_SECRET")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Hint: Provide credentials"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_error_hint_missing_workspace_plan() {
+    let mock_url = start_mock_server().await;
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
+    cmd.arg("--server")
+        .arg(&mock_url)
+        .arg("--user")
+        .arg("admin")
+        .env("KEYCLOAK_PASSWORD", "admin")
+        .arg("plan")
+        .arg("--workspace")
+        .arg("non_existent_dir_123")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Hint: Create the workspace directory",
+        ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_error_hint_missing_workspace_apply() {
+    let mock_url = start_mock_server().await;
+    let mut cmd = Command::cargo_bin("kaji").unwrap();
+    cmd.arg("--server")
+        .arg(&mock_url)
+        .arg("--user")
+        .arg("admin")
+        .env("KEYCLOAK_PASSWORD", "admin")
+        .arg("apply")
+        .arg("--workspace")
+        .arg("non_existent_dir_123")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Hint: Create the workspace directory",
+        ));
+}
+
+#[test]
 fn test_error_nested_rendering() {
     let mut cmd = Command::cargo_bin("kaji").unwrap();
     // Use an operation that guarantees a nested error chain
