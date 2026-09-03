@@ -91,7 +91,13 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
     } = args;
 
     if !workspace_dir.exists() {
-        anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
+        return Err(anyhow::anyhow!(
+            "Hint: Create the workspace directory first or use `kaji init`."
+        )
+        .context(format!(
+            "Input directory {:?} does not exist",
+            workspace_dir
+        )));
     }
 
     let realms = if realms_to_plan.is_empty() {

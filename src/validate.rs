@@ -51,7 +51,13 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
 /// Returns an error if validation fails or a file cannot be parsed.
 pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Result<()> {
     if !fs::try_exists(&workspace_dir).await? {
-        anyhow::bail!("Input directory {:?} does not exist", workspace_dir);
+        return Err(anyhow::anyhow!(
+            "Hint: Create the workspace directory first or use `kaji init`."
+        )
+        .context(format!(
+            "Input directory {:?} does not exist",
+            workspace_dir
+        )));
     }
 
     let realms = if realms_to_validate.is_empty() {
@@ -103,12 +109,12 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
 
 async fn validate_realm_config(workspace_dir: &Path) -> Result<()> {
     let realm_path = workspace_dir.join("realm.yaml");
-    if !fs::try_exists(&realm_path).await? {
-        anyhow::bail!("realm.yaml not found in {:?}", workspace_dir);
-    }
-    let realm_content = fs::read_to_string(&realm_path)
-        .await
-        .context("Failed to read realm.yaml")?;
+    let realm_content = fs::read_to_string(&realm_path).await.with_context(|| {
+        format!(
+            "realm.yaml not found or failed to read in {:?}",
+            workspace_dir
+        )
+    })?;
     let realm: RealmRepresentation =
         serde_yaml::from_str(&realm_content).context("Failed to parse realm.yaml")?;
 

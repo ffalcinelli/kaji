@@ -15,7 +15,11 @@ Which is not very pleasing to the eye or easy to parse for users.
 ## 2026-08-01 - Enhance CLI error hints
 **Learning:** Added visual styling for actionable hints using an 'anyhow' context prefix.
 **Action:** Use `.context("Hint: ...")` for UX guidance in error chains, as the main CLI error handler now parses this prefix to display the text in blue with an INFO emoji.
+## 2023-10-27 - Actionable Hints via Anyhow Context
+**Learning:** `anyhow::Error`'s `context()` method is highly effective for appending actionable hints to generic errors in the CLI. When combined with a global error handler that iterates over `Error::chain()`, a context like `Hint: Run kaji init` is styled cleanly as a nested, causal message without changing the underlying error struct. Also, when embedding backticks in these hints (like `kaji init`), Rust requires raw string literals (`r#"..."#`) to avoid escape character compilation errors.
+**Action:** When adding hints to existing `bail!` or `Result` types, wrap the hint in `anyhow!("Hint: ...")` and attach the original message via `.context()`. Always use `r#""#` for hints containing terminal commands.
 ## 2024-05-18 - Nested Error Hint Formatting with anyhow
 
 **Learning:** When adding actionable hints using `anyhow`, a naive `Err(anyhow::anyhow!("Main Error")).context("Hint: ...")` makes `to_string()` (which `main.rs` uses) hide the main error because `to_string` only prints the outermost context.
 **Action:** To display both the main error and properly style the hint in `kaji`, place the hint inside the inner error (e.g., `anyhow::anyhow!("Hint: ...")`) and wrap the main message in the outer context (`.context("Main error")`). This allows `main.rs`'s global error handler to style the outer error appropriately and detect the nested `"Hint: "` prefix when iterating through the `.chain()`.
+
