@@ -31,7 +31,12 @@ pub struct Cli {
     pub client_id: Option<String>,
 
     /// Keycloak Client Secret (for client credentials grant)
-    #[arg(long, env = "KEYCLOAK_CLIENT_SECRET", global = true, hide_env_values = true)]
+    #[arg(
+        long,
+        env = "KEYCLOAK_CLIENT_SECRET",
+        global = true,
+        hide_env_values = true
+    )]
     pub client_secret: Option<String>,
 
     /// Profile name to load from profiles/ directory
