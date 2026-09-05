@@ -23,3 +23,6 @@ Which is not very pleasing to the eye or easy to parse for users.
 **Learning:** When adding actionable hints using `anyhow`, a naive `Err(anyhow::anyhow!("Main Error")).context("Hint: ...")` makes `to_string()` (which `main.rs` uses) hide the main error because `to_string` only prints the outermost context.
 **Action:** To display both the main error and properly style the hint in `kaji`, place the hint inside the inner error (e.g., `anyhow::anyhow!("Hint: ...")`) and wrap the main message in the outer context (`.context("Main error")`). This allows `main.rs`'s global error handler to style the outer error appropriately and detect the nested `"Hint: "` prefix when iterating through the `.chain()`.
 
+## 2024-05-14 - Global args discoverability
+**Learning:** Adding `global = true` to clap arguments makes them visible in subcommand help menus (e.g. `kaji plan --help`), which significantly improves discoverability for users who might not realize they can pass global options like `--server` or credentials directly to subcommands. It also allows placing global args after the subcommand (e.g., `kaji plan --server ...`), improving ergonomics.
+**Action:** Use `global = true` on top-level shared CLI arguments.
