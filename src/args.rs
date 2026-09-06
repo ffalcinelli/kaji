@@ -11,47 +11,52 @@ pub struct Cli {
     pub command: Commands,
 
     /// Keycloak Server URL
-    #[arg(long, env = "KEYCLOAK_URL")]
+    #[arg(long, env = "KEYCLOAK_URL", global = true)]
     pub server: Option<String>,
 
     /// Keycloak Realms to consider. If empty, all realms are considered.
-    #[arg(long, env = "KEYCLOAK_REALMS", value_delimiter = ',')]
+    #[arg(long, env = "KEYCLOAK_REALMS", global = true, value_delimiter = ',')]
     pub realms: Vec<String>,
 
     /// Keycloak Admin User
-    #[arg(long, env = "KEYCLOAK_USER")]
+    #[arg(long, env = "KEYCLOAK_USER", global = true)]
     pub user: Option<String>,
 
     /// Keycloak Admin Password
-    #[arg(long, env = "KEYCLOAK_PASSWORD", hide_env_values = true)]
+    #[arg(long, env = "KEYCLOAK_PASSWORD", global = true, hide_env_values = true)]
     pub password: Option<String>,
 
     /// Keycloak Client ID (for client credentials grant)
-    #[arg(long, env = "KEYCLOAK_CLIENT_ID")]
+    #[arg(long, env = "KEYCLOAK_CLIENT_ID", global = true)]
     pub client_id: Option<String>,
 
     /// Keycloak Client Secret (for client credentials grant)
-    #[arg(long, env = "KEYCLOAK_CLIENT_SECRET", hide_env_values = true)]
+    #[arg(
+        long,
+        env = "KEYCLOAK_CLIENT_SECRET",
+        global = true,
+        hide_env_values = true
+    )]
     pub client_secret: Option<String>,
 
     /// Profile name to load from profiles/ directory
-    #[arg(long, short = 'p')]
+    #[arg(long, short = 'p', global = true)]
     pub profile: Option<String>,
 
     /// Keycloak request timeout in seconds
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub timeout: Option<u64>,
 
     /// HashiCorp Vault URL
-    #[arg(long, env = "VAULT_ADDR")]
+    #[arg(long, env = "VAULT_ADDR", global = true)]
     pub vault_addr: Option<String>,
 
     /// HashiCorp Vault Token
-    #[arg(long, env = "VAULT_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "VAULT_TOKEN", global = true, hide_env_values = true)]
     pub vault_token: Option<String>,
 
     /// Path to a custom TOML configuration file
-    #[arg(long, env = "KAJI_CONFIG")]
+    #[arg(long, env = "KAJI_CONFIG", global = true)]
     pub config: Option<PathBuf>,
 }
 
