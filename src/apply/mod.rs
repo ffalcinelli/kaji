@@ -207,9 +207,20 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     let realms = if realms_to_apply.is_empty() {
         let mut dirs = Vec::new();
         let mut entries = async_fs::read_dir(&workspace_dir).await?;
+        let mut join_set = JoinSet::new();
         while let Some(entry) = entries.next_entry().await? {
-            if entry.file_type().await?.is_dir() {
-                dirs.push(entry.file_name().to_string_lossy().to_string());
+            join_set.spawn(async move {
+                let is_dir = entry.file_type().await?.is_dir();
+                Ok::<(bool, String), anyhow::Error>((
+                    is_dir,
+                    entry.file_name().to_string_lossy().to_string(),
+                ))
+            });
+        }
+        while let Some(res) = join_set.join_next().await {
+            let (is_dir, name) = res??;
+            if is_dir {
+                dirs.push(name);
             }
         }
         dirs
