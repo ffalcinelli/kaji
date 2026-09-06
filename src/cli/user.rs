@@ -28,17 +28,21 @@ pub async fn change_user_password_yaml(
         .join("users")
         .join(format!("{}.yaml", sanitize(username)));
 
-    if !tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
-        eprintln!(
-            "{} Warning: User file does not exist. Creating a new one.",
-            crate::utils::ui::WARN
-        );
-        create_user_yaml(workspace_dir, realm, username, None, None, None).await?;
-    }
+    let yaml_content = match fs::read_to_string(&file_path).await {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "{} Warning: User file does not exist. Creating a new one.",
+                crate::utils::ui::WARN
+            );
+            create_user_yaml(workspace_dir, realm, username, None, None, None).await?;
+            fs::read_to_string(&file_path)
+                .await
+                .context("Failed to read newly created user YAML file")?
+        }
+        Err(e) => return Err(anyhow::Error::from(e).context("Failed to read user YAML file")),
+    };
 
-    let yaml_content = fs::read_to_string(&file_path)
-        .await
-        .context("Failed to read user YAML file")?;
     let mut user: UserRepresentation =
         serde_yaml::from_str(&yaml_content).context("Failed to parse user YAML file")?;
 

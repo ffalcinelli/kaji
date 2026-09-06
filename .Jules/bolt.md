@@ -13,3 +13,6 @@
 ## 2026-11-20 - Redundant fs reads when checking file existence
 **Learning:** Checking for file existence with `fs::try_exists()` and then calling `fs::read_to_string()` requires two system calls (stat and read/open). This causes unnecessary overhead, and creates a Time-of-Check to Time-of-Use (TOCTOU) vulnerability where the file can change between operations.
 **Action:** Remove `try_exists()` checks before file reads. Read the file directly with `fs::read_to_string()` and handle the resulting `Result`. Use `.unwrap_or_default()` if it's acceptable to swallow all errors (like missing optional configs), or match explicitly on `std::io::ErrorKind::NotFound` to safely ignore missing files while retaining context on real I/O errors.
+## 2024-05-24 - Async IO TOCTOU and concurrent tasks
+**Learning:** Checking for file existence before reading with `fs::try_exists()` -> `fs::read()` is a common anti-pattern in async Rust. It causes an extra I/O operation and is vulnerable to TOCTOU.
+**Action:** Instead, just attempt to read the file directly and handle the `std::io::ErrorKind::NotFound` error. Also, `tokio::fs::read_dir` sequential metadata fetches with `file_type().await` can be painfully slow for large directories. Using `tokio::task::JoinSet::spawn` to check file types in parallel offers a massive speedup when scanning a workspace directory.

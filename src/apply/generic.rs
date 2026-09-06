@@ -451,9 +451,11 @@ pub async fn append_secrets(
         return Ok(());
     }
 
-    let mut content = tokio::fs::read_to_string(secrets_path)
-        .await
-        .unwrap_or_default();
+    let mut content = match tokio::fs::read_to_string(secrets_path).await {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
 
     let mut existing = std::collections::HashMap::new();
     for line in content.lines() {
@@ -462,18 +464,19 @@ pub async fn append_secrets(
         }
     }
 
-    let mut to_append = String::new();
+    let mut appended = false;
     for (k, v) in new_secrets {
         if !existing.contains_key(k) {
-            to_append.push_str(&format!("{}={}\n", k, v));
+            if !content.is_empty() && !content.ends_with('\n') {
+                content.push('\n');
+            }
+            use std::fmt::Write;
+            let _ = writeln!(&mut content, "{}={}", k, v);
+            appended = true;
         }
     }
 
-    if !to_append.is_empty() {
-        if !content.is_empty() && !content.ends_with('\n') {
-            content.push('\n');
-        }
-        content.push_str(&to_append);
+    if appended {
         crate::utils::write_secure(secrets_path, &content).await?;
     }
     Ok(())

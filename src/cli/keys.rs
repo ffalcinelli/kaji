@@ -29,14 +29,12 @@ pub async fn rotate_keys_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Resul
 pub async fn rotate_keys_yaml(workspace_dir: &Path, realm: &str) -> Result<usize> {
     let keys_dir = workspace_dir.join(sanitize(realm)).join("components");
 
-    if !tokio::fs::try_exists(&keys_dir).await.unwrap_or(false) {
-        return Ok(0);
-    }
-
     let mut rotated_count = 0;
-    let mut entries = fs::read_dir(&keys_dir)
-        .await
-        .context("Failed to read components directory")?;
+    let mut entries = match fs::read_dir(&keys_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(anyhow::Error::from(e).context("Failed to read components directory")),
+    };
 
     while let Some(entry) = entries
         .next_entry()

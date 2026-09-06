@@ -130,19 +130,25 @@ pub async fn prompt_realm(workspace_dir: &std::path::Path, ui: &dyn Ui) -> Resul
 /// Helper to scan workspace for directories (representing realms)
 pub async fn get_realms(workspace_dir: &std::path::Path) -> Result<Vec<String>> {
     let mut realms = Vec::new();
-    if tokio::fs::try_exists(workspace_dir).await.unwrap_or(false) {
-        let mut entries = tokio::fs::read_dir(workspace_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.is_dir()
-                && let Some(name) = path.file_name()
-            {
-                let name_str = name.to_string_lossy().to_string();
-                if !name_str.starts_with('.') && name_str != "profiles" && name_str != "target" {
-                    realms.push(name_str);
+    match tokio::fs::read_dir(workspace_dir).await {
+        Ok(mut entries) => {
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.is_dir()
+                    && let Some(name) = path.file_name()
+                {
+                    let name_str = name.to_string_lossy().to_string();
+                    if !name_str.starts_with('.') && name_str != "profiles" && name_str != "target"
+                    {
+                        realms.push(name_str);
+                    }
                 }
             }
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(realms);
+        }
+        Err(e) => return Err(e.into()),
     }
     realms.sort();
     Ok(realms)
