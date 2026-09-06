@@ -138,7 +138,8 @@ pub async fn get_realms(workspace_dir: &std::path::Path) -> Result<Vec<String>> 
                     && let Some(name) = path.file_name()
                 {
                     let name_str = name.to_string_lossy().to_string();
-                    if !name_str.starts_with('.') && name_str != "profiles" && name_str != "target" {
+                    if !name_str.starts_with('.') && name_str != "profiles" && name_str != "target"
+                    {
                         realms.push(name_str);
                     }
                 }
