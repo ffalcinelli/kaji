@@ -451,9 +451,11 @@ pub async fn append_secrets(
         return Ok(());
     }
 
-    let mut content = tokio::fs::read_to_string(secrets_path)
-        .await
-        .unwrap_or_default();
+    let mut content = match tokio::fs::read_to_string(secrets_path).await {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
 
     let mut existing = std::collections::HashMap::new();
     for line in content.lines() {

@@ -238,112 +238,150 @@ client_id = "toml-client-id"
 
 #[tokio::test]
 async fn test_run_app_init() -> Result<()> {
-    let _lock = RUN_APP_TEST_MUTEX.lock().await;
-    let dir = tempdir().unwrap();
-    let config_path = dir.path().join("my_scaffolded_kaji.toml");
+    if std::env::var("RUN_TEST_RUN_APP_INIT").is_ok() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("my_scaffolded_kaji.toml");
 
-    unsafe {
-        std::env::set_var("KEYCLOAK_URL", "http://myhost:8080");
+        let cli = Cli {
+            command: Commands::Init {
+                interactive: false,
+                output: Some(config_path.clone()),
+            },
+            server: None,
+            realms: vec![],
+            user: None,
+            password: None,
+            client_id: None,
+            client_secret: None,
+            profile: None,
+            timeout: None,
+            vault_addr: None,
+            vault_token: None,
+            config: None,
+        };
+
+        run_app(cli).await.unwrap();
+
+        assert!(config_path.exists());
+        let content = std::fs::read_to_string(&config_path)?;
+        assert!(content.contains("server = \"http://myhost:8080\""));
+        std::process::exit(0);
     }
 
-    let cli = Cli {
-        command: Commands::Init {
-            interactive: false,
-            output: Some(config_path.clone()),
-        },
-        server: None,
-        realms: vec![],
-        user: None,
-        password: None,
-        client_id: None,
-        client_secret: None,
-        profile: None,
-        timeout: None,
-        vault_addr: None,
-        vault_token: None,
-        config: None,
-    };
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new(exe)
+        .arg("test_run_app_init")
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("RUN_TEST_RUN_APP_INIT", "1")
+        .env("KEYCLOAK_URL", "http://myhost:8080")
+        .output()
+        .unwrap();
 
-    let res = run_app(cli).await;
-
-    unsafe {
-        std::env::remove_var("KEYCLOAK_URL");
-    }
-
-    res?;
-
-    assert!(config_path.exists());
-    let content = std::fs::read_to_string(&config_path)?;
-    assert!(content.contains("server = \"http://myhost:8080\""));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("running 1 test"),
+        "Subprocess didn't run the test. Output: {}",
+        stdout
+    );
+    assert!(output.status.success(), "Subprocess failed: {:?}", output);
     Ok(())
 }
 
 #[tokio::test]
 async fn test_run_app_cli_errors_non_tty() -> Result<()> {
-    let _lock = RUN_APP_TEST_MUTEX.lock().await;
-    unsafe {
-        std::env::set_var("KAJI_TEST", "true");
-    }
-    let dir = tempdir().unwrap();
-    let workspace = dir.path().to_path_buf();
+    if std::env::var("RUN_TEST_RUN_APP_CLI_ERRORS_NON_TTY").is_ok() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().to_path_buf();
 
-    let cli = Cli {
-        command: Commands::Cli {
-            workspace: Some(workspace),
-        },
-        server: None,
-        realms: vec![],
-        user: None,
-        password: None,
-        client_id: None,
-        client_secret: None,
-        profile: None,
-        timeout: None,
-        vault_addr: None,
-        vault_token: None,
-        config: None,
-    };
+        let cli = Cli {
+            command: Commands::Cli {
+                workspace: Some(workspace),
+            },
+            server: None,
+            realms: vec![],
+            user: None,
+            password: None,
+            client_id: None,
+            client_secret: None,
+            profile: None,
+            timeout: None,
+            vault_addr: None,
+            vault_token: None,
+            config: None,
+        };
 
-    let result = run_app(cli).await;
-    unsafe {
-        std::env::remove_var("KAJI_TEST");
+        let result = run_app(cli).await;
+        assert!(result.is_ok());
+        std::process::exit(0);
     }
-    assert!(result.is_ok());
+
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new(exe)
+        .arg("test_run_app_cli_errors_non_tty")
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("RUN_TEST_RUN_APP_CLI_ERRORS_NON_TTY", "1")
+        .env("KAJI_TEST", "true")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("running 1 test"),
+        "Subprocess didn't run the test. Output: {}",
+        stdout
+    );
+    assert!(output.status.success(), "Subprocess failed: {:?}", output);
     Ok(())
 }
 
 #[tokio::test]
 async fn test_run_app_clean_interactive_abort() -> Result<()> {
-    let _lock = RUN_APP_TEST_MUTEX.lock().await;
-    unsafe {
-        std::env::set_var("KAJI_TEST", "true");
-    }
-    let dir = tempdir().unwrap();
-    let workspace = dir.path().to_path_buf();
+    if std::env::var("RUN_TEST_RUN_APP_CLEAN_INTERACTIVE_ABORT").is_ok() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().to_path_buf();
 
-    let cli = Cli {
-        command: Commands::Clean {
-            workspace: Some(workspace),
-            yes: false,
-        },
-        server: Some("http://localhost:8080".to_string()),
-        realms: vec![],
-        user: None,
-        password: None,
-        client_id: Some("admin-cli".to_string()),
-        client_secret: None,
-        profile: None,
-        timeout: None,
-        vault_addr: None,
-        vault_token: None,
-        config: None,
-    };
+        let cli = Cli {
+            command: Commands::Clean {
+                workspace: Some(workspace),
+                yes: false,
+            },
+            server: Some("http://localhost:8080".to_string()),
+            realms: vec![],
+            user: None,
+            password: None,
+            client_id: Some("admin-cli".to_string()),
+            client_secret: None,
+            profile: None,
+            timeout: None,
+            vault_addr: None,
+            vault_token: None,
+            config: None,
+        };
 
-    let result = run_app(cli).await;
-    unsafe {
-        std::env::remove_var("KAJI_TEST");
+        let result = run_app(cli).await;
+        assert!(result.is_err());
+        std::process::exit(0);
     }
-    assert!(result.is_err());
+
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new(exe)
+        .arg("test_run_app_clean_interactive_abort")
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("RUN_TEST_RUN_APP_CLEAN_INTERACTIVE_ABORT", "1")
+        .env("KAJI_TEST", "true")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("running 1 test"),
+        "Subprocess didn't run the test. Output: {}",
+        stdout
+    );
+    assert!(output.status.success(), "Subprocess failed: {:?}", output);
     Ok(())
 }
 

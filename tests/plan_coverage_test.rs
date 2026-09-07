@@ -227,36 +227,53 @@ async fn test_plan_resources_with_secrets() {
     fs::create_dir_all(&realm_dir).unwrap();
 
     // Use environment variable for secret
-    unsafe {
-        std::env::set_var("KEYCLOAK_ROLE_DESC", "Secret Description");
-    }
-
-    let roles_dir = realm_dir.join("roles");
-    fs::create_dir_all(&roles_dir).unwrap();
-    let role_yaml = "
+    if std::env::var("RUN_TEST_PLAN_RESOURCES_WITH_SECRETS").is_ok() {
+        let roles_dir = realm_dir.join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+        let role_yaml = "
 name: secret-role
 description: ${KEYCLOAK_ROLE_DESC}
 ";
-    let role_path = roles_dir.join("secret-role.yaml");
-    fs::write(&role_path, role_yaml).unwrap();
+        let role_path = roles_dir.join("secret-role.yaml");
+        fs::write(&role_path, role_yaml).unwrap();
 
-    let res = plan::run(plan::PlanArgs {
-        client: &client,
-        workspace_dir: workspace_dir.clone(),
-        changes_only: false,
-        interactive: false,
-        realms_to_plan: &["test-realm".to_string()],
-        ui: Arc::new(DialoguerUi::new()),
-        resolver: resolver.clone(),
-        profile: None,
-    })
-    .await;
-    assert!(res.is_ok());
+        let res = plan::run(plan::PlanArgs {
+            client: &client,
+            workspace_dir: workspace_dir.clone(),
+            changes_only: false,
+            interactive: false,
+            realms_to_plan: &["test-realm".to_string()],
+            ui: Arc::new(DialoguerUi::new()),
+            resolver: resolver.clone(),
+            profile: None,
+        })
+        .await;
+        assert!(res.is_ok());
 
-    let plan_file = workspace_dir.join(".kajiplan");
-    assert!(plan_file.exists());
-    let plan_content = fs::read_to_string(plan_file).unwrap();
-    assert!(plan_content.contains("test-realm/roles/secret-role.yaml"));
+        let plan_file = workspace_dir.join(".kajiplan");
+        assert!(plan_file.exists());
+        let plan_content = fs::read_to_string(plan_file).unwrap();
+        assert!(plan_content.contains("test-realm/roles/secret-role.yaml"));
+        std::process::exit(0);
+    }
+
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new(exe)
+        .arg("test_plan_resources_with_secrets")
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("RUN_TEST_PLAN_RESOURCES_WITH_SECRETS", "1")
+        .env("KEYCLOAK_ROLE_DESC", "Secret Description")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("running 1 test"),
+        "Subprocess didn't run the test. Output: {}",
+        stdout
+    );
+    assert!(output.status.success(), "Subprocess failed: {:?}", output);
 }
 
 #[tokio::test]

@@ -164,94 +164,115 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_non_interactive_empty() {
-        let dir = tempdir().unwrap();
-        let output_path = dir.path().join("kaji.toml");
+        if std::env::var("RUN_TEST_INIT_NON_INTERACTIVE_EMPTY").is_ok() {
+            let dir = tempdir().unwrap();
+            let output_path = dir.path().join("kaji.toml");
 
-        let ui = MockUi {
-            inputs: Mutex::new(vec![]),
-            confirms: Mutex::new(vec![]),
-            selects: Mutex::new(vec![]),
-            passwords: Mutex::new(vec![]),
-        };
+            let ui = MockUi {
+                inputs: Mutex::new(vec![]),
+                confirms: Mutex::new(vec![]),
+                selects: Mutex::new(vec![]),
+                passwords: Mutex::new(vec![]),
+            };
 
-        // Clear environment variables that might interfere
-        unsafe {
-            std::env::remove_var("KEYCLOAK_URL");
-            std::env::remove_var("KEYCLOAK_REALMS");
-            std::env::remove_var("KEYCLOAK_USER");
-            std::env::remove_var("KEYCLOAK_CLIENT_ID");
-            std::env::remove_var("KAJI_PROFILE");
-            std::env::remove_var("VAULT_ADDR");
-            std::env::remove_var("VAULT_TOKEN");
-            std::env::remove_var("KAJI_WORKSPACE");
+            run(false, Some(output_path.clone()), &ui).await.unwrap();
+
+            assert!(output_path.exists());
+            let content = tokio::fs::read_to_string(&output_path).await.unwrap();
+            let config: Config = toml::from_str(&content).unwrap();
+            assert!(config.server.is_none());
+            assert!(config.realms.is_none());
+            assert!(config.user.is_none());
+            assert!(config.client_id.is_none());
+            assert!(config.profile.is_none());
+            assert!(config.vault_addr.is_none());
+            assert!(config.vault_token.is_none());
+            assert!(config.workspace.is_none());
+            std::process::exit(0);
         }
 
-        run(false, Some(output_path.clone()), &ui).await.unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new(exe)
+            .arg("init::tests::test_run_non_interactive_empty")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("RUN_TEST_INIT_NON_INTERACTIVE_EMPTY", "1")
+            .env_remove("KEYCLOAK_URL")
+            .env_remove("KEYCLOAK_REALMS")
+            .env_remove("KEYCLOAK_USER")
+            .env_remove("KEYCLOAK_CLIENT_ID")
+            .env_remove("KAJI_PROFILE")
+            .env_remove("VAULT_ADDR")
+            .env_remove("VAULT_TOKEN")
+            .env_remove("KAJI_WORKSPACE")
+            .output()
+            .unwrap();
 
-        assert!(output_path.exists());
-        let content = tokio::fs::read_to_string(&output_path).await.unwrap();
-        let config: Config = toml::from_str(&content).unwrap();
-        assert!(config.server.is_none());
-        assert!(config.realms.is_none());
-        assert!(config.user.is_none());
-        assert!(config.client_id.is_none());
-        assert!(config.profile.is_none());
-        assert!(config.vault_addr.is_none());
-        assert!(config.vault_token.is_none());
-        assert!(config.workspace.is_none());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
+        );
+        assert!(output.status.success(), "Subprocess failed: {:?}", output);
     }
 
     #[tokio::test]
     async fn test_run_non_interactive_prefilled() {
-        let dir = tempdir().unwrap();
-        let output_path = dir.path().join("kaji.toml");
+        if std::env::var("RUN_TEST_INIT_NON_INTERACTIVE_PREFILLED").is_ok() {
+            let dir = tempdir().unwrap();
+            let output_path = dir.path().join("kaji.toml");
 
-        let ui = MockUi {
-            inputs: Mutex::new(vec![]),
-            confirms: Mutex::new(vec![]),
-            selects: Mutex::new(vec![]),
-            passwords: Mutex::new(vec![]),
-        };
+            let ui = MockUi {
+                inputs: Mutex::new(vec![]),
+                confirms: Mutex::new(vec![]),
+                selects: Mutex::new(vec![]),
+                passwords: Mutex::new(vec![]),
+            };
 
-        unsafe {
-            std::env::set_var("KEYCLOAK_URL", "http://localhost:8080");
-            std::env::set_var("KEYCLOAK_REALMS", "master,dev");
-            std::env::set_var("KEYCLOAK_USER", "admin");
-            std::env::set_var("KEYCLOAK_CLIENT_ID", "my-client");
-            std::env::set_var("KAJI_PROFILE", "staging");
-            std::env::set_var("VAULT_ADDR", "http://vault:8200");
-            std::env::set_var("VAULT_TOKEN", "s.token123");
-            std::env::set_var("KAJI_WORKSPACE", "custom-ws");
+            run(false, Some(output_path.clone()), &ui).await.unwrap();
+
+            assert!(output_path.exists());
+            let content = tokio::fs::read_to_string(&output_path).await.unwrap();
+            let config: Config = toml::from_str(&content).unwrap();
+            assert_eq!(config.server, Some("http://localhost:8080".to_string()));
+            assert_eq!(
+                config.realms,
+                Some(vec!["master".to_string(), "dev".to_string()])
+            );
+            assert_eq!(config.user, Some("admin".to_string()));
+            assert_eq!(config.client_id, Some("my-client".to_string()));
+            assert_eq!(config.profile, Some("staging".to_string()));
+            assert_eq!(config.vault_addr, Some("http://vault:8200".to_string()));
+            assert_eq!(config.vault_token, Some("s.token123".to_string()));
+            assert_eq!(config.workspace, Some(PathBuf::from("custom-ws")));
+            std::process::exit(0);
         }
 
-        run(false, Some(output_path.clone()), &ui).await.unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new(exe)
+            .arg("init::tests::test_run_non_interactive_prefilled")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("RUN_TEST_INIT_NON_INTERACTIVE_PREFILLED", "1")
+            .env("KEYCLOAK_URL", "http://localhost:8080")
+            .env("KEYCLOAK_REALMS", "master,dev")
+            .env("KEYCLOAK_USER", "admin")
+            .env("KEYCLOAK_CLIENT_ID", "my-client")
+            .env("KAJI_PROFILE", "staging")
+            .env("VAULT_ADDR", "http://vault:8200")
+            .env("VAULT_TOKEN", "s.token123")
+            .env("KAJI_WORKSPACE", "custom-ws")
+            .output()
+            .unwrap();
 
-        // Cleanup env
-        unsafe {
-            std::env::remove_var("KEYCLOAK_URL");
-            std::env::remove_var("KEYCLOAK_REALMS");
-            std::env::remove_var("KEYCLOAK_USER");
-            std::env::remove_var("KEYCLOAK_CLIENT_ID");
-            std::env::remove_var("KAJI_PROFILE");
-            std::env::remove_var("VAULT_ADDR");
-            std::env::remove_var("VAULT_TOKEN");
-            std::env::remove_var("KAJI_WORKSPACE");
-        }
-
-        assert!(output_path.exists());
-        let content = tokio::fs::read_to_string(&output_path).await.unwrap();
-        let config: Config = toml::from_str(&content).unwrap();
-        assert_eq!(config.server, Some("http://localhost:8080".to_string()));
-        assert_eq!(
-            config.realms,
-            Some(vec!["master".to_string(), "dev".to_string()])
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
         );
-        assert_eq!(config.user, Some("admin".to_string()));
-        assert_eq!(config.client_id, Some("my-client".to_string()));
-        assert_eq!(config.profile, Some("staging".to_string()));
-        assert_eq!(config.vault_addr, Some("http://vault:8200".to_string()));
-        assert_eq!(config.vault_token, Some("s.token123".to_string()));
-        assert_eq!(config.workspace, Some(PathBuf::from("custom-ws")));
+        assert!(output.status.success(), "Subprocess failed: {:?}", output);
     }
 
     #[tokio::test]
@@ -281,49 +302,66 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_interactive_happy_path() {
-        let dir = tempdir().unwrap();
-        let output_path = dir.path().join("kaji.toml");
+        if std::env::var("RUN_TEST_INIT_INTERACTIVE_HAPPY_PATH").is_ok() {
+            let dir = tempdir().unwrap();
+            let output_path = dir.path().join("kaji.toml");
 
-        let ui = MockUi {
-            inputs: Mutex::new(vec![
-                "http://keycloak.test".to_string(),
-                "test-realm".to_string(),
-                "test-user".to_string(),
-                "test-client".to_string(),
-                "test-profile".to_string(),
-                "http://vault.test".to_string(),
-                "vault-tok".to_string(),
-                "my-workspace-dir".to_string(),
-            ]),
-            confirms: Mutex::new(vec![]),
-            selects: Mutex::new(vec![]),
-            passwords: Mutex::new(vec![]),
-        };
+            let ui = MockUi {
+                inputs: Mutex::new(vec![
+                    "http://keycloak.test".to_string(),
+                    "test-realm".to_string(),
+                    "test-user".to_string(),
+                    "test-client".to_string(),
+                    "test-profile".to_string(),
+                    "http://vault.test".to_string(),
+                    "vault-tok".to_string(),
+                    "my-workspace-dir".to_string(),
+                ]),
+                confirms: Mutex::new(vec![]),
+                selects: Mutex::new(vec![]),
+                passwords: Mutex::new(vec![]),
+            };
 
-        unsafe {
-            std::env::remove_var("KEYCLOAK_URL");
-            std::env::remove_var("KEYCLOAK_REALMS");
-            std::env::remove_var("KEYCLOAK_USER");
-            std::env::remove_var("KEYCLOAK_CLIENT_ID");
-            std::env::remove_var("KAJI_PROFILE");
-            std::env::remove_var("VAULT_ADDR");
-            std::env::remove_var("VAULT_TOKEN");
-            std::env::remove_var("KAJI_WORKSPACE");
+            run(true, Some(output_path.clone()), &ui).await.unwrap();
+
+            assert!(output_path.exists());
+            let content = tokio::fs::read_to_string(&output_path).await.unwrap();
+            let config: Config = toml::from_str(&content).unwrap();
+            assert_eq!(config.server, Some("http://keycloak.test".to_string()));
+            assert_eq!(config.realms, Some(vec!["test-realm".to_string()]));
+            assert_eq!(config.user, Some("test-user".to_string()));
+            assert_eq!(config.client_id, Some("test-client".to_string()));
+            assert_eq!(config.profile, Some("test-profile".to_string()));
+            assert_eq!(config.vault_addr, Some("http://vault.test".to_string()));
+            assert_eq!(config.vault_token, Some("vault-tok".to_string()));
+            assert_eq!(config.workspace, Some(PathBuf::from("my-workspace-dir")));
+            std::process::exit(0);
         }
 
-        run(true, Some(output_path.clone()), &ui).await.unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let output = std::process::Command::new(exe)
+            .arg("init::tests::test_run_interactive_happy_path")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("RUN_TEST_INIT_INTERACTIVE_HAPPY_PATH", "1")
+            .env_remove("KEYCLOAK_URL")
+            .env_remove("KEYCLOAK_REALMS")
+            .env_remove("KEYCLOAK_USER")
+            .env_remove("KEYCLOAK_CLIENT_ID")
+            .env_remove("KAJI_PROFILE")
+            .env_remove("VAULT_ADDR")
+            .env_remove("VAULT_TOKEN")
+            .env_remove("KAJI_WORKSPACE")
+            .output()
+            .unwrap();
 
-        assert!(output_path.exists());
-        let content = tokio::fs::read_to_string(&output_path).await.unwrap();
-        let config: Config = toml::from_str(&content).unwrap();
-        assert_eq!(config.server, Some("http://keycloak.test".to_string()));
-        assert_eq!(config.realms, Some(vec!["test-realm".to_string()]));
-        assert_eq!(config.user, Some("test-user".to_string()));
-        assert_eq!(config.client_id, Some("test-client".to_string()));
-        assert_eq!(config.profile, Some("test-profile".to_string()));
-        assert_eq!(config.vault_addr, Some("http://vault.test".to_string()));
-        assert_eq!(config.vault_token, Some("vault-tok".to_string()));
-        assert_eq!(config.workspace, Some(PathBuf::from("my-workspace-dir")));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("running 1 test"),
+            "Subprocess didn't run the test. Output: {}",
+            stdout
+        );
+        assert!(output.status.success(), "Subprocess failed: {:?}", output);
     }
 
     #[tokio::test]
