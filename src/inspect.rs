@@ -92,7 +92,11 @@ pub async fn run(
             env_content.push_str(&format!("{}={}\n", key, value));
         }
 
-        let mut existing_env = fs::read_to_string(&env_path).await.unwrap_or_default();
+        let mut existing_env = match fs::read_to_string(&env_path).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        };
         if !existing_env.ends_with('\n') && !existing_env.is_empty() {
             existing_env.push('\n');
         }
