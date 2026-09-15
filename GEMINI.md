@@ -16,8 +16,8 @@ This document serves as the internal developer guide for `kaji`. It explains the
 -   `src/client.rs`: Low-level wrapper for the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for Keycloak resources.
 -   `src/models.rs`: Serde-based representations of Keycloak resources. Defines the `KeycloakResource` and `ResourceMeta` traits for generic resource management.
 -   `src/inspect.rs`: Deep-scans the remote Keycloak server and serializes resources into local files using a **generic, parallelized inspection pipeline**. (Supported CLI aliases: `sync`, `pull`, `export`).
--   `src/plan/`: Contains the logic for calculating diffs. Uses a **generic planning engine** (`generic.rs`) for most resource types.
--   `src/apply/`: Contains the logic for applying changes. Uses a **generic reconciliation engine** (`generic.rs`) and a **staged application pipeline** to ensure reliability.
+-   `src/plan/`: Contains the logic for calculating diffs. Uses a **generic planning engine** (`generic.rs`) for most resource types. Also runs a **sub-flow collision check** for authentication flows: warns when a "to create" flow is referenced as a `flowAlias` inside another local flow (indicating Keycloak may auto-create it during apply, potentially causing a 409 Conflict).
+-   `src/apply/`: Contains the logic for applying changes. Uses a **generic reconciliation engine** (`generic.rs`) and a **staged application pipeline** to ensure reliability. **Automatically runs `validate` before any API calls.**
 -   `src/utils/secrets/`: Manages secret resolution (Env, Vault, etc.).
 -   `src/utils/yaml.rs`: Handles YAML deep-merging and profile-specific overlays.
 -   `src/utils/ui.rs`: Centralized module for CLI output formatting, emoji management, and **indicatif progress bars**.
