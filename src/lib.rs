@@ -238,6 +238,22 @@ async fn handle_apply(
     review: bool,
     prune: bool,
 ) -> Result<()> {
+    // 1. Validate local workspace before touching Keycloak (pure file I/O — no network)
+    eprintln!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Validating Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    validate::run(workspace.to_path_buf(), &cli.realms)
+        .await
+        .context("Pre-apply validation failed. Fix the issues above before running apply.")?;
+
+    // 2. Connect to Keycloak and apply
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
     eprintln!(

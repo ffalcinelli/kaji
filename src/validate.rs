@@ -242,16 +242,41 @@ fn validate_users(users: &[(PathBuf, UserRepresentation)]) -> Result<()> {
     Ok(())
 }
 
+/// Characters forbidden by Keycloak in authentication flow alias names.
+const FLOW_ALIAS_FORBIDDEN_CHARS: &[char] = &['(', ')', '[', ']', '{', '}', '/', '\\'];
+
 fn validate_authentication_flows(
     flows: &[(PathBuf, AuthenticationFlowRepresentation)],
 ) -> Result<()> {
+    let mut seen_aliases = HashSet::new();
     for (path, flow) in flows {
-        if flow.alias.as_deref().unwrap_or_default().is_empty() {
+        let alias = flow.alias.as_deref().unwrap_or_default();
+        if alias.is_empty() {
             anyhow::bail!(
                 "Authentication Flow alias is missing or empty in {:?}",
                 path
             );
         }
+        if let Some(bad_char) = alias
+            .chars()
+            .find(|c| FLOW_ALIAS_FORBIDDEN_CHARS.contains(c))
+        {
+            anyhow::bail!(
+                "Authentication Flow alias '{}' contains forbidden character '{}' \
+                 (not allowed by Keycloak) in {:?}",
+                alias,
+                bad_char,
+                path
+            );
+        }
+        if seen_aliases.contains(alias) {
+            anyhow::bail!(
+                "Duplicate Authentication Flow alias '{}' found in {:?}",
+                alias,
+                path
+            );
+        }
+        seen_aliases.insert(alias.to_string());
     }
     eprintln!(
         "  {} {} {}",
@@ -380,4 +405,88 @@ async fn validate_components_in_dir(workspace_dir: &Path, dir_name: &str) -> Res
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::AuthenticationFlowRepresentation;
+    use std::collections::HashMap;
+
+    fn make_flow(alias: &str) -> (PathBuf, AuthenticationFlowRepresentation) {
+        (
+            PathBuf::from(format!("{}.yaml", alias)),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some(alias.to_string()),
+                description: None,
+                provider_id: None,
+                top_level: None,
+                built_in: None,
+                authentication_executions: None,
+                extra: HashMap::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn test_validate_flow_alias_forbidden_char_parens() {
+        let flows = vec![make_flow("Step Up (combined) Context Selection")];
+        let result = validate_authentication_flows(&flows);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("forbidden character"),
+            "Expected 'forbidden character' in: {err}"
+        );
+        assert!(err.contains('('), "Expected the bad char in: {err}");
+    }
+
+    #[test]
+    fn test_validate_flow_alias_forbidden_char_slash() {
+        let flows = vec![make_flow("My/Flow")];
+        let result = validate_authentication_flows(&flows);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("forbidden character")
+        );
+    }
+
+    #[test]
+    fn test_validate_flow_alias_duplicate() {
+        let flows = vec![
+            make_flow("MyFlow"),
+            make_flow("OtherFlow"),
+            make_flow("MyFlow"),
+        ];
+        let result = validate_authentication_flows(&flows);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Duplicate"), "Expected 'Duplicate' in: {err}");
+        assert!(err.contains("MyFlow"), "Expected alias name in: {err}");
+    }
+
+    #[test]
+    fn test_validate_flow_alias_empty() {
+        let flows = vec![make_flow("")];
+        let result = validate_authentication_flows(&flows);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing or empty"));
+    }
+
+    #[test]
+    fn test_validate_flow_alias_valid() {
+        let flows = vec![
+            make_flow("browser"),
+            make_flow("Step Up MFA L4"),
+            make_flow("My-Flow_v2.0"),
+        ];
+        assert!(
+            validate_authentication_flows(&flows).is_ok(),
+            "Valid aliases should pass without error"
+        );
+    }
 }

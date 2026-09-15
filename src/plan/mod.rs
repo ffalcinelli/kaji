@@ -18,11 +18,13 @@ macro_rules! plan_generic_resources {
 use crate::client::KeycloakClient;
 use crate::utils::secrets::{SecretResolver, obfuscate_secrets};
 use crate::utils::ui::{ACTION, CHECK, MEMO, Ui, WARN};
+use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use console::{Style, style};
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
@@ -218,8 +220,97 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
 use crate::models::{
     AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
     ClientScopeRepresentation, GroupRepresentation, IdentityProviderRepresentation,
-    RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
+    KeycloakResource, RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
 };
+
+/// Checks whether any authentication flow that is marked "to create" is also referenced as a
+/// sub-flow (`flowAlias`) inside another local flow's executions.
+///
+/// When Keycloak processes the parent flow during `apply`, it may auto-create the sub-flow,
+/// causing a `409 Conflict` when `kaji` subsequently tries to create it explicitly.
+///
+/// This function emits a warning for each such collision so the user can act before running
+/// `apply`. If `apply` does fail with 409, running `kaji plan` again will re-fetch remote state
+/// and correctly show the auto-created flow as "to update" instead of "to create".
+async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
+    let flows_dir = ctx
+        .workspace_dir
+        .join(AuthenticationFlowRepresentation::DIR_NAME);
+    if !async_fs::try_exists(&flows_dir).await? {
+        return Ok(());
+    }
+
+    // 1. Load all local flow representations from YAML files.
+    let mut local_flows: Vec<AuthenticationFlowRepresentation> = Vec::new();
+    let mut entries = async_fs::read_dir(&flows_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "yaml") {
+            continue;
+        }
+        if is_overlay_file(&path, ctx.profile.as_deref()) {
+            continue;
+        }
+        let val = load_yaml_with_overlay(&path, ctx.profile.as_deref()).await?;
+        if let Ok(flow) = serde_json::from_value::<AuthenticationFlowRepresentation>(val) {
+            local_flows.push(flow);
+        }
+    }
+    if local_flows.is_empty() {
+        return Ok(());
+    }
+
+    // 2. Fetch remote flows to determine which local flows are "to create" (not yet in Keycloak).
+    let remote_flows = ctx
+        .client
+        .get_resources::<AuthenticationFlowRepresentation>()
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to fetch authentication flows for realm '{}' during sub-flow collision check",
+                ctx.realm_name
+            )
+        })?;
+    let remote_aliases: HashSet<String> = remote_flows
+        .iter()
+        .filter_map(|f| f.get_identity())
+        .collect();
+
+    let to_create: HashSet<String> = local_flows
+        .iter()
+        .filter_map(|f| f.alias.clone())
+        .filter(|alias| !remote_aliases.contains(alias))
+        .collect();
+
+    if to_create.is_empty() {
+        return Ok(());
+    }
+
+    // 3. Warn for every "to create" flow that is referenced as a sub-flow by another local flow.
+    for flow in &local_flows {
+        let Some(executions) = &flow.authentication_executions else {
+            continue;
+        };
+        for exec in executions {
+            let Some(sub_alias) = &exec.flow_alias else {
+                continue;
+            };
+            if to_create.contains(sub_alias.as_str()) {
+                let parent = flow.alias.as_deref().unwrap_or("unknown");
+                eprintln!(
+                    "\n{} Authentication flow '{}' is marked to CREATE but is also \
+                     referenced as a sub-flow inside local flow '{}'. \
+                     Keycloak may auto-create it when '{}' is applied, \
+                     potentially causing a 409 Conflict on apply. \
+                     If apply fails, run `kaji plan` again to reconcile.",
+                    WARN, sub_alias, parent, parent,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
 
 async fn plan_single_realm(
     ctx: PlanContext<'_>,
@@ -249,7 +340,10 @@ async fn plan_single_realm(
         ]
     );
 
-    // 3. Plan custom components and keys
+    // 3. Warn about potential 409 sub-flow collisions in authentication flows
+    check_flow_subflow_collisions(&ctx).await?;
+
+    // 4. Plan custom components and keys
     let ((mut component_changes, component_summary), (mut key_changes, key_summary), _) = tokio::try_join!(
         components::plan_components_or_keys(&ctx, "components"),
         components::plan_components_or_keys(&ctx, "keys"),
