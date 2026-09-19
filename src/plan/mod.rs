@@ -185,8 +185,10 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
 
     let plan_file = workspace_dir.join(".kajiplan");
     if changed_files.is_empty() {
-        if async_fs::try_exists(&plan_file).await? {
-            async_fs::remove_file(&plan_file).await?;
+        match async_fs::remove_file(&plan_file).await {
+            Ok(_) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
         }
         eprintln!(
             "\n{} {}",

@@ -28,9 +28,11 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
     } = ctx;
 
     let resources_dir = workspace_dir.join(AuthenticatorConfigRepresentation::DIR_NAME);
-    if !async_fs::try_exists(&resources_dir).await? {
-        return Ok(());
-    }
+    let mut entries = match async_fs::read_dir(&resources_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
 
     // 1. Fetch remote configs
     let remote_configs = client.get_authenticator_configs_internal().await?;
@@ -40,7 +42,6 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         .collect();
 
     // 2. Read local config files
-    let mut entries = async_fs::read_dir(&resources_dir).await?;
     let mut files = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -70,27 +71,32 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         String,
         Vec<crate::models::AuthenticationExecutionExportRepresentation>,
     > = HashMap::new();
-    if async_fs::try_exists(&local_flows_dir).await? {
-        let mut flow_entries = async_fs::read_dir(&local_flows_dir).await?;
-        while let Some(flow_entry) = flow_entries.next_entry().await? {
-            let flow_path = flow_entry.path();
-            if flow_path.extension().is_some_and(|ext| ext == "yaml") {
-                if is_overlay_file(&flow_path, profile.as_deref()) {
-                    continue;
-                }
-                if let Ok(flow_val) = load_yaml_with_overlay(&flow_path, profile.as_deref()).await {
-                    if let Ok(flow) =
-                        serde_json::from_value::<AuthenticationFlowRepresentation>(flow_val)
+    match async_fs::read_dir(&local_flows_dir).await {
+        Ok(mut flow_entries) => {
+            while let Some(flow_entry) = flow_entries.next_entry().await? {
+                let flow_path = flow_entry.path();
+                if flow_path.extension().is_some_and(|ext| ext == "yaml") {
+                    if is_overlay_file(&flow_path, profile.as_deref()) {
+                        continue;
+                    }
+                    if let Ok(flow_val) =
+                        load_yaml_with_overlay(&flow_path, profile.as_deref()).await
                     {
-                        if let (Some(flow_alias), Some(executions)) =
-                            (flow.alias, flow.authentication_executions)
+                        if let Ok(flow) =
+                            serde_json::from_value::<AuthenticationFlowRepresentation>(flow_val)
                         {
-                            local_flows_map.insert(flow_alias, executions);
+                            if let (Some(flow_alias), Some(executions)) =
+                                (flow.alias, flow.authentication_executions)
+                            {
+                                local_flows_map.insert(flow_alias, executions);
+                            }
                         }
                     }
                 }
             }
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
 
     let mut remote_executions_cache: HashMap<

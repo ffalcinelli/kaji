@@ -27,14 +27,9 @@ pub async fn run(
     realms_to_inspect: &[String],
     yes: bool,
 ) -> Result<()> {
-    if !fs::try_exists(&workspace_dir)
+    fs::create_dir_all(&workspace_dir)
         .await
-        .context("Failed to check output directory")?
-    {
-        fs::create_dir_all(&workspace_dir)
-            .await
-            .context("Failed to create output directory")?;
-    }
+        .context("Failed to create output directory")?;
 
     let realms = if realms_to_inspect.is_empty() {
         let all_realms = client
@@ -173,14 +168,9 @@ where
         .await
         .with_context(|| format!("Failed to fetch {} for realm '{}'", T::LABEL, realm_name))?;
 
-    if !fs::try_exists(&*target_dir)
+    fs::create_dir_all(&*target_dir)
         .await
-        .with_context(|| format!("Failed to check {} directory", T::LABEL))?
-    {
-        fs::create_dir_all(&*target_dir)
-            .await
-            .with_context(|| format!("Failed to create {} directory", T::LABEL))?;
-    }
+        .with_context(|| format!("Failed to create {} directory", T::LABEL))?;
 
     let mut set = tokio::task::JoinSet::new();
     for res in resources {
@@ -229,14 +219,9 @@ async fn inspect_realm(
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
 ) -> Result<()> {
-    if !fs::try_exists(&workspace_dir)
+    fs::create_dir_all(&workspace_dir)
         .await
-        .context("Failed to check output directory")?
-    {
-        fs::create_dir_all(&workspace_dir)
-            .await
-            .context("Failed to create output directory")?;
-    }
+        .context("Failed to create output directory")?;
 
     let mut set = tokio::task::JoinSet::new();
     let workspace_dir = Arc::new(workspace_dir);

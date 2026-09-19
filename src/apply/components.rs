@@ -150,9 +150,11 @@ pub async fn apply_components_or_keys(
     } = ctx;
 
     let components_dir = workspace_dir.join(dir_name);
-    if !async_fs::try_exists(&components_dir).await? {
-        return Ok(());
-    }
+    let mut entries = match async_fs::read_dir(&components_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
 
     let existing_components = client
         .get_components()
@@ -163,7 +165,6 @@ pub async fn apply_components_or_keys(
     let by_identity = Arc::new(by_identity);
     let by_details = Arc::new(by_details);
 
-    let mut entries = async_fs::read_dir(&components_dir).await?;
     let mut set = JoinSet::new();
 
     while let Some(entry) = entries.next_entry().await? {

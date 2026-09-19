@@ -20,161 +20,165 @@ pub async fn plan_components_or_keys(
     let mut changed_files = Vec::new();
     let mut summary = PlanSummary::default();
     let components_dir = ctx.workspace_dir.join(dir_name);
-    if async_fs::try_exists(&components_dir).await? {
-        let existing_components =
-            ctx.client.get_components().await.with_context(|| {
-                format!("Failed to get components for realm '{}'", ctx.realm_name)
-            })?;
-        let mut by_identity: HashMap<String, ComponentRepresentation> = HashMap::new();
-        type ComponentKey = (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
+    let mut entries = match async_fs::read_dir(&components_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((changed_files, summary)),
+        Err(e) => return Err(e.into()),
+    };
+
+    let existing_components = ctx
+        .client
+        .get_components()
+        .await
+        .with_context(|| format!("Failed to get components for realm '{}'", ctx.realm_name))?;
+    let mut by_identity: HashMap<String, ComponentRepresentation> = HashMap::new();
+    type ComponentKey = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let mut by_details: HashMap<ComponentKey, ComponentRepresentation> = HashMap::new();
+
+    for c in existing_components {
+        if let Some(id) = c.get_identity() {
+            by_identity.insert(id, c.clone());
+        }
+        let key = (
+            c.name.clone(),
+            c.sub_type.clone(),
+            c.provider_id.clone(),
+            c.parent_id.clone(),
         );
-        let mut by_details: HashMap<ComponentKey, ComponentRepresentation> = HashMap::new();
+        by_details.insert(key, c);
+    }
 
-        for c in existing_components {
-            if let Some(id) = c.get_identity() {
-                by_identity.insert(id, c.clone());
+    let by_identity = Arc::new(by_identity);
+    let by_details = Arc::new(by_details);
+
+    let mut set = tokio::task::JoinSet::new();
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "yaml") {
+            // Skip overlay files themselves
+            if is_overlay_file(&path, ctx.profile.as_deref()) {
+                continue;
             }
-            let key = (
-                c.name.clone(),
-                c.sub_type.clone(),
-                c.provider_id.clone(),
-                c.parent_id.clone(),
+
+            let resolver = Arc::clone(&ctx.resolver);
+            let by_identity = by_identity.clone();
+            let by_details = by_details.clone();
+            let realm_name = ctx.realm_name.to_string();
+            let profile = ctx.profile.clone();
+
+            set.spawn(async move {
+                let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+                substitute_secrets(&mut val, resolver).await?;
+                let local_component: ComponentRepresentation = serde_json::from_value(val)
+                    .with_context(|| {
+                        format!(
+                            "Failed to deserialize YAML file {:?} in realm '{}'",
+                            path, realm_name
+                        )
+                    })?;
+
+                let remote = local_component
+                    .get_identity()
+                    .and_then(|id| by_identity.get(&id))
+                    .or_else(|| {
+                        let key = (
+                            local_component.name.clone(),
+                            local_component.sub_type.clone(),
+                            local_component.provider_id.clone(),
+                            local_component.parent_id.clone(),
+                        );
+                        by_details.get(&key)
+                    })
+                    .cloned();
+
+                Ok::<
+                    (
+                        ComponentRepresentation,
+                        PathBuf,
+                        Option<ComponentRepresentation>,
+                    ),
+                    anyhow::Error,
+                >((local_component, path, remote))
+            });
+        }
+    }
+
+    for res in crate::utils::join_all_tasks(set, None).await? {
+        let (local_component, path, remote) = res;
+
+        let is_update = remote.is_some();
+        let mut remote_clone = None;
+        let changed = if let Some(r) = remote {
+            let mut rc = r.clone();
+            if local_component.id.is_none() {
+                rc.id = None;
+            }
+            let prefix = if dir_name == "keys" {
+                "key"
+            } else {
+                "component"
+            };
+            let diff_name = format!("Component {}", local_component.get_name());
+            let ch = print_diff(
+                &diff_name,
+                Some(&rc),
+                &local_component,
+                ctx.options.changes_only,
+                ctx.options.verbose,
+                prefix,
+            )?;
+            remote_clone = Some(rc);
+            ch
+        } else {
+            eprintln!(
+                "\n{} Will create Component: {}",
+                SPARKLE,
+                local_component.get_name()
             );
-            by_details.insert(key, c);
-        }
+            let prefix = if dir_name == "keys" {
+                "key"
+            } else {
+                "component"
+            };
+            let diff_name = format!("Component {}", local_component.get_name());
+            print_diff(
+                &diff_name,
+                None::<&ComponentRepresentation>,
+                &local_component,
+                ctx.options.changes_only,
+                ctx.options.verbose,
+                prefix,
+            )?
+        };
 
-        let by_identity = Arc::new(by_identity);
-        let by_details = Arc::new(by_details);
-
-        let mut set = tokio::task::JoinSet::new();
-        let mut entries = async_fs::read_dir(&components_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "yaml") {
-                // Skip overlay files themselves
-                if is_overlay_file(&path, ctx.profile.as_deref()) {
-                    continue;
-                }
-
-                let resolver = Arc::clone(&ctx.resolver);
-                let by_identity = by_identity.clone();
-                let by_details = by_details.clone();
-                let realm_name = ctx.realm_name.to_string();
-                let profile = ctx.profile.clone();
-
-                set.spawn(async move {
-                    let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
-                    substitute_secrets(&mut val, resolver).await?;
-                    let local_component: ComponentRepresentation = serde_json::from_value(val)
-                        .with_context(|| {
-                            format!(
-                                "Failed to deserialize YAML file {:?} in realm '{}'",
-                                path, realm_name
-                            )
-                        })?;
-
-                    let remote = local_component
-                        .get_identity()
-                        .and_then(|id| by_identity.get(&id))
-                        .or_else(|| {
-                            let key = (
-                                local_component.name.clone(),
-                                local_component.sub_type.clone(),
-                                local_component.provider_id.clone(),
-                                local_component.parent_id.clone(),
-                            );
-                            by_details.get(&key)
-                        })
-                        .cloned();
-
-                    Ok::<
-                        (
-                            ComponentRepresentation,
-                            PathBuf,
-                            Option<ComponentRepresentation>,
-                        ),
-                        anyhow::Error,
-                    >((local_component, path, remote))
-                });
-            }
-        }
-
-        for res in crate::utils::join_all_tasks(set, None).await? {
-            let (local_component, path, remote) = res;
-
-            let is_update = remote.is_some();
-            let mut remote_clone = None;
-            let changed = if let Some(r) = remote {
-                let mut rc = r.clone();
-                if local_component.id.is_none() {
-                    rc.id = None;
-                }
+        if changed {
+            let mut include = true;
+            if ctx.options.interactive {
                 let prefix = if dir_name == "keys" {
                     "key"
                 } else {
                     "component"
                 };
-                let diff_name = format!("Component {}", local_component.get_name());
-                let ch = print_diff(
-                    &diff_name,
-                    Some(&rc),
+                include = super::prompt_interactive_change(
+                    ctx.ui,
+                    &format!("Component {}", local_component.get_name()),
+                    remote_clone.as_ref(),
                     &local_component,
-                    ctx.options.changes_only,
-                    ctx.options.verbose,
                     prefix,
                 )?;
-                remote_clone = Some(rc);
-                ch
-            } else {
-                eprintln!(
-                    "\n{} Will create Component: {}",
-                    SPARKLE,
-                    local_component.get_name()
-                );
-                let prefix = if dir_name == "keys" {
-                    "key"
+            }
+            if include {
+                changed_files.push(path);
+                if is_update {
+                    summary.updated += 1;
                 } else {
-                    "component"
-                };
-                let diff_name = format!("Component {}", local_component.get_name());
-                print_diff(
-                    &diff_name,
-                    None::<&ComponentRepresentation>,
-                    &local_component,
-                    ctx.options.changes_only,
-                    ctx.options.verbose,
-                    prefix,
-                )?
-            };
-
-            if changed {
-                let mut include = true;
-                if ctx.options.interactive {
-                    let prefix = if dir_name == "keys" {
-                        "key"
-                    } else {
-                        "component"
-                    };
-                    include = super::prompt_interactive_change(
-                        ctx.ui,
-                        &format!("Component {}", local_component.get_name()),
-                        remote_clone.as_ref(),
-                        &local_component,
-                        prefix,
-                    )?;
-                }
-                if include {
-                    changed_files.push(path);
-                    if is_update {
-                        summary.updated += 1;
-                    } else {
-                        summary.created += 1;
-                    }
+                    summary.created += 1;
                 }
             }
         }
