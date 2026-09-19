@@ -13,10 +13,10 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
     let mut val = match load_yaml_with_overlay(&realm_path, ctx.profile.as_deref()).await {
         Ok(v) => v,
         Err(e) => {
-            if let Some(io_err) = e.downcast_ref::<std::io::Error>()
-                && io_err.kind() == std::io::ErrorKind::NotFound
-            {
-                return Ok((changed_files, summary));
+            if let Some(io_err) = e.root_cause().downcast_ref::<std::io::Error>() {
+                if io_err.kind() == std::io::ErrorKind::NotFound {
+                    return Ok((changed_files, summary));
+                }
             }
             return Err(e);
         }

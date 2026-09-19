@@ -367,9 +367,7 @@ async fn validate_components_in_dir(workspace_dir: &Path, dir_name: &str) -> Res
         return Ok(());
     }
     for (path, component) in &components {
-        if let Some(name) = &component.name
-            && name.is_empty()
-        {
+        if component.name.as_deref().is_some_and(|name| name.is_empty()) {
             anyhow::bail!("Component name is empty in {:?}", path);
         }
         if component
