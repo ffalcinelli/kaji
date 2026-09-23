@@ -129,8 +129,8 @@ standardFlowEnabled: true
         yes: true,
         review: false,
         prune: false,
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await?;

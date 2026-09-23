@@ -8,7 +8,7 @@ use crate::utils::ui::{CHECK, SEARCH, SUCCESS, WARN};
 use anyhow::{Context, Result};
 use console::style;
 use serde::de::DeserializeOwned;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::task::JoinSet;
@@ -245,10 +245,77 @@ fn validate_users(users: &[(PathBuf, UserRepresentation)]) -> Result<()> {
 /// Characters forbidden by Keycloak in authentication flow alias names.
 const FLOW_ALIAS_FORBIDDEN_CHARS: &[char] = &['(', ')', '[', ']', '{', '}', '/', '\\'];
 
+/// Valid Keycloak requirement settings for executions.
+const VALID_FLOW_REQUIREMENTS: &[&str] = &[
+    "REQUIRED",
+    "ALTERNATIVE",
+    "OPTIONAL",
+    "CONDITIONAL",
+    "DISABLED",
+];
+
+fn detect_flow_cycles(adj: &HashMap<String, Vec<String>>) -> Result<()> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Visiting,
+        Visited,
+    }
+
+    fn dfs(
+        node: &str,
+        adj: &HashMap<String, Vec<String>>,
+        visited: &mut HashMap<String, State>,
+        path: &mut Vec<String>,
+    ) -> Result<()> {
+        visited.insert(node.to_string(), State::Visiting);
+        path.push(node.to_string());
+
+        if let Some(neighbors) = adj.get(node) {
+            for neighbor in neighbors {
+                match visited.get(neighbor) {
+                    Some(State::Visiting) => {
+                        path.push(neighbor.clone());
+                        let cycle_start = path.iter().position(|n| n == neighbor).unwrap_or(0);
+                        let cycle_str = path[cycle_start..].join(" -> ");
+                        anyhow::bail!(
+                            "Circular subflow dependency detected in authentication flows: {}",
+                            cycle_str
+                        );
+                    }
+                    Some(State::Visited) => {}
+                    None => {
+                        dfs(neighbor, adj, visited, path)?;
+                    }
+                }
+            }
+        }
+
+        path.pop();
+        visited.insert(node.to_string(), State::Visited);
+        Ok(())
+    }
+
+    let mut visited = HashMap::new();
+    let mut path = Vec::new();
+
+    let mut nodes: Vec<&String> = adj.keys().collect();
+    nodes.sort();
+    for node in nodes {
+        if !visited.contains_key(node) {
+            dfs(node, adj, &mut visited, &mut path)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_authentication_flows(
     flows: &[(PathBuf, AuthenticationFlowRepresentation)],
 ) -> Result<()> {
     let mut seen_aliases = HashSet::new();
+    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+    let mut subflow_referrers: HashMap<String, Vec<String>> = HashMap::new();
+
     for (path, flow) in flows {
         let alias = flow.alias.as_deref().unwrap_or_default();
         if alias.is_empty() {
@@ -277,12 +344,63 @@ fn validate_authentication_flows(
             );
         }
         seen_aliases.insert(alias.to_string());
+
+        // Validate child executions
+        if let Some(execs) = &flow.authentication_executions {
+            for exec in execs {
+                if let Some(req) = &exec.requirement {
+                    let req_upper = req.to_uppercase();
+                    if !VALID_FLOW_REQUIREMENTS.contains(&req_upper.as_str()) {
+                        anyhow::bail!(
+                            "Invalid requirement '{}' in authentication flow execution in {:?}. Expected one of: {:?}",
+                            req,
+                            path,
+                            VALID_FLOW_REQUIREMENTS
+                        );
+                    }
+                }
+
+                if exec.authenticator_flow == Some(true)
+                    && exec.flow_alias.as_deref().unwrap_or_default().is_empty()
+                {
+                    anyhow::bail!(
+                        "Authentication flow execution marked as sub-flow ('authenticatorFlow: true') is missing 'flowAlias' in {:?}",
+                        path
+                    );
+                }
+
+                if let Some(sub_alias) = &exec.flow_alias {
+                    adj.entry(alias.to_string())
+                        .or_default()
+                        .push(sub_alias.clone());
+                    subflow_referrers
+                        .entry(sub_alias.clone())
+                        .or_default()
+                        .push(alias.to_string());
+                }
+            }
+        }
     }
+
+    // Cycle detection across flow and sub-flow dependencies
+    detect_flow_cycles(&adj)?;
+
+    let shared_count = subflow_referrers
+        .values()
+        .filter(|parents| parents.len() > 1)
+        .count();
+
+    let count_label = if shared_count > 0 {
+        format!("{} ({} shared)", flows.len(), shared_count)
+    } else {
+        flows.len().to_string()
+    };
+
     eprintln!(
         "  {} {} {}",
         CHECK,
         style("Validated authentication flows:").dim(),
-        style(flows.len()).green()
+        style(count_label).green()
     );
     Ok(())
 }
@@ -488,5 +606,235 @@ mod tests {
             validate_authentication_flows(&flows).is_ok(),
             "Valid aliases should pass without error"
         );
+    }
+
+    #[test]
+    fn test_validate_flow_cycle_detection() {
+        use crate::models::AuthenticationExecutionExportRepresentation;
+
+        let flow_a = (
+            PathBuf::from("flow-a.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("flow-a".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(true),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: None,
+                        authenticator_config: None,
+                        requirement: Some("REQUIRED".to_string()),
+                        priority: None,
+                        authenticator_flow: Some(true),
+                        flow_alias: Some("flow-b".to_string()),
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let flow_b = (
+            PathBuf::from("flow-b.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("flow-b".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(false),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: None,
+                        authenticator_config: None,
+                        requirement: Some("REQUIRED".to_string()),
+                        priority: None,
+                        authenticator_flow: Some(true),
+                        flow_alias: Some("flow-a".to_string()),
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let flows = vec![flow_a, flow_b];
+        let result = validate_authentication_flows(&flows);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Circular subflow dependency"));
+        assert!(err.contains("flow-a -> flow-b -> flow-a"));
+    }
+
+    #[test]
+    fn test_validate_flow_invalid_requirement() {
+        use crate::models::AuthenticationExecutionExportRepresentation;
+
+        let flow = (
+            PathBuf::from("flow.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("my-flow".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(true),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: Some("auth-cookie".to_string()),
+                        authenticator_config: None,
+                        requirement: Some("NON_EXISTENT_REQ".to_string()),
+                        priority: None,
+                        authenticator_flow: None,
+                        flow_alias: None,
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let result = validate_authentication_flows(&[flow]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid requirement")
+        );
+    }
+
+    #[test]
+    fn test_validate_flow_subflow_missing_alias() {
+        use crate::models::AuthenticationExecutionExportRepresentation;
+
+        let flow = (
+            PathBuf::from("flow.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("my-flow".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(true),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: None,
+                        authenticator_config: None,
+                        requirement: Some("REQUIRED".to_string()),
+                        priority: None,
+                        authenticator_flow: Some(true),
+                        flow_alias: None,
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let result = validate_authentication_flows(&[flow]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("missing 'flowAlias'")
+        );
+    }
+
+    #[test]
+    fn test_validate_shared_flow_success() {
+        use crate::models::AuthenticationExecutionExportRepresentation;
+
+        let shared_subflow = (
+            PathBuf::from("shared-subflow.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("shared-mfa".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(false),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: Some("auth-otp-form".to_string()),
+                        authenticator_config: None,
+                        requirement: Some("REQUIRED".to_string()),
+                        priority: None,
+                        authenticator_flow: None,
+                        flow_alias: None,
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let parent_1 = (
+            PathBuf::from("parent-1.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("browser-flow".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(true),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: None,
+                        authenticator_config: None,
+                        requirement: Some("ALTERNATIVE".to_string()),
+                        priority: None,
+                        authenticator_flow: Some(true),
+                        flow_alias: Some("shared-mfa".to_string()),
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let parent_2 = (
+            PathBuf::from("parent-2.yaml"),
+            AuthenticationFlowRepresentation {
+                id: None,
+                alias: Some("direct-grant-flow".to_string()),
+                description: None,
+                provider_id: None,
+                top_level: Some(true),
+                built_in: None,
+                authentication_executions: Some(vec![
+                    AuthenticationExecutionExportRepresentation {
+                        id: None,
+                        authenticator: None,
+                        authenticator_config: None,
+                        requirement: Some("REQUIRED".to_string()),
+                        priority: None,
+                        authenticator_flow: Some(true),
+                        flow_alias: Some("shared-mfa".to_string()),
+                        user_setup_allowed: None,
+                        extra: HashMap::new(),
+                    },
+                ]),
+                extra: HashMap::new(),
+            },
+        );
+
+        let flows = vec![shared_subflow, parent_1, parent_2];
+        assert!(validate_authentication_flows(&flows).is_ok());
     }
 }

@@ -166,8 +166,8 @@ async fn test_authenticator_config_inspect_plan_apply() {
         yes: true,
         review: false,
         prune: false,
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await

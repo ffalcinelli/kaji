@@ -532,6 +532,9 @@ fn redact_url(url_str: &str) -> String {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RawAuthenticationFlows(Vec<AuthenticationFlowRepresentation>);
+
 impl KeycloakClient {
     pub async fn get_cached_resources<T>(&self) -> Result<Vec<T>>
     where
@@ -564,6 +567,9 @@ impl KeycloakClient {
     pub fn invalidate_resource_cache<T: 'static>(&self) {
         if let Ok(mut cache) = self.resource_cache.write() {
             cache.remove(&TypeId::of::<T>());
+            if TypeId::of::<T>() == TypeId::of::<AuthenticationFlowRepresentation>() {
+                cache.remove(&TypeId::of::<RawAuthenticationFlows>());
+            }
         }
     }
 
@@ -575,9 +581,6 @@ impl KeycloakClient {
     pub async fn get_raw_flows_with_executions(
         &self,
     ) -> Result<Vec<AuthenticationFlowRepresentation>> {
-        #[derive(Clone, Debug)]
-        struct RawAuthenticationFlows(Vec<AuthenticationFlowRepresentation>);
-
         let type_id = TypeId::of::<RawAuthenticationFlows>();
         if let Ok(cache) = self.resource_cache.read() {
             if let Some(cached) = cache.get(&type_id) {

@@ -223,15 +223,12 @@ use crate::models::{
     KeycloakResource, RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
 };
 
-/// Checks whether any authentication flow that is marked "to create" is also referenced as a
-/// sub-flow (`flowAlias`) inside another local flow's executions.
+/// Analyzes authentication flow dependencies to detect shared sub-flows and explain how they will
+/// be reconciled.
 ///
-/// When Keycloak processes the parent flow during `apply`, it may auto-create the sub-flow,
-/// causing a `409 Conflict` when `kaji` subsequently tries to create it explicitly.
-///
-/// This function emits a warning for each such collision so the user can act before running
-/// `apply`. If `apply` does fail with 409, running `kaji plan` again will re-fetch remote state
-/// and correctly show the auto-created flow as "to update" instead of "to create".
+/// When Keycloak processes parent flows during `apply`, it may auto-create sub-flows or return
+/// `409 Conflict` if applied out of order. `kaji` solves this by topologically staging leaf and
+/// shared sub-flows before parent flows, and automatically adopting remote flows upon 409 conflict.
 async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
     let flows_dir = ctx
         .workspace_dir
@@ -282,30 +279,42 @@ async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
         .filter(|alias| !remote_aliases.contains(alias))
         .collect();
 
-    if to_create.is_empty() {
-        return Ok(());
+    // 3. Track sub-flow references across parent flows to detect shared flows and dependencies
+    let mut subflow_referrers: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for flow in &local_flows {
+        let parent = flow.alias.as_deref().unwrap_or("unknown");
+        for sub_alias in flow.subflow_aliases() {
+            subflow_referrers
+                .entry(sub_alias)
+                .or_default()
+                .push(parent.to_string());
+        }
     }
 
-    // 3. Warn for every "to create" flow that is referenced as a sub-flow by another local flow.
-    for flow in &local_flows {
-        let Some(executions) = &flow.authentication_executions else {
-            continue;
-        };
-        for exec in executions {
-            let Some(sub_alias) = &exec.flow_alias else {
-                continue;
+    for (sub_alias, parents) in &subflow_referrers {
+        let is_to_create = to_create.contains(sub_alias.as_str());
+        if parents.len() > 1 {
+            let status = if is_to_create {
+                "to create"
+            } else {
+                "existing"
             };
-            if to_create.contains(sub_alias.as_str()) {
-                let parent = flow.alias.as_deref().unwrap_or("unknown");
-                eprintln!(
-                    "\n{} Authentication flow '{}' is marked to CREATE but is also \
-                     referenced as a sub-flow inside local flow '{}'. \
-                     Keycloak may auto-create it when '{}' is applied, \
-                     potentially causing a 409 Conflict on apply. \
-                     If apply fails, run `kaji plan` again to reconcile.",
-                    WARN, sub_alias, parent, parent,
-                );
-            }
+            eprintln!(
+                "\n{} Authentication flow '{}' is a shared sub-flow ({}) referenced by: {}. \
+                 Kaji will topologically stage and reconcile it across parent flows.",
+                CHECK,
+                sub_alias,
+                status,
+                parents.join(", ")
+            );
+        } else if is_to_create {
+            eprintln!(
+                "\n{} Authentication flow '{}' is marked to CREATE and referenced as a \
+                 sub-flow inside flow '{}'. Kaji will topologically stage and auto-adopt it during apply.",
+                ACTION, sub_alias, parents[0]
+            );
         }
     }
 
@@ -481,7 +490,7 @@ mod tests {
         };
 
         let result = print_diff("Dummy", Some(&dummy), &dummy, false, false, "").unwrap();
-        assert_eq!(result, false);
+        assert!(!result);
     }
 
     #[test]
@@ -499,7 +508,7 @@ mod tests {
 
         // changes_only = true, non-verbose (hunk printing)
         let result = print_diff("Dummy", Some(&old), &new, true, false, "").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[test]
@@ -511,7 +520,7 @@ mod tests {
         };
 
         let result = print_diff("Dummy", Some(&dummy), &dummy, true, false, "").unwrap();
-        assert_eq!(result, false);
+        assert!(!result);
     }
 
     #[test]
@@ -523,7 +532,7 @@ mod tests {
         };
 
         let result = print_diff("Dummy", None, &new, false, false, "").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[test]
@@ -541,6 +550,6 @@ mod tests {
 
         // Verbose diff printing
         let result = print_diff("Dummy", Some(&old), &new, false, true, "").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 }

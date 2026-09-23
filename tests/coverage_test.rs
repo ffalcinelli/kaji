@@ -251,8 +251,8 @@ async fn test_apply_edge_cases() {
         yes: true,
         review: false,
         prune: false,
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await;

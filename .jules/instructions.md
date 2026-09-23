@@ -32,7 +32,7 @@ Detailed guidelines for specific aspects of the codebase:
 4.  **Error Handling**:
     *   Use `anyhow` for errors.
     *   Decorate actions with descriptive `.context(...)` calls to provide clear debugging trace context.
-5.  **Documentation Integrity**: Always update relevant markdown files (`README.md`, `GEMINI.md`, `JULES.md`, `AGENTS.md`, and `.jules/*.md`) whenever codebase features, models, stages, or structures change to prevent document drift.
+5.  **Documentation Integrity**: Always update relevant markdown files (`README.md`, `AGENTS.md`, and `.jules/*.md`) whenever codebase features, models, stages, or structures change to prevent document drift.
 6.  **Quality Check List**:
     Before completing any task, ensure the following commands run successfully:
     ```bash

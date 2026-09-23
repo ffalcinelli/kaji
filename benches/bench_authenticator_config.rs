@@ -84,18 +84,19 @@ fn bench_apply_auth_configs(c: &mut Criterion) {
 
     c.bench_function("apply_authenticator_configs", |b| {
         b.to_async(&rt).iter(|| async {
-            apply_authenticator_configs(
-                &client,
-                &workspace_dir,
-                Arc::new(workspace_dir.join(".secrets")),
-                resolver.clone(),
-                Arc::new(None),
-                "test-realm",
-                None,
-                false,
-                ui.clone(),
-                false,
-            )
+            apply_authenticator_configs(kaji::apply::ApplyContext {
+                client: &client,
+                workspace_dir: workspace_dir.clone(),
+                secrets_path: Arc::new(workspace_dir.join(".secrets")),
+                resolver: resolver.clone(),
+                planned_files: Arc::new(None),
+                realm_name: "test-realm",
+                profile: None,
+                review: false,
+                ui: ui.clone(),
+                yes: true,
+                prune: false,
+            })
             .await
             .unwrap();
         });

@@ -290,6 +290,7 @@ async fn test_run_app_init() -> Result<()> {
 
 #[tokio::test]
 async fn test_run_app_cli_errors_non_tty() -> Result<()> {
+    let _lock = RUN_APP_TEST_MUTEX.lock().await;
     if std::env::var("RUN_TEST_RUN_APP_CLI_ERRORS_NON_TTY").is_ok() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().to_path_buf();

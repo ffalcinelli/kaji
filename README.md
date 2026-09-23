@@ -258,7 +258,9 @@ kaji plan --interactive
 ### `apply`
 Reconciles the remote state. It follows a **staged application order** (Realms → Roles → Clients → Users) to ensure dependencies are met.
 
-**`apply` automatically runs `validate` first** (pure local file I/O — no network cost). If validation fails, apply aborts immediately with a clear error message pointing to the offending file, before making any API calls to Keycloak.
+**`apply` automatically runs `validate` first** (pure local file I/O — no network cost). If validation fails, apply aborts immediately with a clear error message pointing to the offending file, before making any API calls to Keycloak. Validation enforces execution requirement enums, ensures subflows specify valid aliases, and detects circular dependency graphs using DFS.
+
+Authentication flows and shared sub-flows are automatically partitioned into **topological dependency tiers** (leaf/shared sub-flows applied first) with **graceful 409 Conflict auto-adoption**, preventing race conditions and auto-creation conflicts during application.
 ```bash
 # Apply planned changes for production
 kaji apply --profile prod --yes

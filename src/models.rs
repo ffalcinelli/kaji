@@ -539,9 +539,17 @@ pub struct AuthenticationExecutionExportRepresentation {
     pub requirement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<i32>,
-    #[serde(rename = "authenticatorFlow", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "authenticatorFlow",
+        alias = "authenticationFlow",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub authenticator_flow: Option<bool>,
-    #[serde(rename = "flowAlias", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "flowAlias",
+        alias = "displayName",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub flow_alias: Option<String>,
     #[serde(rename = "userSetupAllowed", skip_serializing_if = "Option::is_none")]
     pub user_setup_allowed: Option<bool>,
@@ -570,6 +578,24 @@ pub struct AuthenticationFlowRepresentation {
     pub authentication_executions: Option<Vec<AuthenticationExecutionExportRepresentation>>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+impl AuthenticationFlowRepresentation {
+    pub fn subflow_aliases(&self) -> Vec<String> {
+        let mut subflows = Vec::new();
+        if let Some(execs) = &self.authentication_executions {
+            for alias in execs.iter().filter_map(|e| e.flow_alias.as_deref()) {
+                if !subflows.iter().any(|s| s == alias) {
+                    subflows.push(alias.to_string());
+                }
+            }
+        }
+        subflows
+    }
+
+    pub fn is_subflow(&self) -> bool {
+        self.top_level == Some(false)
+    }
 }
 
 impl_keycloak_resource!(

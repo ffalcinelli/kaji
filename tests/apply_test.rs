@@ -555,7 +555,7 @@ async fn test_apply_aborted_by_user() {
         prune: false,
         ui: // review = false
         ui.clone(),
-        resolver: resolver,
+        resolver,
         profile: None,
     })
     .await;
@@ -601,7 +601,7 @@ async fn test_apply_component_no_id_no_name() {
         false,
         prune: false,
         ui: ui.clone(),
-        resolver: resolver,
+        resolver,
         profile: None,
     })
     .await;
@@ -932,9 +932,7 @@ async fn test_apply_pruning() {
         yes: false,
         review: // yes = false (prompt)
         false,
-        prune: // review = false
-        true,
-        ui: // prune = true
+        prune: true,
         ui,
         resolver: resolver.clone(),
         profile: None,

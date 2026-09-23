@@ -11,6 +11,84 @@ use std::sync::Arc;
 use tokio::fs as async_fs;
 use tokio::task::JoinSet;
 
+async fn order_files_topologically<T>(
+    files: Vec<std::path::PathBuf>,
+    profile: Option<&str>,
+) -> Vec<Vec<std::path::PathBuf>>
+where
+    T: KeycloakResource,
+{
+    if T::DIR_NAME != crate::models::AuthenticationFlowRepresentation::DIR_NAME || files.len() <= 1
+    {
+        return vec![files];
+    }
+
+    // Parse each flow file to find its declared alias and referenced sub-flows
+    let mut file_info: Vec<(std::path::PathBuf, String, Vec<String>)> = Vec::new();
+    for path in files {
+        if let Ok(val) = load_yaml_with_overlay(&path, profile).await {
+            if let Ok(flow) =
+                serde_json::from_value::<crate::models::AuthenticationFlowRepresentation>(val)
+            {
+                let alias = flow.alias.clone().unwrap_or_default();
+                let subflows = flow.subflow_aliases();
+                file_info.push((path, alias, subflows));
+                continue;
+            }
+        }
+        file_info.push((path, String::new(), Vec::new()));
+    }
+
+    let mut remaining = file_info;
+    let mut tiers = Vec::new();
+    let mut satisfied_aliases: HashSet<String> = HashSet::new();
+
+    while !remaining.is_empty() {
+        let mut current_tier = Vec::new();
+        let mut next_remaining = Vec::new();
+
+        let pending_aliases: HashSet<String> = remaining
+            .iter()
+            .map(|(_, alias, _)| alias.clone())
+            .filter(|a| !a.is_empty())
+            .collect();
+
+        for (path, alias, subflows) in remaining {
+            // A flow can be applied if all its local subflow dependencies are already satisfied
+            let dependencies_ready = subflows
+                .iter()
+                .all(|sub| !pending_aliases.contains(sub) || satisfied_aliases.contains(sub));
+
+            if dependencies_ready {
+                current_tier.push((path, alias));
+            } else {
+                next_remaining.push((path, alias, subflows));
+            }
+        }
+
+        if current_tier.is_empty() {
+            // Unresolvable cycle or mutual dependency: fall back to applying all remaining in one tier
+            let fallback: Vec<std::path::PathBuf> =
+                next_remaining.into_iter().map(|(p, _, _)| p).collect();
+            tiers.push(fallback);
+            break;
+        }
+
+        let mut tier_paths = Vec::new();
+        for (path, alias) in current_tier {
+            if !alias.is_empty() {
+                satisfied_aliases.insert(alias);
+            }
+            tier_paths.push(path);
+        }
+
+        tiers.push(tier_paths);
+        remaining = next_remaining;
+    }
+
+    tiers
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_resources<T>(ctx: crate::apply::ApplyContext<'_>) -> Result<()>
 where
@@ -88,117 +166,165 @@ where
     }
 
     let pb = create_progress_bar(files.len() as u64, &format!("Applying {}", T::LABEL));
-    let mut set = JoinSet::new();
+    let tiers = order_files_topologically::<T>(files, profile.as_deref()).await;
 
-    for path in files {
-        let client = client.clone();
-        let existing_map = Arc::clone(&existing_map);
-        let resolver = Arc::clone(&resolver);
-        let realm_name = realm_name.to_string();
-        let profile = profile.clone();
-        let ui = Arc::clone(&ui);
-        let pb = pb.clone();
-        let secrets_path = Arc::clone(&secrets_path);
+    for tier_files in tiers {
+        let mut set = JoinSet::new();
 
-        set.spawn(async move {
-            let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
-            let local_val_before_sub = val.clone();
-            substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
-            let mut rep: T = serde_json::from_value(val)
-                .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
+        for path in tier_files {
+            let client = client.clone();
+            let existing_map = Arc::clone(&existing_map);
+            let resolver = Arc::clone(&resolver);
+            let realm_name = realm_name.to_string();
+            let profile = profile.clone();
+            let ui = Arc::clone(&ui);
+            let pb = pb.clone();
+            let secrets_path = Arc::clone(&secrets_path);
 
-            let identity = rep.get_identity().with_context(|| {
-                format!("Failed to get identity for {} in {:?}", T::LABEL, path)
-            })?;
+            set.spawn(async move {
+                let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+                let local_val_before_sub = val.clone();
+                substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
+                let mut rep: T = serde_json::from_value(val)
+                    .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
 
-            let id_opt = existing_map.get(&identity);
-
-            if review {
-                let action = if id_opt.is_some() { "update" } else { "create" };
-                let proceed = ui.confirm(
-                    &format!(
-                        "Do you want to {} {} '{}'?",
-                        action,
-                        T::LABEL,
-                        rep.get_name()
-                    ),
-                    true,
-                )?;
-                if !proceed {
-                    pb.inc(1);
-                    return Ok::<(), anyhow::Error>(());
-                }
-            }
-
-            let mut final_id = None;
-            if let Some(id) = id_opt {
-                rep.set_id(Some(id.clone()));
-                client.update_resource(id, &rep).await.with_context(|| {
-                    format!(
-                        "Failed to update {} '{}' in realm '{}'",
-                        T::LABEL,
-                        rep.get_name(),
-                        realm_name
-                    )
+                let identity = rep.get_identity().with_context(|| {
+                    format!("Failed to get identity for {} in {:?}", T::LABEL, path)
                 })?;
-                pb.println(format!(
-                    "  {} Updated {} {}",
-                    SUCCESS_UPDATE,
-                    T::LABEL,
-                    rep.get_name()
-                ));
-                final_id = Some(id.clone());
-            } else {
-                rep.set_id(None);
-                client.create_resource(&rep).await.with_context(|| {
-                    format!(
-                        "Failed to create {} '{}' in realm '{}'",
-                        T::LABEL,
-                        rep.get_name(),
-                        realm_name
-                    )
-                })?;
-                pb.println(format!(
-                    "  {} Created {} {}",
-                    SUCCESS_CREATE,
-                    T::LABEL,
-                    rep.get_name()
-                ));
 
-                // Fetch resources to get the generated ID of the created resource
-                let fresh_resources = client.get_resources::<T>().await?;
-                if let Some(fresh) = fresh_resources
-                    .into_iter()
-                    .find(|r| r.get_identity() == Some(identity.clone()))
-                {
-                    if let Some(id) = fresh.get_id() {
-                        final_id = Some(id.to_string());
+                let id_opt = existing_map.get(&identity);
+
+                if review {
+                    let action = if id_opt.is_some() { "update" } else { "create" };
+                    let proceed = ui.confirm(
+                        &format!(
+                            "Do you want to {} {} '{}'?",
+                            action,
+                            T::LABEL,
+                            rep.get_name()
+                        ),
+                        true,
+                    )?;
+                    if !proceed {
+                        pb.inc(1);
+                        return Ok::<(), anyhow::Error>(());
                     }
                 }
-            }
 
-            if let Some(id) = final_id {
-                if let Ok(enriched) = client.get_resource::<T>(&id).await {
-                    check_and_update_enrichment(
-                        &client,
-                        &path,
-                        &local_val_before_sub,
-                        &enriched,
-                        &realm_name,
-                        &secrets_path,
-                        &*ui,
-                        yes,
-                    )
-                    .await?;
+                let mut final_id = None;
+                if let Some(id) = id_opt {
+                    rep.set_id(Some(id.clone()));
+                    client.update_resource(id, &rep).await.with_context(|| {
+                        format!(
+                            "Failed to update {} '{}' in realm '{}'",
+                            T::LABEL,
+                            rep.get_name(),
+                            realm_name
+                        )
+                    })?;
+                    pb.println(format!(
+                        "  {} Updated {} {}",
+                        SUCCESS_UPDATE,
+                        T::LABEL,
+                        rep.get_name()
+                    ));
+                    final_id = Some(id.clone());
+                } else {
+                    rep.set_id(None);
+                    let create_result = client.create_resource(&rep).await;
+                    match create_result {
+                        Ok(()) => {
+                            pb.println(format!(
+                                "  {} Created {} {}",
+                                SUCCESS_CREATE,
+                                T::LABEL,
+                                rep.get_name()
+                            ));
+
+                            // Fetch resources to get the generated ID of the created resource
+                            let fresh_resources = client.get_resources::<T>().await?;
+                            if let Some(fresh) = fresh_resources
+                                .into_iter()
+                                .find(|r| r.get_identity() == Some(identity.clone()))
+                            {
+                                if let Some(id) = fresh.get_id() {
+                                    final_id = Some(id.to_string());
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let err_str = err.to_string();
+                            let is_conflict = err_str.contains("409")
+                                || err_str.to_lowercase().contains("conflict")
+                                || err_str.to_lowercase().contains("already exists");
+
+                            let mut adopted = false;
+                            if is_conflict {
+                                client.invalidate_resource_cache::<T>();
+                                if let Ok(fresh_resources) = client.get_resources::<T>().await {
+                                    if let Some(fresh) = fresh_resources
+                                        .into_iter()
+                                        .find(|r| r.get_identity() == Some(identity.clone()))
+                                    {
+                                        if let Some(existing_id) = fresh.get_id() {
+                                            let mut update_rep = rep.clone();
+                                            update_rep.set_id(Some(existing_id.to_string()));
+                                            if let Ok(()) = client
+                                                .update_resource(existing_id, &update_rep)
+                                                .await
+                                            {
+                                                pb.println(format!(
+                                                    "  {} Reconciled existing {} {} (adopted after conflict)",
+                                                    SUCCESS_UPDATE,
+                                                    T::LABEL,
+                                                    rep.get_name()
+                                                ));
+                                                final_id = Some(existing_id.to_string());
+                                                adopted = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !adopted {
+                                return Err(err).with_context(|| {
+                                    format!(
+                                        "Failed to create {} '{}' in realm '{}'",
+                                        T::LABEL,
+                                        rep.get_name(),
+                                        realm_name
+                                    )
+                                });
+                            }
+                        }
+                    }
                 }
-            }
 
-            pb.inc(1);
-            Ok::<(), anyhow::Error>(())
-        });
+                if let Some(id) = final_id {
+                    if let Ok(enriched) = client.get_resource::<T>(&id).await {
+                        check_and_update_enrichment(
+                            &client,
+                            &path,
+                            &local_val_before_sub,
+                            &enriched,
+                            &realm_name,
+                            &secrets_path,
+                            &*ui,
+                            yes,
+                        )
+                        .await?;
+                    }
+                }
+
+                pb.inc(1);
+                Ok::<(), anyhow::Error>(())
+            });
+        }
+
+        crate::utils::join_all_tasks(set, None).await?;
     }
 
-    crate::utils::join_all_tasks(set, None).await?;
     pb.finish_with_message(format!("Applied {}", T::LABEL));
 
     if prune {
