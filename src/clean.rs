@@ -16,7 +16,7 @@ pub async fn run(
     realms_to_clean: &[String],
     ui: &dyn Ui,
 ) -> Result<()> {
-    if !workspace_dir.exists() {
+    if !fs::try_exists(&workspace_dir).await.unwrap_or(false) {
         eprintln!(
             "{} {}",
             WARN,
@@ -32,11 +32,14 @@ pub async fn run(
     let targets = if realms_to_clean.is_empty() {
         vec![workspace_dir.clone()]
     } else {
-        realms_to_clean
-            .iter()
-            .map(|r| workspace_dir.join(r))
-            .filter(|p| p.exists())
-            .collect()
+        let mut valid_targets = Vec::new();
+        for r in realms_to_clean {
+            let p = workspace_dir.join(r);
+            if fs::try_exists(&p).await.unwrap_or(false) {
+                valid_targets.push(p);
+            }
+        }
+        valid_targets
     };
 
     if targets.is_empty() {

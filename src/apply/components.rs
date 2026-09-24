@@ -40,7 +40,7 @@ pub fn build_component_indices(
     (by_identity, by_details)
 }
 
-use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn process_component_file(
@@ -52,8 +52,10 @@ pub async fn process_component_file(
     resolver: Arc<dyn SecretResolver>,
     realm_name: String,
     profile: Option<String>,
+    review: bool,
     ui: Arc<dyn Ui>,
     yes: bool,
+    prompt_mutex: Arc<tokio::sync::Mutex<()>>,
 ) -> Result<()> {
     let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
     let local_val_before_sub = val.clone();
@@ -81,6 +83,25 @@ pub async fn process_component_file(
     };
 
     let id_opt = existing.and_then(|e| e.id.as_ref());
+
+    if review {
+        let action = if id_opt.is_some() { "update" } else { "create" };
+        let proceed = {
+            let _lock = prompt_mutex.lock().await;
+            ui.confirm(
+                &format!(
+                    "Do you want to {} component '{}'?",
+                    action,
+                    component_rep.get_name()
+                ),
+                true,
+            )?
+        };
+        if !proceed {
+            return Ok(());
+        }
+    }
+
     crate::handle_upsert! {
         client: client,
         realm: realm_name,
@@ -120,6 +141,7 @@ pub async fn process_component_file(
                 &secrets_path,
                 &*ui,
                 yes,
+                prompt_mutex,
             )
             .await?;
         }
@@ -143,10 +165,11 @@ pub async fn apply_components_or_keys(
         planned_files,
         realm_name,
         profile,
-        review: _,
+        review,
         ui,
         yes,
         prune: _,
+        prompt_mutex,
     } = ctx;
 
     let components_dir = workspace_dir.join(dir_name);
@@ -173,7 +196,7 @@ pub async fn apply_components_or_keys(
         {
             continue;
         }
-        if path.extension().is_none_or(|ext| ext != "yaml") {
+        if !is_yaml_file(&path) {
             continue;
         }
         // Skip overlay files themselves
@@ -189,6 +212,7 @@ pub async fn apply_components_or_keys(
         let profile = profile.clone();
         let secrets_path = Arc::clone(&secrets_path);
         let ui = Arc::clone(&ui);
+        let prompt_mutex = Arc::clone(&prompt_mutex);
         set.spawn(async move {
             process_component_file(
                 path,
@@ -199,8 +223,10 @@ pub async fn apply_components_or_keys(
                 resolver,
                 realm_name,
                 profile,
+                review,
                 ui,
                 yes,
+                prompt_mutex,
             )
             .await
         });
@@ -385,6 +411,7 @@ mod tests {
                 ui: ui.clone(),
                 yes: true,
                 prune: false,
+                prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
             },
             "components",
         )
@@ -416,6 +443,7 @@ mod tests {
                 ui: ui.clone(),
                 yes: true,
                 prune: false,
+                prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
             },
             "components",
         )

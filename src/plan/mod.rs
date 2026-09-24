@@ -18,7 +18,7 @@ macro_rules! plan_generic_resources {
 use crate::client::KeycloakClient;
 use crate::utils::secrets::{SecretResolver, obfuscate_secrets};
 use crate::utils::ui::{ACTION, CHECK, MEMO, Ui, WARN};
-use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 
 use anyhow::{Context, Result};
 use console::{Style, style};
@@ -29,6 +29,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
+#[deprecated(note = "Use PlanArgs.verbose instead")]
 pub static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
@@ -74,6 +75,7 @@ pub struct PlanArgs<'a> {
     pub ui: Arc<dyn Ui>,
     pub resolver: Arc<dyn SecretResolver>,
     pub profile: Option<String>,
+    pub verbose: bool,
 }
 
 /// Calculates configuration drift and compiles a list of planned modifications.
@@ -90,38 +92,18 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
         ui,
         resolver,
         profile,
+        verbose,
     } = args;
 
-    if !workspace_dir.exists() {
+    if !async_fs::try_exists(&workspace_dir).await? {
         return Err(anyhow::anyhow!(
             "Hint: Create the workspace directory first or use `kaji init`."
-        )
-        .context(format!(
-            "Input directory {:?} does not exist",
-            workspace_dir
-        )));
+        ))
+        .with_context(|| format!("Input directory {:?} does not exist", workspace_dir));
     }
 
     let realms = if realms_to_plan.is_empty() {
-        let mut dirs = Vec::new();
-        let mut entries = async_fs::read_dir(&workspace_dir).await?;
-        let mut join_set = tokio::task::JoinSet::new();
-        while let Some(entry) = entries.next_entry().await? {
-            join_set.spawn(async move {
-                let is_dir = entry.file_type().await?.is_dir();
-                Ok::<(bool, String), anyhow::Error>((
-                    is_dir,
-                    entry.file_name().to_string_lossy().to_string(),
-                ))
-            });
-        }
-        while let Some(res) = join_set.join_next().await {
-            let (is_dir, name) = res??;
-            if is_dir {
-                dirs.push(name);
-            }
-        }
-        dirs
+        crate::utils::discover_realms(&workspace_dir).await?
     } else {
         realms_to_plan.to_vec()
     };
@@ -156,10 +138,12 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
 
             let mut changed_files = Vec::new();
             let mut summary = PlanSummary::default();
+            #[allow(deprecated)]
+            let is_verbose = verbose || VERBOSE.load(std::sync::atomic::Ordering::Relaxed);
             let options = PlanOptions {
                 changes_only,
                 interactive,
-                verbose: VERBOSE.load(std::sync::atomic::Ordering::Relaxed),
+                verbose: is_verbose,
             };
             let ctx = PlanContext {
                 client: &realm_client,
@@ -199,7 +183,7 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
         );
     } else {
         let content = serde_json::to_string_pretty(&changed_files)?;
-        async_fs::write(&plan_file, content).await?;
+        crate::utils::write_secure(&plan_file, &content).await?;
         eprintln!(
             "\n{} {}",
             MEMO,
@@ -242,7 +226,7 @@ async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
     let mut entries = async_fs::read_dir(&flows_dir).await?;
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.extension().is_none_or(|ext| ext != "yaml") {
+        if !is_yaml_file(&path) {
             continue;
         }
         if is_overlay_file(&path, ctx.profile.as_deref()) {

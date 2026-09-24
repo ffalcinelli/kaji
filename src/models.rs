@@ -419,12 +419,13 @@ impl_keycloak_resource!(
     identity = |self| self
         .path
         .as_deref()
+        .map(|p| p.trim_start_matches('/'))
         .or(self.id.as_deref())
-        .or(self.name.as_deref()),
+        .or(self.name.as_deref().map(|n| n.trim_start_matches('/'))),
     name = |self| self
         .name
         .as_deref()
-        .or(self.path.as_deref())
+        .or_else(|| self.path.as_deref().map(|p| p.trim_start_matches('/')))
         .unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
@@ -1062,5 +1063,30 @@ mod tests {
             RoleRepresentation::object_path("456-def"),
             "roles-by-id/456-def"
         );
+    }
+
+    #[test]
+    fn test_group_identity_normalization() {
+        let remote_group = GroupRepresentation {
+            id: Some("uuid-123".to_string()),
+            name: Some("my-group".to_string()),
+            path: Some("/my-group".to_string()),
+            sub_groups: None,
+            extra: HashMap::new(),
+        };
+
+        let local_group = GroupRepresentation {
+            id: None,
+            name: Some("my-group".to_string()),
+            path: None,
+            sub_groups: None,
+            extra: HashMap::new(),
+        };
+
+        assert_eq!(remote_group.get_identity(), Some("my-group".to_string()));
+        assert_eq!(local_group.get_identity(), Some("my-group".to_string()));
+        assert_eq!(remote_group.get_identity(), local_group.get_identity());
+        assert_eq!(remote_group.get_name(), "my-group");
+        assert_eq!(local_group.get_name(), "my-group");
     }
 }

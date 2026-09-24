@@ -706,6 +706,7 @@ async fn test_apply_authenticator_configs_review() {
         ui: ui_reject.clone(),
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     })
     .await;
     assert!(res.is_ok());
@@ -730,6 +731,7 @@ async fn test_apply_authenticator_configs_review() {
             ui: ui_accept.clone(),
             yes: true,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         })
         .await;
     assert!(res2.is_ok());

@@ -82,6 +82,7 @@ async fn test_authenticator_config_inspect_plan_apply() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .expect("Plan failed");
@@ -154,6 +155,7 @@ async fn test_authenticator_config_inspect_plan_apply() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .expect("Plan after modifications failed");

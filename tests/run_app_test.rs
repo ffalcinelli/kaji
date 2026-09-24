@@ -389,39 +389,71 @@ async fn test_run_app_clean_interactive_abort() -> Result<()> {
 #[tokio::test]
 async fn test_load_config_file_from_cwd_kaji() -> Result<()> {
     let _lock = RUN_APP_TEST_MUTEX.lock().await;
-    let dir = tempdir().unwrap();
-    let config_path = dir.path().join("kaji.toml");
-    let toml_content = r#"
+    if std::env::var("RUN_TEST_LOAD_CONFIG_CWD_KAJI").is_ok() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("kaji.toml");
+        let toml_content = r#"
 server = "http://localhost:8080"
 "#;
-    std::fs::write(&config_path, toml_content)?;
+        std::fs::write(&config_path, toml_content)?;
+        std::env::set_current_dir(dir.path())?;
 
-    let original_cwd = std::env::current_dir()?;
-    std::env::set_current_dir(dir.path())?;
+        let config = kaji::load_config_file(None).await.unwrap();
+        assert_eq!(config.server, Some("http://localhost:8080".to_string()));
+        std::process::exit(0);
+    }
 
-    let config = kaji::load_config_file(None).await?;
-    assert_eq!(config.server, Some("http://localhost:8080".to_string()));
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new(exe)
+        .arg("test_load_config_file_from_cwd_kaji")
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("RUN_TEST_LOAD_CONFIG_CWD_KAJI", "1")
+        .output()
+        .unwrap();
 
-    std::env::set_current_dir(original_cwd)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("running 1 test"),
+        "Subprocess didn't run the test. Output: {}",
+        stdout
+    );
+    assert!(output.status.success(), "Subprocess failed: {:?}", output);
     Ok(())
 }
 
 #[tokio::test]
 async fn test_load_config_file_from_cwd_dot_kaji() -> Result<()> {
     let _lock = RUN_APP_TEST_MUTEX.lock().await;
-    let dir = tempdir().unwrap();
-    let config_path = dir.path().join(".kaji.toml");
-    let toml_content = r#"
+    if std::env::var("RUN_TEST_LOAD_CONFIG_CWD_DOT_KAJI").is_ok() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join(".kaji.toml");
+        let toml_content = r#"
 server = "http://localhost:9090"
 "#;
-    std::fs::write(&config_path, toml_content)?;
+        std::fs::write(&config_path, toml_content)?;
+        std::env::set_current_dir(dir.path())?;
 
-    let original_cwd = std::env::current_dir()?;
-    std::env::set_current_dir(dir.path())?;
+        let config = kaji::load_config_file(None).await.unwrap();
+        assert_eq!(config.server, Some("http://localhost:9090".to_string()));
+        std::process::exit(0);
+    }
 
-    let config = kaji::load_config_file(None).await?;
-    assert_eq!(config.server, Some("http://localhost:9090".to_string()));
+    let exe = std::env::current_exe().unwrap();
+    let output = std::process::Command::new(exe)
+        .arg("test_load_config_file_from_cwd_dot_kaji")
+        .arg("--exact")
+        .arg("--nocapture")
+        .env("RUN_TEST_LOAD_CONFIG_CWD_DOT_KAJI", "1")
+        .output()
+        .unwrap();
 
-    std::env::set_current_dir(original_cwd)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("running 1 test"),
+        "Subprocess didn't run the test. Output: {}",
+        stdout
+    );
+    assert!(output.status.success(), "Subprocess failed: {:?}", output);
     Ok(())
 }

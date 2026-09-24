@@ -135,6 +135,73 @@ async fn test_create_client() {
 }
 
 #[tokio::test]
+async fn test_create_resource_with_location_header() {
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::routing::post;
+    use tokio::net::TcpListener;
+
+    let app = axum::Router::new()
+        .route(
+            "/realms/master/protocol/openid-connect/token",
+            post(|| async {
+                (
+                    StatusCode::OK,
+                    axum::Json(serde_json::json!({
+                        "access_token": "test-token",
+                        "expires_in": 300,
+                        "token_type": "Bearer"
+                    })),
+                )
+            }),
+        )
+        .route(
+            "/admin/realms/test-realm/clients",
+            post(|| async {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    axum::http::header::LOCATION,
+                    "http://127.0.0.1/admin/realms/test-realm/clients/generated-uuid-999"
+                        .parse()
+                        .unwrap(),
+                );
+                (StatusCode::CREATED, headers, "")
+            }),
+        );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let mut client = KeycloakClient::new(format!("http://127.0.0.1:{}", addr.port()));
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .unwrap();
+
+    let client_rep = ClientRepresentation {
+        id: None,
+        client_id: Some("new-client".to_string()),
+        secret: None,
+        name: None,
+        description: None,
+        enabled: Some(true),
+        protocol: None,
+        redirect_uris: None,
+        web_origins: None,
+        public_client: None,
+        bearer_only: None,
+        service_accounts_enabled: None,
+        extra: std::collections::HashMap::new(),
+    };
+
+    let id = client.create_resource(&client_rep).await.unwrap();
+    assert_eq!(id, Some("generated-uuid-999".to_string()));
+}
+
+#[tokio::test]
 async fn test_update_client() {
     let mock_url = start_mock_server().await;
     let mut client = KeycloakClient::new(mock_url);

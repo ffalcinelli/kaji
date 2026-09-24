@@ -59,6 +59,7 @@ async fn wait_for_keycloak() -> Result<KeycloakClient> {
 }
 
 #[tokio::test]
+#[ignore = "requires running docker daemon and free port 8080"]
 async fn test_real_keycloak_integration() -> Result<()> {
     // 1. Bring up Keycloak
     let _guard = DockerComposeGuard::new();
@@ -117,6 +118,7 @@ standardFlowEnabled: true
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await?;
 

@@ -339,6 +339,7 @@ async fn test_apply_components_gaps() {
             ui,
             yes: true,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         },
         "components",
     )
@@ -460,6 +461,7 @@ async fn test_apply_components_enrichment() {
             ui: ui.clone(),
             yes: false,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         },
         "components",
     )
@@ -501,6 +503,7 @@ async fn test_apply_components_enrichment() {
             ui: ui2,
             yes: false,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         },
         "components",
     )
@@ -846,6 +849,7 @@ async fn test_apply_authenticator_configs_cache_hits() {
         ui,
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     })
     .await;
 }
@@ -1163,6 +1167,7 @@ async fn test_apply_authenticator_configs_missing_execution() {
         ui,
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     })
     .await;
     assert!(res.is_err());

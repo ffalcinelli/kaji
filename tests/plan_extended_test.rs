@@ -59,6 +59,7 @@ async fn test_plan_extended_scenarios() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -74,6 +75,7 @@ async fn test_plan_extended_scenarios() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -93,6 +95,7 @@ async fn test_plan_extended_scenarios() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -107,6 +110,7 @@ async fn test_plan_extended_scenarios() {
         ui: ui.clone(),
         resolver,
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());

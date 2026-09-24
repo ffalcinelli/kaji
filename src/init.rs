@@ -26,7 +26,7 @@ pub async fn run(interactive: bool, output: Option<PathBuf>, ui: &dyn Ui) -> Res
     };
 
     // 2. Overwrite check
-    if output_path.exists() {
+    if tokio::fs::try_exists(&output_path).await.unwrap_or(false) {
         if interactive {
             let overwrite = ui.confirm(
                 &format!(

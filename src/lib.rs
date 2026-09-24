@@ -67,7 +67,18 @@ pub struct Profile {
 /// # Errors
 /// Returns an error if the profile file fails to load or parse as YAML.
 pub async fn load_profile(workspace: &std::path::Path, name: &str) -> Result<Profile> {
-    let profile_path = workspace.join("profiles").join(format!("{}.yaml", name));
+    let profiles_dir = workspace.join("profiles");
+    let yaml_path = profiles_dir.join(format!("{}.yaml", name));
+    let yml_path = profiles_dir.join(format!("{}.yml", name));
+
+    let profile_path = if tokio::fs::try_exists(&yaml_path).await.unwrap_or(false) {
+        yaml_path
+    } else if tokio::fs::try_exists(&yml_path).await.unwrap_or(false) {
+        yml_path
+    } else {
+        yaml_path
+    };
+
     let content = tokio::fs::read_to_string(&profile_path)
         .await
         .with_context(|| format!("Failed to read profile file: {:?}", profile_path))?;
@@ -87,11 +98,11 @@ pub async fn load_config_file(custom_path: Option<&std::path::Path>) -> Result<C
     } else {
         let cwd = std::env::current_dir()?;
         let kaji_toml = cwd.join("kaji.toml");
-        if kaji_toml.exists() {
+        if tokio::fs::try_exists(&kaji_toml).await.unwrap_or(false) {
             Some(kaji_toml)
         } else {
             let dot_kaji_toml = cwd.join(".kaji.toml");
-            if dot_kaji_toml.exists() {
+            if tokio::fs::try_exists(&dot_kaji_toml).await.unwrap_or(false) {
                 Some(dot_kaji_toml)
             } else {
                 None
@@ -169,8 +180,13 @@ pub async fn init_secrets(
         .unwrap_or(".secrets");
 
     let env_path = workspace.join(secrets_file);
-    if env_path.exists() {
-        dotenvy::from_path(&env_path).ok();
+    let mut vars = std::env::vars().collect::<HashMap<String, String>>();
+    if tokio::fs::try_exists(&env_path).await.unwrap_or(false)
+        && let Ok(iter) = dotenvy::from_path_iter(&env_path)
+    {
+        for item in iter.flatten() {
+            vars.insert(item.0, item.1);
+        }
     }
 
     let mut resolvers: Vec<Box<dyn SecretResolver>> = Vec::new();
@@ -187,9 +203,7 @@ pub async fn init_secrets(
         resolvers.push(Box::new(VaultResolver::new(&addr, &token)?));
     }
 
-    resolvers.push(Box::new(EnvResolver::new(
-        std::env::vars().collect::<HashMap<String, String>>(),
-    )));
+    resolvers.push(Box::new(EnvResolver::new(vars)));
 
     Ok(Arc::new(CompositeResolver::new(resolvers)))
 }
@@ -211,7 +225,17 @@ async fn handle_inspect(
         .cyan()
         .bold()
     );
-    inspect::run(&client, workspace.to_path_buf(), &cli.realms, yes).await?;
+    let ui = Arc::new(crate::utils::ui::DialoguerUi::new());
+    let secrets_file = profile.and_then(|p| p.secrets_file.as_deref());
+    inspect::run_with_ui_and_secrets(
+        &client,
+        workspace.to_path_buf(),
+        &cli.realms,
+        yes,
+        ui,
+        secrets_file,
+    )
+    .await?;
     Ok(())
 }
 
@@ -226,7 +250,36 @@ async fn handle_validate(cli: &Cli, workspace: &std::path::Path) -> Result<()> {
         .cyan()
         .bold()
     );
-    validate::run(workspace.to_path_buf(), &cli.realms).await?;
+    validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
+        .await?;
+    Ok(())
+}
+
+fn check_credentials_presence(cli: &Cli, profile: Option<&Profile>) -> Result<()> {
+    let _server = profile
+        .map(|p| p.server_url.clone())
+        .or_else(|| cli.server.clone())
+        .context("Hint: Try running `kaji init` to generate a default config, or pass `--server`.")
+        .context("Keycloak server URL not provided (neither via --server nor --profile)")?;
+
+    let client_secret = profile
+        .and_then(|p| p.client_secret.clone())
+        .or_else(|| cli.client_secret.clone());
+
+    let user = profile
+        .and_then(|p| p.user.clone())
+        .or_else(|| cli.user.clone());
+
+    let password = profile
+        .and_then(|p| p.password.clone())
+        .or_else(|| cli.password.clone());
+
+    if client_secret.is_none() && (user.is_none() || password.is_none()) {
+        return Err(anyhow::anyhow!(
+            "Hint: Provide credentials via --user/--password flags, KEYCLOAK_USER/KEYCLOAK_PASSWORD env vars, or in your config file."
+        ))
+        .context("Missing authentication credentials");
+    }
     Ok(())
 }
 
@@ -238,6 +291,7 @@ async fn handle_apply(
     review: bool,
     prune: bool,
 ) -> Result<()> {
+    check_credentials_presence(cli, profile)?;
     // 1. Validate local workspace before touching Keycloak (pure file I/O — no network)
     eprintln!(
         "{} {}",
@@ -249,7 +303,7 @@ async fn handle_apply(
         .cyan()
         .bold()
     );
-    validate::run(workspace.to_path_buf(), &cli.realms)
+    validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
         .await
         .context("Pre-apply validation failed. Fix the issues above before running apply.")?;
 
@@ -289,6 +343,21 @@ async fn handle_plan(
     interactive: bool,
     verbose: bool,
 ) -> Result<()> {
+    check_credentials_presence(cli, profile)?;
+    eprintln!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Validating Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
+        .await
+        .context("Pre-plan validation failed. Fix the issues above before running plan.")?;
+
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
     eprintln!(
@@ -301,7 +370,6 @@ async fn handle_plan(
         .cyan()
         .bold()
     );
-    plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
     plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace.to_path_buf(),
@@ -311,6 +379,7 @@ async fn handle_plan(
         ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
         resolver,
         profile: cli.profile.clone(),
+        verbose,
     })
     .await?;
     Ok(())
@@ -322,6 +391,21 @@ async fn handle_drift(
     workspace: &std::path::Path,
     verbose: bool,
 ) -> Result<()> {
+    check_credentials_presence(cli, profile)?;
+    eprintln!(
+        "{} {}",
+        SEARCH,
+        style(format!(
+            "Validating Keycloak configuration from {:?}",
+            workspace
+        ))
+        .cyan()
+        .bold()
+    );
+    validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
+        .await
+        .context("Pre-drift validation failed. Fix the issues above before running drift.")?;
+
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
     eprintln!(
@@ -334,7 +418,6 @@ async fn handle_drift(
         .cyan()
         .bold()
     );
-    plan::VERBOSE.store(verbose, std::sync::atomic::Ordering::Relaxed);
     plan::run(plan::PlanArgs {
         client: &client,
         workspace_dir: workspace.to_path_buf(),
@@ -344,6 +427,7 @@ async fn handle_drift(
         ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
         resolver,
         profile: cli.profile.clone(),
+        verbose,
     })
     .await?;
     Ok(())

@@ -231,12 +231,14 @@ kaji sync --workspace my-workspace --yes
 ```
 
 ### `validate`
-Ensures your local YAML files are syntactically correct and follow the Keycloak model. Checks include:
+Ensures your local YAML files are syntactically correct and follow the Keycloak model. Supports environment profiles (skips partial overlays like `*.prod.yaml` when validating base configs, or deep-merges them when `--profile` is specified). Checks include:
 - Required fields are present and non-empty (realm name, client ID, role name, flow alias, etc.)
 - **Authentication flow aliases do not contain characters forbidden by Keycloak** (`(`, `)`, `[`, `]`, `{`, `}`, `/`, `\`)
 - **No duplicate authentication flow aliases** within the same workspace
+- **Cycle detection (DFS)** and reference validation for authentication flows and sub-flows
 ```bash
 kaji validate
+kaji -p prod validate
 ```
 
 ### `plan`

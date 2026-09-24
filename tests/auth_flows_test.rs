@@ -160,6 +160,7 @@ topLevel: false
         ui,
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     // This must succeed by adopting the existing flow after 409 Conflict instead of failing!
@@ -278,6 +279,7 @@ authenticationExecutions:
         ui,
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     let result = apply::generic::apply_resources::<AuthenticationFlowRepresentation>(ctx).await;

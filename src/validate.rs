@@ -16,22 +16,30 @@ use tokio::task::JoinSet;
 async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
     dir: &Path,
     file_type: &str,
+    profile: Option<&str>,
 ) -> Result<Vec<(PathBuf, T)>> {
     let mut results = Vec::new();
     if fs::try_exists(dir).await? {
         let mut entries = fs::read_dir(dir).await?;
         let mut join_set = JoinSet::new();
         let file_type_str = file_type.to_string();
+        let profile_owned = profile.map(|s| s.to_string());
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "yaml") {
+            if path
+                .extension()
+                .is_some_and(|ext| ext == "yaml" || ext == "yml")
+            {
+                if crate::utils::yaml::is_overlay_file(&path, profile_owned.as_deref()) {
+                    continue;
+                }
                 let ft = file_type_str.clone();
+                let prof = profile_owned.clone();
                 join_set.spawn(async move {
-                    let content = fs::read_to_string(&path)
-                        .await
-                        .with_context(|| format!("Failed to read {} file {:?}", ft, path))?;
-                    let item: T = serde_yaml::from_str(&content)
+                    let val =
+                        crate::utils::yaml::load_yaml_with_overlay(&path, prof.as_deref()).await?;
+                    let item: T = serde_json::from_value(val)
                         .with_context(|| format!("Failed to parse {} file {:?}", ft, path))?;
                     Ok::<(PathBuf, T), anyhow::Error>((path, item))
                 });
@@ -50,36 +58,27 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
 /// # Errors
 /// Returns an error if validation fails or a file cannot be parsed.
 pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Result<()> {
+    run_with_profile(workspace_dir, realms_to_validate, None).await
+}
+
+/// Validates the structure and syntax of local YAML configuration files with an active profile.
+///
+/// # Errors
+/// Returns an error if validation fails or a file cannot be parsed.
+pub async fn run_with_profile(
+    workspace_dir: PathBuf,
+    realms_to_validate: &[String],
+    profile: Option<&str>,
+) -> Result<()> {
     if !fs::try_exists(&workspace_dir).await? {
         return Err(anyhow::anyhow!(
             "Hint: Create the workspace directory first or use `kaji init`."
-        )
-        .context(format!(
-            "Input directory {:?} does not exist",
-            workspace_dir
-        )));
+        ))
+        .with_context(|| format!("Input directory {:?} does not exist", workspace_dir));
     }
 
     let realms = if realms_to_validate.is_empty() {
-        let mut dirs = Vec::new();
-        let mut entries = fs::read_dir(&workspace_dir).await?;
-        let mut join_set = JoinSet::new();
-        while let Some(entry) = entries.next_entry().await? {
-            join_set.spawn(async move {
-                let is_dir = entry.file_type().await?.is_dir();
-                Ok::<(bool, String), anyhow::Error>((
-                    is_dir,
-                    entry.file_name().to_string_lossy().to_string(),
-                ))
-            });
-        }
-        while let Some(res) = join_set.join_next().await {
-            let (is_dir, name) = res??;
-            if is_dir {
-                dirs.push(name);
-            }
-        }
-        dirs
+        crate::utils::discover_realms(&workspace_dir).await?
     } else {
         realms_to_validate.to_vec()
     };
@@ -106,7 +105,7 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
                 .bold()
         );
         let realm_dir = workspace_dir.join(realm_name);
-        validate_realm(realm_dir).await?;
+        validate_realm(realm_dir, profile).await?;
         eprintln!(
             "  {} {}",
             SUCCESS,
@@ -118,16 +117,18 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
     Ok(())
 }
 
-async fn validate_realm_config(workspace_dir: &Path) -> Result<()> {
+async fn validate_realm_config(workspace_dir: &Path, profile: Option<&str>) -> Result<()> {
     let realm_path = workspace_dir.join("realm.yaml");
-    let realm_content = fs::read_to_string(&realm_path).await.with_context(|| {
-        format!(
-            "realm.yaml not found or failed to read in {:?}",
-            workspace_dir
-        )
-    })?;
+    let val = crate::utils::yaml::load_yaml_with_overlay(&realm_path, profile)
+        .await
+        .with_context(|| {
+            format!(
+                "realm.yaml not found or failed to read in {:?}",
+                workspace_dir
+            )
+        })?;
     let realm: RealmRepresentation =
-        serde_yaml::from_str(&realm_content).context("Failed to parse realm.yaml")?;
+        serde_json::from_value(val).context("Failed to parse realm.yaml")?;
 
     if realm.realm.is_empty() {
         anyhow::bail!("Realm name is empty in realm.yaml");
@@ -448,9 +449,9 @@ fn validate_authenticator_configs(
     Ok(())
 }
 
-async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
+async fn validate_realm(workspace_dir: PathBuf, profile: Option<&str>) -> Result<()> {
     // 1. Validate Realm
-    validate_realm_config(&workspace_dir).await?;
+    validate_realm_config(&workspace_dir, profile).await?;
 
     // Read all resource directories concurrently
     let roles_dir = workspace_dir.join("roles");
@@ -464,15 +465,27 @@ async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
     let configs_dir = workspace_dir.join("authenticator-configs");
 
     let (roles, clients, idps, scopes, groups, users, flows, actions, configs) = tokio::try_join!(
-        read_yaml_files::<RoleRepresentation>(&roles_dir, "role"),
-        read_yaml_files::<ClientRepresentation>(&clients_dir, "client"),
-        read_yaml_files::<IdentityProviderRepresentation>(&idps_dir, "idp"),
-        read_yaml_files::<ClientScopeRepresentation>(&scopes_dir, "client-scope"),
-        read_yaml_files::<GroupRepresentation>(&groups_dir, "group"),
-        read_yaml_files::<UserRepresentation>(&users_dir, "user"),
-        read_yaml_files::<AuthenticationFlowRepresentation>(&flows_dir, "authentication-flow"),
-        read_yaml_files::<RequiredActionProviderRepresentation>(&actions_dir, "required-action"),
-        read_yaml_files::<AuthenticatorConfigRepresentation>(&configs_dir, "authenticator-config"),
+        read_yaml_files::<RoleRepresentation>(&roles_dir, "role", profile),
+        read_yaml_files::<ClientRepresentation>(&clients_dir, "client", profile),
+        read_yaml_files::<IdentityProviderRepresentation>(&idps_dir, "idp", profile),
+        read_yaml_files::<ClientScopeRepresentation>(&scopes_dir, "client-scope", profile),
+        read_yaml_files::<GroupRepresentation>(&groups_dir, "group", profile),
+        read_yaml_files::<UserRepresentation>(&users_dir, "user", profile),
+        read_yaml_files::<AuthenticationFlowRepresentation>(
+            &flows_dir,
+            "authentication-flow",
+            profile
+        ),
+        read_yaml_files::<RequiredActionProviderRepresentation>(
+            &actions_dir,
+            "required-action",
+            profile
+        ),
+        read_yaml_files::<AuthenticatorConfigRepresentation>(
+            &configs_dir,
+            "authenticator-config",
+            profile
+        ),
     )?;
 
     // Validate resources
@@ -488,18 +501,22 @@ async fn validate_realm(workspace_dir: PathBuf) -> Result<()> {
 
     // Validate Components and Keys
     tokio::try_join!(
-        validate_components_in_dir(&workspace_dir, "components"),
-        validate_components_in_dir(&workspace_dir, "keys")
+        validate_components_in_dir(&workspace_dir, "components", profile),
+        validate_components_in_dir(&workspace_dir, "keys", profile)
     )?;
 
     Ok(())
 }
 
-async fn validate_components_in_dir(workspace_dir: &Path, dir_name: &str) -> Result<()> {
+async fn validate_components_in_dir(
+    workspace_dir: &Path,
+    dir_name: &str,
+    profile: Option<&str>,
+) -> Result<()> {
     let dir = workspace_dir.join(dir_name);
     if fs::try_exists(&dir).await? {
         let components: Vec<(PathBuf, ComponentRepresentation)> =
-            read_yaml_files(&dir, dir_name).await?;
+            read_yaml_files(&dir, dir_name, profile).await?;
         for (path, component) in &components {
             if let Some(name) = &component.name
                 && name.is_empty()
@@ -836,5 +853,56 @@ mod tests {
 
         let flows = vec![shared_subflow, parent_1, parent_2];
         assert!(validate_authentication_flows(&flows).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_profile_overlay() {
+        use tempfile::tempdir;
+        let temp = tempdir().unwrap();
+        let ws = temp.path().join("realm");
+        let clients_dir = ws.join("clients");
+        tokio::fs::create_dir_all(&clients_dir).await.unwrap();
+
+        // Write realm.yaml
+        tokio::fs::write(ws.join("realm.yaml"), "realm: test-realm\n")
+            .await
+            .unwrap();
+
+        // Write base client
+        tokio::fs::write(
+            clients_dir.join("my-client.yaml"),
+            "clientId: my-client\nname: Base Client\n",
+        )
+        .await
+        .unwrap();
+
+        // Write partial overlay client (missing clientId, which would fail without overlay skip)
+        tokio::fs::write(
+            clients_dir.join("my-client.prod.yaml"),
+            "name: Prod Override Client\n",
+        )
+        .await
+        .unwrap();
+
+        // 1. Without profile: overlay is skipped, base client validates successfully
+        let res_no_profile = run(temp.path().to_path_buf(), &["realm".to_string()]).await;
+        assert!(
+            res_no_profile.is_ok(),
+            "Validation should succeed by skipping partial overlay: {:?}",
+            res_no_profile.err()
+        );
+
+        // 2. With profile: overlay is deep merged, validation succeeds
+        let res_with_profile = run_with_profile(
+            temp.path().to_path_buf(),
+            &["realm".to_string()],
+            Some("prod"),
+        )
+        .await;
+        assert!(
+            res_with_profile.is_ok(),
+            "Validation with profile should succeed: {:?}",
+            res_with_profile.err()
+        );
     }
 }

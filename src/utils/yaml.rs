@@ -15,6 +15,12 @@ pub fn deep_merge(a: &mut Value, b: &Value) {
     }
 }
 
+/// Returns true if the path has a YAML extension (`.yaml` or `.yml`).
+pub fn is_yaml_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "yaml" || ext == "yml")
+}
+
 /// Loads a base YAML file and optionally merges it with a profile-specific overlay.
 pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> Result<Value> {
     let content = async_fs::read_to_string(base_path)
@@ -29,22 +35,28 @@ pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> 
         && let Some(ext) = base_path.extension().and_then(|e| e.to_str())
     {
         let overlay_path = base_path.with_file_name(format!("{}.{}.{}", stem, profile_name, ext));
-        match async_fs::read_to_string(&overlay_path).await {
-            Ok(overlay_content) => {
-                let overlay_val: Value =
-                    serde_yaml::from_str(&overlay_content).with_context(|| {
-                        format!("Failed to parse overlay YAML file: {:?}", overlay_path)
-                    })?;
-                deep_merge(&mut val, &overlay_val);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                // Ignore missing overlay files
-            }
-            Err(e) => {
-                return Err(e).with_context(|| {
-                    format!("Failed to read overlay YAML file: {:?}", overlay_path)
-                });
-            }
+        let alt_ext = if ext == "yaml" { "yml" } else { "yaml" };
+        let alt_overlay_path =
+            base_path.with_file_name(format!("{}.{}.{}", stem, profile_name, alt_ext));
+
+        let actual_overlay = if async_fs::try_exists(&overlay_path).await.unwrap_or(false) {
+            Some(overlay_path)
+        } else if async_fs::try_exists(&alt_overlay_path)
+            .await
+            .unwrap_or(false)
+        {
+            Some(alt_overlay_path)
+        } else {
+            None
+        };
+
+        if let Some(path) = actual_overlay {
+            let overlay_content = async_fs::read_to_string(&path)
+                .await
+                .with_context(|| format!("Failed to read overlay YAML file: {:?}", path))?;
+            let overlay_val: Value = serde_yaml::from_str(&overlay_content)
+                .with_context(|| format!("Failed to parse overlay YAML file: {:?}", path))?;
+            deep_merge(&mut val, &overlay_val);
         }
     }
 
@@ -53,12 +65,11 @@ pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> 
 
 /// Returns true if the file is a profile-specific overlay.
 pub fn is_overlay_file(path: &Path, profile: Option<&str>) -> bool {
-    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-        let is_yaml_ext = file_name.ends_with(".yaml") || file_name.ends_with(".yml");
-        if !is_yaml_ext {
-            return false;
-        }
+    if !is_yaml_file(path) {
+        return false;
+    }
 
+    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
         // Pattern: *.profile.yaml or *.profile.yml
         if let Some(p) = profile
             && (file_name.ends_with(&format!(".{}.yaml", p))
@@ -380,5 +391,37 @@ mod tests {
             stdout
         );
         assert!(output.status.success(), "Subprocess failed: {:?}", output);
+    }
+
+    #[test]
+    fn test_is_yaml_file() {
+        assert!(is_yaml_file(Path::new("client.yaml")));
+        assert!(is_yaml_file(Path::new("client.yml")));
+        assert!(is_yaml_file(Path::new("/path/to/flow.dev.yaml")));
+        assert!(is_yaml_file(Path::new("/path/to/flow.dev.yml")));
+        assert!(!is_yaml_file(Path::new("client.json")));
+        assert!(!is_yaml_file(Path::new("client.toml")));
+        assert!(!is_yaml_file(Path::new("client")));
+    }
+
+    #[tokio::test]
+    async fn test_load_yaml_with_cross_extension_overlay() {
+        let temp = tempdir().unwrap();
+        let base_path = temp.path().join("service.yaml");
+        let overlay_path = temp.path().join("service.prod.yml");
+
+        tokio::fs::write(&base_path, "name: base-service\nenabled: false\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&overlay_path, "enabled: true\nport: 8080\n")
+            .await
+            .unwrap();
+
+        let val = load_yaml_with_overlay(&base_path, Some("prod"))
+            .await
+            .unwrap();
+        assert_eq!(val["name"], "base-service");
+        assert_eq!(val["enabled"], true);
+        assert_eq!(val["port"], 8080);
     }
 }

@@ -44,6 +44,7 @@ fn main() {
                 ui: ui.clone(),
                 resolver: resolver.clone(),
                 profile: None,
+                verbose: false,
             })
             .await
             .unwrap();

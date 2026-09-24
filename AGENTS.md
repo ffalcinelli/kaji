@@ -19,17 +19,18 @@ Welcome! This document serves as the canonical developer guide and instructions 
 
 All business logic is located in the [`src/`](src/) directory:
 
-*   [`src/client.rs`](src/client.rs): Wrapper around the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for resources.
-*   [`src/models.rs`](src/models.rs): Strongly-typed Serde representations of Keycloak resources. Implements the `KeycloakResource` and `ResourceMeta` traits for generic resource management.
-*   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline. Supported CLI aliases: `sync`, `pull`, `export`.
-*   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation. Also runs a **sub-flow check** for authentication flows: identifies shared sub-flows and explains topological staging and auto-adoption.
-*   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules. Employs **topological dependency ordering** (e.g. leaf/shared sub-flows applied in Tier 0 before dependent parent flows in Tier 1+) and **graceful 409 Conflict auto-adoption** to eliminate Keycloak flow race conditions. Supports optional pruning/deletion of orphaned remote resources via the `--prune` flag. **`apply` runs `validate` automatically** before any Keycloak API calls are made.
-*   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints. Checks include forbidden characters, duplicate aliases, valid execution requirement enums, subflow reference integrity, and **cycle detection (DFS)** in authentication sub-flow dependency graphs.
-*   [`src/clean.rs`](src/clean.rs): Removes unreferenced or invalid configuration files from the workspace.
+*   [`src/client.rs`](src/client.rs): Wrapper around the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for resources. Automatically extracts generated resource IDs from HTTP 201 `Location` response headers to prevent post-creation query storms.
+*   [`src/models.rs`](src/models.rs): Strongly-typed Serde representations of Keycloak resources. Implements the `KeycloakResource` and `ResourceMeta` traits for generic resource management. Normalizes group identities (trimming leading slashes) to cleanly align local and remote representations.
+*   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline. Routes file overwrite prompts through the `Ui` trait abstraction (`run_with_ui_and_secrets`), exporting discovered secrets to profile-configured secrets files. Supported CLI aliases: `sync`, `pull`, `export`.
+*   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`. Pre-validates the workspace via `validate::run_with_profile` before initiating remote Keycloak queries. Receives `verbose: bool` directly in `PlanArgs` without static mutable state. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation. Also runs a **sub-flow check** for authentication flows: identifies shared sub-flows and explains topological staging and auto-adoption.
+*   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules. Leverages generated IDs from `Location` headers during creation to eliminate unnecessary full-list queries. Employs **topological dependency ordering** (e.g. leaf/shared sub-flows applied in Tier 0 before dependent parent flows in Tier 1+) and **graceful 409 Conflict auto-adoption** to eliminate Keycloak flow race conditions. Serializes interactive user confirmations and `.secrets` file updates across concurrent tasks using a shared prompt mutex, and handles JSON placeholder restoration via segmented path navigation (`PathSegment`). Supports optional pruning/deletion of orphaned remote resources via the `--prune` flag. **`apply` runs `validate` automatically** before any Keycloak API calls are made.
+*   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints. Supports environment profiles (`run_with_profile`), skipping partial standalone overlays (`*.{profile}.yaml`) and deep-merging them when a profile is specified. Checks include forbidden characters, duplicate aliases, valid execution requirement enums, subflow reference integrity, and **cycle detection (DFS)** in authentication sub-flow dependency graphs.
+*   [`src/clean.rs`](src/clean.rs): Removes unreferenced or invalid configuration files from the workspace asynchronously.
 *   [`src/init.rs`](src/init.rs): Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.
-*   [`src/cli/`](src/cli/): Interactive CLI scaffolding menu. Styled with `dialoguer`'s `ColorfulTheme` and uses `FuzzySelect` for real-time query filtering. Auto-discovers existing realms in the workspace directory.
-*   [`src/utils/secrets/`](src/utils/secrets/): Manages secret resolution (Env, HashiCorp Vault with cached lookup).
-*   [`src/utils/yaml.rs`](src/utils/yaml.rs): Handles YAML serialization, sorting, and profile-specific deep-merging using `serde_yaml_ng`.
+*   [`src/cli/`](src/cli/): Interactive CLI scaffolding menu. Styled with `dialoguer`'s `ColorfulTheme` and uses `FuzzySelect` for real-time query filtering. Auto-discovers existing realms in the workspace directory. Supports key rotation in both `keys/` and `components/` directories.
+*   [`src/utils/secrets/`](src/utils/secrets/): Manages secret resolution (Env, HashiCorp Vault with cached lookup). Resolves any non-vault environment variable from `.secrets` or process environment and enforces error reporting on missing placeholders. Supports compound and embedded placeholders (`"${HOST}:${PORT}"`).
+*   [`src/utils.rs`](src/utils.rs): Common utilities, including `discover_realms` for unified workspace realm discovery filtering out `.*`, `profiles`, and `target`.
+*   [`src/utils/yaml.rs`](src/utils/yaml.rs): Handles YAML serialization, sorting, and profile-specific deep-merging using `serde_yaml_ng`. Unifies `.yaml` and `.yml` extension support across all resource loaders, overlays, and pruning.
 *   [`src/utils/ui.rs`](src/utils/ui.rs): CLI visual formatting, progress bars (`indicatif`), emojis, and styling (`DialoguerUi`).
 
 ---
@@ -68,7 +69,7 @@ During the reconciliation (`apply`) process, Keycloak may enrich resources with 
 Multi-environment configurations are managed using the `--profile` (`-p`) flag:
 
 ### Profiles
-Profiles are stored in the `profiles/` directory (e.g., `profiles/prod.yaml`). They define environment-specific connection details:
+Profiles are stored in the `profiles/` directory (e.g., `profiles/prod.yaml` or `profiles/prod.yml`). They define environment-specific connection details:
 ```yaml
 server_url: "https://keycloak.prod.example.com"
 client_id: "kaji-cli"

@@ -124,11 +124,13 @@ impl KeycloakClient {
     >(
         &self,
         res: &T,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         let mapped = res.clone().pre_save(self).await?;
-        self.post(&self.resource_url::<T>(), &mapped).await?;
+        let maybe_id = self
+            .post_with_location(&self.resource_url::<T>(), &mapped)
+            .await?;
         self.invalidate_resource_cache::<T>();
-        Ok(())
+        Ok(maybe_id)
     }
 
     pub async fn update_resource<
@@ -176,7 +178,8 @@ impl KeycloakClient {
     }
 
     pub async fn create_client(&self, client_rep: &ClientRepresentation) -> Result<()> {
-        self.create_resource(client_rep).await
+        self.create_resource(client_rep).await?;
+        Ok(())
     }
 
     pub async fn update_client(&self, id: &str, client_rep: &ClientRepresentation) -> Result<()> {
@@ -188,7 +191,8 @@ impl KeycloakClient {
     }
 
     pub async fn create_role(&self, role_rep: &RoleRepresentation) -> Result<()> {
-        self.create_resource(role_rep).await
+        self.create_resource(role_rep).await?;
+        Ok(())
     }
 
     pub async fn update_role(&self, id: &str, role_rep: &RoleRepresentation) -> Result<()> {
@@ -203,7 +207,8 @@ impl KeycloakClient {
         &self,
         idp_rep: &IdentityProviderRepresentation,
     ) -> Result<()> {
-        self.create_resource(idp_rep).await
+        self.create_resource(idp_rep).await?;
+        Ok(())
     }
 
     pub async fn update_identity_provider(
@@ -224,7 +229,8 @@ impl KeycloakClient {
     }
 
     pub async fn create_client_scope(&self, scope_rep: &ClientScopeRepresentation) -> Result<()> {
-        self.create_resource(scope_rep).await
+        self.create_resource(scope_rep).await?;
+        Ok(())
     }
 
     pub async fn update_client_scope(
@@ -244,7 +250,8 @@ impl KeycloakClient {
     }
 
     pub async fn create_group(&self, group_rep: &GroupRepresentation) -> Result<()> {
-        self.create_resource(group_rep).await
+        self.create_resource(group_rep).await?;
+        Ok(())
     }
 
     pub async fn update_group(&self, id: &str, group_rep: &GroupRepresentation) -> Result<()> {
@@ -260,7 +267,8 @@ impl KeycloakClient {
     }
 
     pub async fn create_user(&self, user_rep: &UserRepresentation) -> Result<()> {
-        self.create_resource(user_rep).await
+        self.create_resource(user_rep).await?;
+        Ok(())
     }
 
     pub async fn update_user(&self, id: &str, user_rep: &UserRepresentation) -> Result<()> {
@@ -279,7 +287,8 @@ impl KeycloakClient {
         &self,
         flow_rep: &AuthenticationFlowRepresentation,
     ) -> Result<()> {
-        self.create_resource(flow_rep).await
+        self.create_resource(flow_rep).await?;
+        Ok(())
     }
 
     pub async fn update_authentication_flow(
@@ -340,7 +349,8 @@ impl KeycloakClient {
     }
 
     pub async fn create_component(&self, component_rep: &ComponentRepresentation) -> Result<()> {
-        self.create_resource(component_rep).await
+        self.create_resource(component_rep).await?;
+        Ok(())
     }
 
     pub async fn update_component(
@@ -372,6 +382,15 @@ impl KeycloakClient {
     }
 
     async fn post<T: Serialize>(&self, url: &str, body: &T) -> Result<()> {
+        let _ = self.post_with_location(url, body).await?;
+        Ok(())
+    }
+
+    async fn post_with_location<T: Serialize>(
+        &self,
+        url: &str,
+        body: &T,
+    ) -> Result<Option<String>> {
         let token = self.get_token()?;
         debug!("POST {}", redact_url(url));
         let response = self
@@ -383,8 +402,20 @@ impl KeycloakClient {
             .await
             .with_context(|| format!("Failed to send POST request to {}", redact_url(url)))?;
 
-        Self::check_response(response, "POST request failed").await?;
-        Ok(())
+        let response = Self::check_response(response, "POST request failed").await?;
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|val| val.to_str().ok())
+            .and_then(|loc| {
+                loc.trim_end_matches('/')
+                    .split('/')
+                    .next_back()
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
+            });
+
+        Ok(location)
     }
 
     async fn put<T: Serialize>(&self, url: &str, body: &T) -> Result<()> {

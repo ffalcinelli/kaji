@@ -7,7 +7,7 @@ pub mod generic;
 pub mod realm;
 
 macro_rules! spawn_apply_stage {
-    ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, $prune:expr, [ $($t:ty),* ]) => {
+    ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, $prune:expr, $prompt_mutex:expr, [ $($t:ty),* ]) => {
         $(
             let client_clone = $client.clone();
             let dir_clone = $dir.clone();
@@ -20,6 +20,7 @@ macro_rules! spawn_apply_stage {
             let review_clone = $review;
             let yes_clone = $yes;
             let prune_clone = $prune;
+            let prompt_mutex_clone = Arc::clone(&$prompt_mutex);
             $set.spawn(async move {
                 let ctx = crate::apply::ApplyContext {
                     client: &client_clone,
@@ -33,6 +34,7 @@ macro_rules! spawn_apply_stage {
                     ui: ui_clone,
                     yes: yes_clone,
                     prune: prune_clone,
+                    prompt_mutex: prompt_mutex_clone,
                 };
                 generic::apply_resources::<$t>(
                     ctx
@@ -105,7 +107,7 @@ use crate::models::{
 };
 use crate::utils::secrets::SecretResolver;
 pub use crate::utils::ui::{ACTION, SUCCESS_CREATE, SUCCESS_UPDATE, Ui, WARN};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use console::style;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -144,14 +146,11 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
         resolver,
         profile,
     } = args;
-    if !workspace_dir.exists() {
+    if !async_fs::try_exists(&workspace_dir).await? {
         return Err(anyhow::anyhow!(
             "Hint: Create the workspace directory first or use `kaji init`."
-        )
-        .context(format!(
-            "Input directory {:?} does not exist",
-            workspace_dir
-        )));
+        ))
+        .with_context(|| format!("Input directory {:?} does not exist", workspace_dir));
     }
 
     let secrets_file = if let Some(p) = &profile {
@@ -170,7 +169,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
 
     // Check for .kajiplan
     let plan_path = workspace_dir.join(".kajiplan");
-    let planned_files = if plan_path.exists() {
+    let planned_files = if async_fs::try_exists(&plan_path).await.unwrap_or(false) {
         let content = async_fs::read_to_string(&plan_path).await?;
         let items: Vec<PathBuf> = serde_json::from_str(&content)?;
         if items.is_empty() {
@@ -205,25 +204,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     };
 
     let realms = if realms_to_apply.is_empty() {
-        let mut dirs = Vec::new();
-        let mut entries = async_fs::read_dir(&workspace_dir).await?;
-        let mut join_set = JoinSet::new();
-        while let Some(entry) = entries.next_entry().await? {
-            join_set.spawn(async move {
-                let is_dir = entry.file_type().await?.is_dir();
-                Ok::<(bool, String), anyhow::Error>((
-                    is_dir,
-                    entry.file_name().to_string_lossy().to_string(),
-                ))
-            });
-        }
-        while let Some(res) = join_set.join_next().await {
-            let (is_dir, name) = res??;
-            if is_dir {
-                dirs.push(name);
-            }
-        }
-        dirs
+        crate::utils::discover_realms(&workspace_dir).await?
     } else {
         realms_to_apply.to_vec()
     };
@@ -237,6 +218,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
         return Ok(());
     }
 
+    let prompt_mutex = Arc::new(tokio::sync::Mutex::new(()));
     let mut set = tokio::task::JoinSet::new();
 
     for realm_name in realms {
@@ -248,6 +230,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
         let profile = profile.clone();
         let ui = Arc::clone(&ui);
         let secrets_path = Arc::clone(&secrets_path);
+        let prompt_mutex = Arc::clone(&prompt_mutex);
 
         set.spawn(async move {
             eprintln!(
@@ -270,6 +253,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
                 ui,
                 yes,
                 prune,
+                prompt_mutex,
             })
             .await
         });
@@ -278,7 +262,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     crate::utils::join_all_tasks(set, None).await?;
 
     // Success - remove plan
-    if plan_path.exists() {
+    if async_fs::try_exists(&plan_path).await.unwrap_or(false) {
         let _ = async_fs::remove_file(plan_path).await;
     }
 
@@ -297,6 +281,7 @@ pub struct ApplyContext<'a> {
     pub ui: Arc<dyn Ui>,
     pub yes: bool,
     pub prune: bool,
+    pub prompt_mutex: Arc<tokio::sync::Mutex<()>>,
 }
 
 async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
@@ -312,6 +297,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         ui,
         yes,
         prune,
+        prompt_mutex,
     } = ctx;
     // Stage 0: Realms
     realm::apply_realm(crate::apply::ApplyContext {
@@ -326,6 +312,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         ui: Arc::clone(&ui),
         yes,
         prune,
+        prompt_mutex: Arc::clone(&prompt_mutex),
     })
     .await?;
 
@@ -345,6 +332,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             ui,
             yes,
             prune,
+            prompt_mutex,
             [IdentityProviderRepresentation, RoleRepresentation]
         );
         crate::utils::join_all_tasks(set, None).await?;
@@ -366,6 +354,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             ui,
             yes,
             prune,
+            prompt_mutex,
             [
                 ClientRepresentation,
                 ClientScopeRepresentation,
@@ -393,6 +382,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             ui,
             yes,
             prune,
+            prompt_mutex,
             [UserRepresentation]
         );
 
@@ -404,6 +394,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let rn_ac = realm_name.to_string();
         let p_ac = profile.clone();
         let ui_ac = Arc::clone(&ui);
+        let prompt_mutex_ac = Arc::clone(&prompt_mutex);
         set.spawn(async move {
             authenticator_config::apply_authenticator_configs(crate::apply::ApplyContext {
                 client: &client_ac,
@@ -417,6 +408,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                 ui: ui_ac,
                 yes,
                 prune: false, // prune not used in this call
+                prompt_mutex: prompt_mutex_ac,
             })
             .await
         });
@@ -429,6 +421,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let rn_co = realm_name.to_string();
         let p_co = profile.clone();
         let ui_co = Arc::clone(&ui);
+        let prompt_mutex_co = Arc::clone(&prompt_mutex);
         set.spawn(async move {
             components::apply_components_or_keys(
                 crate::apply::ApplyContext {
@@ -443,6 +436,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                     ui: ui_co,
                     yes,
                     prune: false,
+                    prompt_mutex: prompt_mutex_co,
                 },
                 "components",
             )
@@ -457,6 +451,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         let rn_ke = realm_name.to_string();
         let p_ke = profile.clone();
         let ui_ke = Arc::clone(&ui);
+        let prompt_mutex_ke = Arc::clone(&prompt_mutex);
         set.spawn(async move {
             components::apply_components_or_keys(
                 crate::apply::ApplyContext {
@@ -471,6 +466,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                     ui: ui_ke,
                     yes,
                     prune: false,
+                    prompt_mutex: prompt_mutex_ke,
                 },
                 "keys",
             )

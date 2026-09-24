@@ -57,6 +57,7 @@ async fn test_ultimate_flow() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -107,6 +108,7 @@ async fn test_ultimate_flow() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -139,6 +141,7 @@ async fn test_ultimate_flow() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
