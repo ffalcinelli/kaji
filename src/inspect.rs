@@ -6,10 +6,9 @@ use crate::models::{
     ResourceMeta, RoleRepresentation, UserRepresentation,
 };
 use crate::utils::to_sorted_yaml_with_secrets;
-use crate::utils::ui::{CHECK, SEARCH, SUCCESS, WARN};
+use crate::utils::ui::{CHECK, SEARCH, SUCCESS, Ui, WARN};
 use anyhow::{Context, Result};
 use console::style;
-use dialoguer::{Confirm, theme::ColorfulTheme};
 use sanitize_filename::sanitize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,11 +20,28 @@ use tokio::sync::Mutex;
 ///
 /// # Errors
 /// Returns an error if Keycloak server query or file writing fails.
-pub async fn run(
+pub async fn run_with_ui(
     client: &KeycloakClient,
     workspace_dir: PathBuf,
     realms_to_inspect: &[String],
     yes: bool,
+    ui: Arc<dyn Ui>,
+) -> Result<()> {
+    run_with_ui_and_secrets(client, workspace_dir, realms_to_inspect, yes, ui, None).await
+}
+
+/// Exports/inspects remote Keycloak server configuration into local workspace files,
+/// writing secrets to the specified secrets file.
+///
+/// # Errors
+/// Returns an error if Keycloak server query or file writing fails.
+pub async fn run_with_ui_and_secrets(
+    client: &KeycloakClient,
+    workspace_dir: PathBuf,
+    realms_to_inspect: &[String],
+    yes: bool,
+    ui: Arc<dyn Ui>,
+    secrets_file: Option<&str>,
 ) -> Result<()> {
     fs::create_dir_all(&workspace_dir)
         .await
@@ -53,6 +69,7 @@ pub async fn run(
         let all_secrets = Arc::clone(&all_secrets);
         let prompt_mutex = Arc::clone(&prompt_mutex);
         let realm_name_owned = realm_name.clone();
+        let ui = Arc::clone(&ui);
 
         set.spawn(async move {
             {
@@ -72,6 +89,7 @@ pub async fn run(
                 all_secrets,
                 yes,
                 prompt_mutex,
+                ui,
             )
             .await
         });
@@ -81,7 +99,8 @@ pub async fn run(
 
     let secrets_lock = all_secrets.lock().await;
     if !secrets_lock.is_empty() {
-        let env_path = workspace_dir.join(".secrets");
+        let secrets_filename = secrets_file.unwrap_or(".secrets");
+        let env_path = workspace_dir.join(secrets_filename);
         let mut env_content = String::new();
         for (key, value) in secrets_lock.iter() {
             env_content.push_str(&format!("{}={}\n", key, value));
@@ -97,16 +116,42 @@ pub async fn run(
         }
 
         let new_content = format!("{}{}", existing_env, env_content);
-        write_if_changed_with_mutex(&env_path, &new_content, yes, Arc::clone(&prompt_mutex))
-            .await?;
+        write_if_changed_with_mutex(
+            &env_path,
+            &new_content,
+            yes,
+            Arc::clone(&prompt_mutex),
+            Arc::clone(&ui),
+        )
+        .await?;
         eprintln!(
             "{} {}",
             CHECK,
-            style("Exported secrets to .secrets").green()
+            style(format!("Exported secrets to {}", secrets_filename)).green()
         );
     }
 
     Ok(())
+}
+
+/// Exports/inspects remote Keycloak server configuration into local workspace files.
+///
+/// # Errors
+/// Returns an error if Keycloak server query or file writing fails.
+pub async fn run(
+    client: &KeycloakClient,
+    workspace_dir: PathBuf,
+    realms_to_inspect: &[String],
+    yes: bool,
+) -> Result<()> {
+    run_with_ui(
+        client,
+        workspace_dir,
+        realms_to_inspect,
+        yes,
+        Arc::new(crate::utils::ui::DialoguerUi::default()),
+    )
+    .await
 }
 
 async fn write_if_changed_with_mutex(
@@ -114,6 +159,7 @@ async fn write_if_changed_with_mutex(
     content: &str,
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
+    ui: Arc<dyn Ui>,
 ) -> Result<()> {
     if let Ok(existing) = fs::read_to_string(path).await {
         if existing == content {
@@ -122,14 +168,13 @@ async fn write_if_changed_with_mutex(
 
         if !yes {
             let _lock = prompt_mutex.lock().await;
-            if !Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!(
+            if !ui.confirm(
+                &format!(
                     "File {:?} already exists with different content. Overwrite?",
                     path
-                ))
-                .default(false)
-                .interact()?
-            {
+                ),
+                false,
+            )? {
                 eprintln!(
                     "{} {}",
                     WARN,
@@ -152,6 +197,7 @@ async fn inspect_resources<T>(
     all_secrets: Arc<Mutex<BTreeMap<String, String>>>,
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
+    ui: Arc<dyn Ui>,
 ) -> Result<()>
 where
     T: KeycloakResource
@@ -178,6 +224,7 @@ where
         let all_secrets = Arc::clone(&all_secrets);
         let realm_name = realm_name.to_string();
         let prompt_mutex = Arc::clone(&prompt_mutex);
+        let ui = Arc::clone(&ui);
         set.spawn(async move {
             let filename = format!("{}.yaml", sanitize(res.get_filename()));
             let path = target_dir.join(filename);
@@ -187,7 +234,7 @@ where
                 format!("Failed to serialize {} {}", T::LABEL, res.get_name()),
             )?;
             all_secrets.lock().await.extend(local_secrets);
-            write_if_changed_with_mutex(&path, &yaml, yes, prompt_mutex).await
+            write_if_changed_with_mutex(&path, &yaml, yes, prompt_mutex, ui).await
         });
     }
     crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
@@ -218,6 +265,7 @@ async fn inspect_realm(
     all_secrets: Arc<Mutex<BTreeMap<String, String>>>,
     yes: bool,
     prompt_mutex: Arc<Mutex<()>>,
+    ui: Arc<dyn Ui>,
 ) -> Result<()> {
     fs::create_dir_all(&workspace_dir)
         .await
@@ -233,6 +281,7 @@ async fn inspect_realm(
         let workspace_dir = Arc::clone(&workspace_dir);
         let all_secrets = Arc::clone(&all_secrets);
         let prompt_mutex = Arc::clone(&prompt_mutex);
+        let ui_realm = Arc::clone(&ui);
         set.spawn(async move {
             let realm = client.get_realm().await.context("Failed to fetch realm")?;
             let mut local_secrets = BTreeMap::new();
@@ -242,8 +291,14 @@ async fn inspect_realm(
             all_secrets.lock().await.extend(local_secrets);
 
             let realm_path = workspace_dir.join("realm.yaml");
-            write_if_changed_with_mutex(&realm_path, &realm_yaml, yes, Arc::clone(&prompt_mutex))
-                .await?;
+            write_if_changed_with_mutex(
+                &realm_path,
+                &realm_yaml,
+                yes,
+                Arc::clone(&prompt_mutex),
+                ui_realm,
+            )
+            .await?;
             {
                 let _lock = prompt_mutex.lock().await;
                 eprintln!(
@@ -257,111 +312,44 @@ async fn inspect_realm(
     }
 
     // Fetch resources in parallel
-    spawn_inspect::<ClientRepresentation>(
-        &mut set,
+    let ctx = InspectContext {
         client,
         realm_name,
-        &workspace_dir,
-        &all_secrets,
+        workspace_dir: &workspace_dir,
+        all_secrets: &all_secrets,
         yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<RoleRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<ClientScopeRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<IdentityProviderRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<GroupRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<UserRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<AuthenticationFlowRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<RequiredActionProviderRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<ComponentRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
-    spawn_inspect::<AuthenticatorConfigRepresentation>(
-        &mut set,
-        client,
-        realm_name,
-        &workspace_dir,
-        &all_secrets,
-        yes,
-        &prompt_mutex,
-    );
+        prompt_mutex: &prompt_mutex,
+        ui: &ui,
+    };
+
+    spawn_inspect::<ClientRepresentation>(&mut set, &ctx);
+    spawn_inspect::<RoleRepresentation>(&mut set, &ctx);
+    spawn_inspect::<ClientScopeRepresentation>(&mut set, &ctx);
+    spawn_inspect::<IdentityProviderRepresentation>(&mut set, &ctx);
+    spawn_inspect::<GroupRepresentation>(&mut set, &ctx);
+    spawn_inspect::<UserRepresentation>(&mut set, &ctx);
+    spawn_inspect::<AuthenticationFlowRepresentation>(&mut set, &ctx);
+    spawn_inspect::<RequiredActionProviderRepresentation>(&mut set, &ctx);
+    spawn_inspect::<ComponentRepresentation>(&mut set, &ctx);
+    spawn_inspect::<AuthenticatorConfigRepresentation>(&mut set, &ctx);
 
     crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
 
     Ok(())
 }
 
-fn spawn_inspect<T>(
-    set: &mut tokio::task::JoinSet<Result<()>>,
-    client: &KeycloakClient,
-    realm_name: &str,
-    workspace_dir: &Arc<PathBuf>,
-    all_secrets: &Arc<Mutex<BTreeMap<String, String>>>,
+struct InspectContext<'a> {
+    client: &'a KeycloakClient,
+    realm_name: &'a str,
+    workspace_dir: &'a Arc<PathBuf>,
+    all_secrets: &'a Arc<Mutex<BTreeMap<String, String>>>,
     yes: bool,
-    prompt_mutex: &Arc<Mutex<()>>,
-) where
+    prompt_mutex: &'a Arc<Mutex<()>>,
+    ui: &'a Arc<dyn Ui>,
+}
+
+fn spawn_inspect<T>(set: &mut tokio::task::JoinSet<Result<()>>, ctx: &InspectContext<'_>)
+where
     T: KeycloakResource
         + ResourceMeta
         + crate::client::KeycloakResourceMapping
@@ -371,11 +359,13 @@ fn spawn_inspect<T>(
         + Sync
         + 'static,
 {
-    let client = client.clone();
-    let realm_name = realm_name.to_string();
-    let target_dir = Arc::new(workspace_dir.join(T::DIR_NAME));
-    let all_secrets = Arc::clone(all_secrets);
-    let prompt_mutex = Arc::clone(prompt_mutex);
+    let client = ctx.client.clone();
+    let realm_name = ctx.realm_name.to_string();
+    let target_dir = Arc::new(ctx.workspace_dir.join(T::DIR_NAME));
+    let all_secrets = Arc::clone(ctx.all_secrets);
+    let prompt_mutex = Arc::clone(ctx.prompt_mutex);
+    let ui = Arc::clone(ctx.ui);
+    let yes = ctx.yes;
 
     set.spawn(async move {
         inspect_resources::<T>(
@@ -385,6 +375,7 @@ fn spawn_inspect<T>(
             all_secrets,
             yes,
             prompt_mutex,
+            ui,
         )
         .await
     });
@@ -400,19 +391,60 @@ mod tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("insecure.txt");
         let prompt_mutex = Arc::new(Mutex::new(()));
+        let mock_ui = Arc::new(crate::utils::ui::MockUi::new());
 
         // Write new file
-        write_if_changed_with_mutex(&file_path, "test content", true, Arc::clone(&prompt_mutex))
-            .await
-            .unwrap();
+        write_if_changed_with_mutex(
+            &file_path,
+            "test content",
+            true,
+            Arc::clone(&prompt_mutex),
+            Arc::clone(&mock_ui) as Arc<dyn Ui>,
+        )
+        .await
+        .unwrap();
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content, "test content");
 
-        // Overwrite file
-        write_if_changed_with_mutex(&file_path, "new content", true, Arc::clone(&prompt_mutex))
-            .await
-            .unwrap();
+        // Overwrite file with yes=true
+        write_if_changed_with_mutex(
+            &file_path,
+            "new content",
+            true,
+            Arc::clone(&prompt_mutex),
+            Arc::clone(&mock_ui) as Arc<dyn Ui>,
+        )
+        .await
+        .unwrap();
         let content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(content, "new content");
+
+        // Overwrite file with yes=false and user rejects prompt
+        mock_ui.confirms.lock().unwrap().push(false);
+        write_if_changed_with_mutex(
+            &file_path,
+            "rejected content",
+            false,
+            Arc::clone(&prompt_mutex),
+            Arc::clone(&mock_ui) as Arc<dyn Ui>,
+        )
+        .await
+        .unwrap();
+        let content_after_rejection = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content_after_rejection, "new content");
+
+        // Overwrite file with yes=false and user accepts prompt
+        mock_ui.confirms.lock().unwrap().push(true);
+        write_if_changed_with_mutex(
+            &file_path,
+            "accepted content",
+            false,
+            Arc::clone(&prompt_mutex),
+            Arc::clone(&mock_ui) as Arc<dyn Ui>,
+        )
+        .await
+        .unwrap();
+        let content_after_acceptance = fs::read_to_string(&file_path).await.unwrap();
+        assert_eq!(content_after_acceptance, "accepted content");
     }
 }

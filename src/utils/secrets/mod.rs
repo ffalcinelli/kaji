@@ -32,7 +32,7 @@ impl EnvResolver {
 #[async_trait]
 impl SecretResolver for EnvResolver {
     async fn resolve(&self, key: &str) -> Result<Option<String>> {
-        if !key.starts_with("KEYCLOAK_") {
+        if key.starts_with("vault:") {
             return Ok(None);
         }
 
@@ -92,7 +92,7 @@ pub fn is_secret_key(key: &str, prefix: &str) -> bool {
         return true;
     }
 
-    if lower_key == "value" {
+    if lower_key == "value" || lower_key == "hashedvalue" {
         let lower_prefix = prefix.to_lowercase();
         return lower_prefix.contains("credential")
             || lower_prefix.contains("secret")
@@ -234,15 +234,39 @@ pub async fn substitute_secrets(
                 .collect();
             futures::future::try_join_all(futures).await?;
         }
-        Value::String(s) if s.starts_with("${") && s.ends_with("}") => {
-            let var_name = &s[2..s.len() - 1];
-            if let Some(val) = resolver.resolve(var_name).await? {
-                *s = val;
-            } else if var_name.starts_with("KEYCLOAK_") {
-                return Err(anyhow::anyhow!(
-                    "Missing required secret or environment variable: {}",
-                    var_name
-                ));
+        Value::String(s) if s.contains("${") => {
+            let mut result = String::with_capacity(s.len());
+            let mut cursor = 0;
+            let mut has_placeholders = false;
+
+            while let Some(start_offset) = s[cursor..].find("${") {
+                let start = cursor + start_offset;
+                let var_start = start + 2;
+                if let Some(end_offset) = s[var_start..].find('}') {
+                    let end = var_start + end_offset;
+                    let var_name = &s[var_start..end];
+                    if !var_name.contains("${") {
+                        has_placeholders = true;
+                        result.push_str(&s[cursor..start]);
+                        if let Some(val) = resolver.resolve(var_name).await? {
+                            result.push_str(&val);
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "Missing required secret or environment variable: {}",
+                                var_name
+                            ));
+                        }
+                        cursor = end + 1;
+                        continue;
+                    }
+                }
+                result.push_str(&s[cursor..start + 2]);
+                cursor = start + 2;
+            }
+
+            if has_placeholders {
+                result.push_str(&s[cursor..]);
+                *s = result;
             }
         }
         _ => {}
@@ -450,16 +474,44 @@ mod tests {
     async fn test_substitute_secrets() {
         let mut vars = HashMap::new();
         vars.insert("KEYCLOAK_VAR1".to_string(), "val1".to_string());
+        vars.insert("CUSTOM_SECRET".to_string(), "val2".to_string());
         let resolver = Arc::new(EnvResolver::new(vars));
 
         let mut val = json!({
             "secret": "${KEYCLOAK_VAR1}",
+            "custom": "${CUSTOM_SECRET}",
             "other": "normal"
         });
 
-        substitute_secrets(&mut val, resolver).await.unwrap();
+        substitute_secrets(&mut val, resolver.clone())
+            .await
+            .unwrap();
         assert_eq!(val["secret"], "val1");
+        assert_eq!(val["custom"], "val2");
         assert_eq!(val["other"], "normal");
+
+        // Missing variable should return error
+        let mut missing_val = json!({
+            "missing": "${NON_EXISTENT_VAR}"
+        });
+        let err = substitute_secrets(&mut missing_val, resolver).await;
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("Missing required secret or environment variable: NON_EXISTENT_VAR")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_env_resolver_skips_vault() {
+        let mut vars = HashMap::new();
+        vars.insert("vault:secret/data#field".to_string(), "val".to_string());
+        let resolver = EnvResolver::new(vars);
+        assert_eq!(
+            resolver.resolve("vault:secret/data#field").await.unwrap(),
+            None
+        );
     }
 
     #[tokio::test]
@@ -517,18 +569,24 @@ mod tests {
         assert!(!is_secret_key("RESET_password", ""));
         assert!(!is_secret_key("policy", ""));
 
-        // "value" special case with prefix case variations
+        // "value" and "hashedValue" special case with prefix case variations
         assert!(is_secret_key("value", "credential"));
+        assert!(is_secret_key("hashedValue", "credential"));
+        assert!(is_secret_key("hashedvalue", "credential"));
         assert!(is_secret_key("value", "CREDENTIAL"));
+        assert!(is_secret_key("hashedValue", "CREDENTIAL"));
         assert!(is_secret_key("VALUE", "credential"));
         assert!(is_secret_key("value", "my_secret_key"));
+        assert!(is_secret_key("hashedValue", "my_secret_key"));
         assert!(is_secret_key("value", "password_field"));
         assert!(is_secret_key("value", "some_token"));
         assert!(is_secret_key("value", "TOKEN"));
 
         // "value" special case failures
         assert!(!is_secret_key("value", "other"));
+        assert!(!is_secret_key("hashedValue", "other"));
         assert!(!is_secret_key("value", ""));
+        assert!(!is_secret_key("hashedValue", ""));
         assert!(!is_secret_key("VALUE", ""));
 
         // General non-secret
@@ -536,6 +594,29 @@ mod tests {
         assert!(!is_secret_key("clientId", ""));
         assert!(!is_secret_key("email", ""));
         assert!(!is_secret_key("foo", ""));
+    }
+
+    #[tokio::test]
+    async fn test_substitute_compound_and_embedded_secrets() {
+        let mut vars = HashMap::new();
+        vars.insert("HOST".to_string(), "ldap.example.com".to_string());
+        vars.insert("PORT".to_string(), "389".to_string());
+        vars.insert("A".to_string(), "part1".to_string());
+        vars.insert("B".to_string(), "part2".to_string());
+        let resolver = Arc::new(EnvResolver::new(vars));
+
+        let mut val = json!({
+            "url": "ldap://${HOST}:${PORT}/dc=example",
+            "compound": "${A}_${B}",
+            "prefix_only": "prefix_${A}",
+            "suffix_only": "${B}_suffix"
+        });
+
+        substitute_secrets(&mut val, resolver).await.unwrap();
+        assert_eq!(val["url"], "ldap://ldap.example.com:389/dc=example");
+        assert_eq!(val["compound"], "part1_part2");
+        assert_eq!(val["prefix_only"], "prefix_part1");
+        assert_eq!(val["suffix_only"], "part2_suffix");
     }
 
     #[test]

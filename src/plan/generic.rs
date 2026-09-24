@@ -1,7 +1,7 @@
 use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::SPARKLE;
-use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -46,7 +46,8 @@ where
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if path.is_file() && path.extension().is_some_and(|ext| ext == "yaml") {
+        let is_file = entry.file_type().await.is_ok_and(|ft| ft.is_file());
+        if is_file && is_yaml_file(&path) {
             // Skip overlay files themselves
             if is_overlay_file(&path, ctx.profile.as_deref()) {
                 continue;

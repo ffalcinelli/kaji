@@ -220,6 +220,30 @@ pub async fn join_all_tasks<T: 'static>(
     Ok(results)
 }
 
+/// Discovers valid realm directories in the given workspace.
+/// Ignores hidden directories (`.*`), `profiles`, `target`, and non-directories.
+pub async fn discover_realms(workspace_dir: &Path) -> anyhow::Result<Vec<String>> {
+    let mut realms = Vec::new();
+    match fs::read_dir(workspace_dir).await {
+        Ok(mut entries) => {
+            while let Some(entry) = entries.next_entry().await? {
+                if entry.file_type().await?.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if !name.starts_with('.') && name != "profiles" && name != "target" {
+                        realms.push(name);
+                    }
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(realms);
+        }
+        Err(e) => return Err(e).context("Failed to read workspace directory"),
+    }
+    realms.sort();
+    Ok(realms)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,5 +694,30 @@ mod tests {
                 { "id": null, "val": "b" }
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn test_discover_realms() {
+        use tempfile::tempdir;
+        let temp = tempdir().unwrap();
+        let ws = temp.path();
+
+        // Create valid realms
+        tokio::fs::create_dir_all(ws.join("realm1")).await.unwrap();
+        tokio::fs::create_dir_all(ws.join("realm2")).await.unwrap();
+
+        // Create directories that must be ignored
+        tokio::fs::create_dir_all(ws.join(".git")).await.unwrap();
+        tokio::fs::create_dir_all(ws.join(".hidden")).await.unwrap();
+        tokio::fs::create_dir_all(ws.join("profiles"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(ws.join("target")).await.unwrap();
+
+        // Create a regular file that should be ignored
+        tokio::fs::write(ws.join("kaji.toml"), "").await.unwrap();
+
+        let realms = discover_realms(ws).await.unwrap();
+        assert_eq!(realms, vec!["realm1".to_string(), "realm2".to_string()]);
     }
 }

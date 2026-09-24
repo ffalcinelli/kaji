@@ -890,3 +890,44 @@ async fn test_validate_empty_username_edge_case() {
             .contains("User username is missing or empty")
     );
 }
+
+#[tokio::test]
+async fn test_validate_nonexistent_workspace() {
+    let dir = tempdir().unwrap();
+    let nonexistent = dir.path().join("does-not-exist");
+
+    let res = validate::run(nonexistent.clone(), &[]).await;
+    assert!(res.is_err());
+    let err_str = format!("{:#}", res.unwrap_err());
+    assert!(err_str.contains("Hint: Create the workspace directory first or use `kaji init`."));
+    assert!(err_str.contains("Input directory"));
+
+    let res_profile = validate::run_with_profile(nonexistent, &[], Some("prod")).await;
+    assert!(res_profile.is_err());
+    let err_str = format!("{:#}", res_profile.unwrap_err());
+    assert!(err_str.contains("Hint: Create the workspace directory first or use `kaji init`."));
+}
+
+#[tokio::test]
+async fn test_validate_missing_components_dir() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+
+    let realm = RealmRepresentation {
+        realm: "test-realm".to_string(),
+        enabled: Some(true),
+        display_name: None,
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        realm_dir.join("realm.yaml"),
+        serde_yaml::to_string(&realm).unwrap(),
+    )
+    .unwrap();
+
+    // No components directory exists; validation should succeed cleanly
+    let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
+    assert!(result.is_ok());
+}

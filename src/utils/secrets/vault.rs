@@ -97,7 +97,7 @@ impl SecretResolver for VaultResolver {
             ));
         }
         let mount = path_parts[0];
-        let path = path_parts[1];
+        let path = path_parts[1].trim_start_matches('/');
 
         let base_url = format!("{}/v1/{}/data/", self.address, mount);
         let parsed_base = reqwest::Url::parse(&base_url)?;
@@ -495,6 +495,39 @@ mod tests {
                 .to_string()
                 .contains("Field 'missing_field' not found in cached vault secret")
         );
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_vault_resolver_path_with_leading_slash() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/secret/data/mysecret")
+            .match_header("X-Vault-Token", "mock-token")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({
+                    "data": {
+                        "data": {
+                            "token": "tok123"
+                        }
+                    }
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "mock-token").unwrap();
+        // Path with double slash: secret//mysecret
+        let res = resolver
+            .resolve("vault:secret//mysecret#token")
+            .await
+            .unwrap();
+        assert_eq!(res, Some("tok123".to_string()));
 
         mock.assert_async().await;
     }

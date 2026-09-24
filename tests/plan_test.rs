@@ -401,6 +401,7 @@ async fn test_plan() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .expect("Plan failed");
@@ -441,6 +442,7 @@ async fn test_plan() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .expect("Plan with changes_only failed");
@@ -455,6 +457,7 @@ async fn test_plan() {
         ui,
         resolver,
         profile: None,
+        verbose: false,
     })
     .await
     .expect("Plan for non-existent realm failed");

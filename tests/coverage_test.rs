@@ -43,6 +43,7 @@ async fn test_plan_edge_cases() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -57,6 +58,7 @@ async fn test_plan_edge_cases() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -88,6 +90,7 @@ async fn test_plan_edge_cases() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -103,6 +106,7 @@ async fn test_plan_edge_cases() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();
@@ -118,6 +122,7 @@ async fn test_plan_edge_cases() {
         ui: ui.clone(),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
 
@@ -133,6 +138,7 @@ async fn test_plan_edge_cases() {
         ui: ui.clone(),
         resolver,
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -251,8 +257,8 @@ async fn test_apply_edge_cases() {
         yes: true,
         review: false,
         prune: false,
-        ui: ui,
-        resolver: resolver,
+        ui,
+        resolver,
         profile: None,
     })
     .await;
@@ -290,6 +296,7 @@ async fn test_check_keys_drift() {
         ui,
         resolver,
         profile: None,
+        verbose: false,
     })
     .await
     .unwrap();

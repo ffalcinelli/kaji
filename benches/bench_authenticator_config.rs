@@ -7,13 +7,102 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
-#[path = "../tests/common/mod.rs"]
-mod common;
+async fn start_benchmark_server() -> String {
+    use axum::Json;
+    use axum::http::StatusCode;
+    use axum::routing::{get, post};
+    use tokio::net::TcpListener;
+
+    let app =
+        axum::Router::new()
+            .route(
+                "/realms/master/protocol/openid-connect/token",
+                post(|| async {
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "access_token": "mock_token",
+                            "expires_in": 300,
+                            "token_type": "Bearer"
+                        })),
+                    )
+                }),
+            )
+            .route(
+                "/admin/realms/{realm}/authentication/flows",
+                get(|| async {
+                    let flows: Vec<serde_json::Value> = (0..5)
+                        .map(|i| {
+                            serde_json::json!({
+                                "id": format!("flow-id-{}", i),
+                                "alias": format!("flow-{}", i),
+                                "providerId": "basic-flow"
+                            })
+                        })
+                        .collect();
+                    (StatusCode::OK, Json(flows))
+                }),
+            )
+            .route(
+                "/admin/realms/{realm}/authentication/flows/{flow}/executions",
+                get(
+                    |axum::extract::Path((_realm, _flow)): axum::extract::Path<(
+                        String,
+                        String,
+                    )>| async {
+                        let execs: Vec<serde_json::Value> = (0..10)
+                            .map(|j| {
+                                serde_json::json!({
+                                    "id": format!("exec-id-{}", j),
+                                    "authenticator": format!("provider-{}", j),
+                                    "requirement": "REQUIRED",
+                                    "priority": j
+                                })
+                            })
+                            .collect();
+                        (StatusCode::OK, Json(execs))
+                    },
+                )
+                .put(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/admin/realms/{realm}/authentication/config/{id}",
+                get(|| async {
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "id": "new-config-id",
+                            "alias": "config-0"
+                        })),
+                    )
+                })
+                .put(|| async { StatusCode::NO_CONTENT })
+                .delete(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/admin/realms/{realm}/authentication/executions/{execution}/config",
+                post(|| async {
+                    (
+                        StatusCode::CREATED,
+                        Json(serde_json::json!({
+                            "id": "new-config-id"
+                        })),
+                    )
+                }),
+            );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://127.0.0.1:{}", addr.port())
+}
 
 fn bench_apply_auth_configs(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
 
-    let server_url = rt.block_on(async { common::start_mock_server().await });
+    let server_url = rt.block_on(async { start_benchmark_server().await });
     let mut client = KeycloakClient::new(server_url);
     client.set_target_realm("test-realm".to_string());
     rt.block_on(async {
@@ -84,18 +173,19 @@ fn bench_apply_auth_configs(c: &mut Criterion) {
 
     c.bench_function("apply_authenticator_configs", |b| {
         b.to_async(&rt).iter(|| async {
-            apply_authenticator_configs(
-                &client,
-                &workspace_dir,
-                Arc::new(workspace_dir.join(".secrets")),
-                resolver.clone(),
-                Arc::new(None),
-                "test-realm",
-                None,
-                false,
-                ui.clone(),
-                false,
-            )
+            apply_authenticator_configs(kaji::apply::ApplyContext {
+                client: &client,
+                workspace_dir: workspace_dir.clone(),
+                secrets_path: Arc::new(workspace_dir.join(".secrets")),
+                resolver: resolver.clone(),
+                planned_files: Arc::new(None),
+                realm_name: "test-realm",
+                profile: None,
+                review: false,
+                ui: ui.clone(),
+                yes: true,
+                prune: false,
+            })
             .await
             .unwrap();
         });

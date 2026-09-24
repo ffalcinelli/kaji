@@ -5,7 +5,7 @@ use crate::models::{
 };
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE, create_progress_bar};
-use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
@@ -24,6 +24,7 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         review,
         ui,
         yes,
+        prompt_mutex,
         ..
     } = ctx;
 
@@ -52,7 +53,7 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         {
             continue;
         }
-        if path.extension().is_none_or(|ext| ext != "yaml") {
+        if !is_yaml_file(&path) {
             continue;
         }
         if is_overlay_file(&path, profile.as_deref()) {
@@ -75,7 +76,7 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         Ok(mut flow_entries) => {
             while let Some(flow_entry) = flow_entries.next_entry().await? {
                 let flow_path = flow_entry.path();
-                if flow_path.extension().is_some_and(|ext| ext == "yaml") {
+                if is_yaml_file(&flow_path) {
                     if is_overlay_file(&flow_path, profile.as_deref()) {
                         continue;
                     }
@@ -125,10 +126,13 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         if let Some(remote) = remote_map.get(&alias) {
             // Config exists! Update it
             if review {
-                let proceed = ui.confirm(
-                    &format!("Do you want to update authenticator config '{}'?", alias),
-                    true,
-                )?;
+                let proceed = {
+                    let _lock = prompt_mutex.lock().await;
+                    ui.confirm(
+                        &format!("Do you want to update authenticator config '{}'?", alias),
+                        true,
+                    )?
+                };
                 if !proceed {
                     pb.inc(1);
                     continue;
@@ -145,10 +149,13 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         } else {
             // New config! Create it
             if review {
-                let proceed = ui.confirm(
-                    &format!("Do you want to create authenticator config '{}'?", alias),
-                    true,
-                )?;
+                let proceed = {
+                    let _lock = prompt_mutex.lock().await;
+                    ui.confirm(
+                        &format!("Do you want to create authenticator config '{}'?", alias),
+                        true,
+                    )?
+                };
                 if !proceed {
                     pb.inc(1);
                     continue;
@@ -258,6 +265,7 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
                 &secrets_path,
                 &*ui,
                 yes,
+                Arc::clone(&prompt_mutex),
             )
             .await?;
         }

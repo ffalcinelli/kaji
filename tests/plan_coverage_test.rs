@@ -26,6 +26,7 @@ async fn test_plan_non_existent_workspace() {
             std::collections::HashMap::new(),
         )),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -46,6 +47,7 @@ async fn test_plan_empty_workspace() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -78,6 +80,7 @@ async fn test_plan_with_secrets_file() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -112,6 +115,7 @@ async fn test_plan_cleanup_old_plan_file() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -156,6 +160,7 @@ async fn test_plan_realm_not_found_remote() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -200,6 +205,7 @@ async fn test_plan_resources_creation() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -246,6 +252,7 @@ description: ${KEYCLOAK_ROLE_DESC}
             ui: Arc::new(DialoguerUi::new()),
             resolver: resolver.clone(),
             profile: None,
+            verbose: false,
         })
         .await;
         assert!(res.is_ok());
@@ -305,6 +312,7 @@ async fn test_plan_resources_invalid_yaml() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -340,6 +348,7 @@ async fn test_plan_resources_missing_identity() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -385,6 +394,7 @@ async fn test_plan_resources_update() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -434,6 +444,7 @@ async fn test_plan_resources_changes_only() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -492,6 +503,7 @@ async fn test_plan_interactive_include() {
         ui,
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -549,6 +561,7 @@ async fn test_plan_interactive_exclude() {
         ui,
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -586,6 +599,7 @@ async fn test_plan_error_paths() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -607,6 +621,7 @@ async fn test_plan_error_paths() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -627,6 +642,7 @@ async fn test_plan_error_paths() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_err());
@@ -655,6 +671,7 @@ async fn test_plan_empty_realms_list() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -713,6 +730,7 @@ async fn test_plan_auto_discovery_no_realm_yaml() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -766,6 +784,7 @@ async fn test_plan_resources_ignore_non_yaml() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -812,6 +831,7 @@ async fn test_plan_resources_with_id_no_clear() {
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
     assert!(res.is_ok());
@@ -853,6 +873,7 @@ description: ${KEYCLOAK_ROLE_MISSING_SECRET}
         ui: Arc::new(DialoguerUi::new()),
         resolver: resolver.clone(),
         profile: None,
+        verbose: false,
     })
     .await;
 
@@ -930,6 +951,7 @@ async fn test_plan_resources_interactive() {
         ui: ui.clone(),
         resolver,
         profile: None,
+        verbose: false,
     })
     .await;
 
@@ -1015,6 +1037,7 @@ async fn test_plan_resources_filter_skips() {
         ui: ui.clone(),
         resolver,
         profile: Some("prod".to_string()), // profile = prod (so role-1.prod.yaml is overlay)
+        verbose: false,
     })
     .await;
 
