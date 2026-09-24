@@ -53,6 +53,10 @@ name = "bench_apply"
 harness = false
 
 [[bench]]
+name = "bench_authenticator_config"
+harness = false
+
+[[bench]]
 name = "benchmark"
 harness = false
 

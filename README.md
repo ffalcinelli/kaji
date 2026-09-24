@@ -231,13 +231,20 @@ kaji sync --workspace my-workspace --yes
 ```
 
 ### `validate`
-Ensures your local YAML files are syntactically correct and follow the Keycloak model.
+Ensures your local YAML files are syntactically correct and follow the Keycloak model. Supports environment profiles (skips partial overlays like `*.prod.yaml` when validating base configs, or deep-merges them when `--profile` is specified). Checks include:
+- Required fields are present and non-empty (realm name, client ID, role name, flow alias, etc.)
+- **Authentication flow aliases do not contain characters forbidden by Keycloak** (`(`, `)`, `[`, `]`, `{`, `}`, `/`, `\`)
+- **No duplicate authentication flow aliases** within the same workspace
+- **Cycle detection (DFS)** and reference validation for authentication flows and sub-flows
 ```bash
 kaji validate
+kaji -p prod validate
 ```
 
 ### `plan`
 Calculates the "diff" between local files and the remote server. By default, it shows a minimal, clean unified diff (collapsed with 3 lines of context).
+
+In addition to the diff output, `plan` also runs a **sub-flow collision check** for authentication flows: if a flow that is marked "to create" is referenced as a sub-flow (`flowAlias`) inside another local flow, a warning is emitted. Keycloak may auto-create that sub-flow when the parent flow is applied, which would cause a `409 Conflict`. If this happens, re-running `kaji plan` after the failed apply will re-fetch the updated remote state and correctly show the auto-created flow as "to update".
 ```bash
 # Plan for a specific profile
 kaji plan --profile prod
@@ -251,7 +258,11 @@ kaji plan --interactive
 ```
 
 ### `apply`
-Reconciles the remote state. It follows a **staged application order** (Realms -> Roles -> Clients -> Users) to ensure dependencies are met.
+Reconciles the remote state. It follows a **staged application order** (Realms → Roles → Clients → Users) to ensure dependencies are met.
+
+**`apply` automatically runs `validate` first** (pure local file I/O — no network cost). If validation fails, apply aborts immediately with a clear error message pointing to the offending file, before making any API calls to Keycloak. Validation enforces execution requirement enums, ensures subflows specify valid aliases, and detects circular dependency graphs using DFS.
+
+Authentication flows and shared sub-flows are automatically partitioned into **topological dependency tiers** (leaf/shared sub-flows applied first) with **graceful 409 Conflict auto-adoption**, preventing race conditions and auto-creation conflicts during application.
 ```bash
 # Apply planned changes for production
 kaji apply --profile prod --yes

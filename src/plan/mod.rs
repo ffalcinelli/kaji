@@ -18,15 +18,18 @@ macro_rules! plan_generic_resources {
 use crate::client::KeycloakClient;
 use crate::utils::secrets::{SecretResolver, obfuscate_secrets};
 use crate::utils::ui::{ACTION, CHECK, MEMO, Ui, WARN};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use console::{Style, style};
 use serde::Serialize;
 use similar::{ChangeTag, TextDiff};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
+#[deprecated(note = "Use PlanArgs.verbose instead")]
 pub static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +75,7 @@ pub struct PlanArgs<'a> {
     pub ui: Arc<dyn Ui>,
     pub resolver: Arc<dyn SecretResolver>,
     pub profile: Option<String>,
+    pub verbose: bool,
 }
 
 /// Calculates configuration drift and compiles a list of planned modifications.
@@ -88,38 +92,18 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
         ui,
         resolver,
         profile,
+        verbose,
     } = args;
 
-    if !workspace_dir.exists() {
+    if !async_fs::try_exists(&workspace_dir).await? {
         return Err(anyhow::anyhow!(
             "Hint: Create the workspace directory first or use `kaji init`."
-        )
-        .context(format!(
-            "Input directory {:?} does not exist",
-            workspace_dir
-        )));
+        ))
+        .with_context(|| format!("Input directory {:?} does not exist", workspace_dir));
     }
 
     let realms = if realms_to_plan.is_empty() {
-        let mut dirs = Vec::new();
-        let mut entries = async_fs::read_dir(&workspace_dir).await?;
-        let mut join_set = tokio::task::JoinSet::new();
-        while let Some(entry) = entries.next_entry().await? {
-            join_set.spawn(async move {
-                let is_dir = entry.file_type().await?.is_dir();
-                Ok::<(bool, String), anyhow::Error>((
-                    is_dir,
-                    entry.file_name().to_string_lossy().to_string(),
-                ))
-            });
-        }
-        while let Some(res) = join_set.join_next().await {
-            let (is_dir, name) = res??;
-            if is_dir {
-                dirs.push(name);
-            }
-        }
-        dirs
+        crate::utils::discover_realms(&workspace_dir).await?
     } else {
         realms_to_plan.to_vec()
     };
@@ -154,10 +138,12 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
 
             let mut changed_files = Vec::new();
             let mut summary = PlanSummary::default();
+            #[allow(deprecated)]
+            let is_verbose = verbose || VERBOSE.load(std::sync::atomic::Ordering::Relaxed);
             let options = PlanOptions {
                 changes_only,
                 interactive,
-                verbose: VERBOSE.load(std::sync::atomic::Ordering::Relaxed),
+                verbose: is_verbose,
             };
             let ctx = PlanContext {
                 client: &realm_client,
@@ -197,7 +183,7 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
         );
     } else {
         let content = serde_json::to_string_pretty(&changed_files)?;
-        async_fs::write(&plan_file, content).await?;
+        crate::utils::write_secure(&plan_file, &content).await?;
         eprintln!(
             "\n{} {}",
             MEMO,
@@ -218,8 +204,106 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
 use crate::models::{
     AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
     ClientScopeRepresentation, GroupRepresentation, IdentityProviderRepresentation,
-    RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
+    KeycloakResource, RequiredActionProviderRepresentation, RoleRepresentation, UserRepresentation,
 };
+
+/// Analyzes authentication flow dependencies to detect shared sub-flows and explain how they will
+/// be reconciled.
+///
+/// When Keycloak processes parent flows during `apply`, it may auto-create sub-flows or return
+/// `409 Conflict` if applied out of order. `kaji` solves this by topologically staging leaf and
+/// shared sub-flows before parent flows, and automatically adopting remote flows upon 409 conflict.
+async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
+    let flows_dir = ctx
+        .workspace_dir
+        .join(AuthenticationFlowRepresentation::DIR_NAME);
+    if !async_fs::try_exists(&flows_dir).await? {
+        return Ok(());
+    }
+
+    // 1. Load all local flow representations from YAML files.
+    let mut local_flows: Vec<AuthenticationFlowRepresentation> = Vec::new();
+    let mut entries = async_fs::read_dir(&flows_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if !is_yaml_file(&path) {
+            continue;
+        }
+        if is_overlay_file(&path, ctx.profile.as_deref()) {
+            continue;
+        }
+        let val = load_yaml_with_overlay(&path, ctx.profile.as_deref()).await?;
+        if let Ok(flow) = serde_json::from_value::<AuthenticationFlowRepresentation>(val) {
+            local_flows.push(flow);
+        }
+    }
+    if local_flows.is_empty() {
+        return Ok(());
+    }
+
+    // 2. Fetch remote flows to determine which local flows are "to create" (not yet in Keycloak).
+    let remote_flows = ctx
+        .client
+        .get_resources::<AuthenticationFlowRepresentation>()
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to fetch authentication flows for realm '{}' during sub-flow collision check",
+                ctx.realm_name
+            )
+        })?;
+    let remote_aliases: HashSet<String> = remote_flows
+        .iter()
+        .filter_map(|f| f.get_identity())
+        .collect();
+
+    let to_create: HashSet<String> = local_flows
+        .iter()
+        .filter_map(|f| f.alias.clone())
+        .filter(|alias| !remote_aliases.contains(alias))
+        .collect();
+
+    // 3. Track sub-flow references across parent flows to detect shared flows and dependencies
+    let mut subflow_referrers: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for flow in &local_flows {
+        let parent = flow.alias.as_deref().unwrap_or("unknown");
+        for sub_alias in flow.subflow_aliases() {
+            subflow_referrers
+                .entry(sub_alias)
+                .or_default()
+                .push(parent.to_string());
+        }
+    }
+
+    for (sub_alias, parents) in &subflow_referrers {
+        let is_to_create = to_create.contains(sub_alias.as_str());
+        if parents.len() > 1 {
+            let status = if is_to_create {
+                "to create"
+            } else {
+                "existing"
+            };
+            eprintln!(
+                "\n{} Authentication flow '{}' is a shared sub-flow ({}) referenced by: {}. \
+                 Kaji will topologically stage and reconcile it across parent flows.",
+                CHECK,
+                sub_alias,
+                status,
+                parents.join(", ")
+            );
+        } else if is_to_create {
+            eprintln!(
+                "\n{} Authentication flow '{}' is marked to CREATE and referenced as a \
+                 sub-flow inside flow '{}'. Kaji will topologically stage and auto-adopt it during apply.",
+                ACTION, sub_alias, parents[0]
+            );
+        }
+    }
+
+    Ok(())
+}
 
 async fn plan_single_realm(
     ctx: PlanContext<'_>,
@@ -249,7 +333,10 @@ async fn plan_single_realm(
         ]
     );
 
-    // 3. Plan custom components and keys
+    // 3. Warn about potential 409 sub-flow collisions in authentication flows
+    check_flow_subflow_collisions(&ctx).await?;
+
+    // 4. Plan custom components and keys
     let ((mut component_changes, component_summary), (mut key_changes, key_summary), _) = tokio::try_join!(
         components::plan_components_or_keys(&ctx, "components"),
         components::plan_components_or_keys(&ctx, "keys"),
@@ -387,7 +474,7 @@ mod tests {
         };
 
         let result = print_diff("Dummy", Some(&dummy), &dummy, false, false, "").unwrap();
-        assert_eq!(result, false);
+        assert!(!result);
     }
 
     #[test]
@@ -405,7 +492,7 @@ mod tests {
 
         // changes_only = true, non-verbose (hunk printing)
         let result = print_diff("Dummy", Some(&old), &new, true, false, "").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[test]
@@ -417,7 +504,7 @@ mod tests {
         };
 
         let result = print_diff("Dummy", Some(&dummy), &dummy, true, false, "").unwrap();
-        assert_eq!(result, false);
+        assert!(!result);
     }
 
     #[test]
@@ -429,7 +516,7 @@ mod tests {
         };
 
         let result = print_diff("Dummy", None, &new, false, false, "").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[test]
@@ -447,6 +534,6 @@ mod tests {
 
         // Verbose diff printing
         let result = print_diff("Dummy", Some(&old), &new, false, true, "").unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 }

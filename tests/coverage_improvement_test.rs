@@ -330,15 +330,16 @@ async fn test_apply_components_gaps() {
         kaji::apply::ApplyContext {
             client: &client,
             workspace_dir: workspace_dir.join("test-realm"),
-            secrets_path: secrets_path,
-            resolver: resolver,
-            planned_files: planned_files,
+            secrets_path,
+            resolver,
+            planned_files,
             realm_name: "test-realm",
             profile: None,
             review: false,
-            ui: ui,
+            ui,
             yes: true,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         },
         "components",
     )
@@ -460,6 +461,7 @@ async fn test_apply_components_enrichment() {
             ui: ui.clone(),
             yes: false,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         },
         "components",
     )
@@ -492,15 +494,16 @@ async fn test_apply_components_enrichment() {
         kaji::apply::ApplyContext {
             client: &client,
             workspace_dir: realm_dir.clone(),
-            secrets_path: secrets_path,
-            resolver: resolver,
-            planned_files: planned_files,
+            secrets_path,
+            resolver,
+            planned_files,
             realm_name: "test-realm",
             profile: None,
             review: false,
             ui: ui2,
             yes: false,
             prune: false,
+            prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
         },
         "components",
     )
@@ -837,15 +840,16 @@ async fn test_apply_authenticator_configs_cache_hits() {
     let _ = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
         client: &client,
         workspace_dir: realm_dir.clone(),
-        secrets_path: secrets_path,
-        resolver: resolver,
-        planned_files: planned_files,
+        secrets_path,
+        resolver,
+        planned_files,
         realm_name: "cache-realm",
         profile: None,
         review: false,
-        ui: ui,
+        ui,
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     })
     .await;
 }
@@ -1154,15 +1158,16 @@ async fn test_apply_authenticator_configs_missing_execution() {
     let res = apply::authenticator_config::apply_authenticator_configs(kaji::apply::ApplyContext {
         client: &client,
         workspace_dir: realm_dir.clone(),
-        secrets_path: secrets_path,
-        resolver: resolver,
-        planned_files: planned_files,
+        secrets_path,
+        resolver,
+        planned_files,
         realm_name: "cache-realm",
         profile: None,
         review: false,
-        ui: ui,
+        ui,
         yes: true,
         prune: false,
+        prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
     })
     .await;
     assert!(res.is_err());

@@ -419,12 +419,13 @@ impl_keycloak_resource!(
     identity = |self| self
         .path
         .as_deref()
+        .map(|p| p.trim_start_matches('/'))
         .or(self.id.as_deref())
-        .or(self.name.as_deref()),
+        .or(self.name.as_deref().map(|n| n.trim_start_matches('/'))),
     name = |self| self
         .name
         .as_deref()
-        .or(self.path.as_deref())
+        .or_else(|| self.path.as_deref().map(|p| p.trim_start_matches('/')))
         .unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
@@ -539,9 +540,17 @@ pub struct AuthenticationExecutionExportRepresentation {
     pub requirement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<i32>,
-    #[serde(rename = "authenticatorFlow", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "authenticatorFlow",
+        alias = "authenticationFlow",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub authenticator_flow: Option<bool>,
-    #[serde(rename = "flowAlias", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "flowAlias",
+        alias = "displayName",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub flow_alias: Option<String>,
     #[serde(rename = "userSetupAllowed", skip_serializing_if = "Option::is_none")]
     pub user_setup_allowed: Option<bool>,
@@ -570,6 +579,24 @@ pub struct AuthenticationFlowRepresentation {
     pub authentication_executions: Option<Vec<AuthenticationExecutionExportRepresentation>>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+impl AuthenticationFlowRepresentation {
+    pub fn subflow_aliases(&self) -> Vec<String> {
+        let mut subflows = Vec::new();
+        if let Some(execs) = &self.authentication_executions {
+            for alias in execs.iter().filter_map(|e| e.flow_alias.as_deref()) {
+                if !subflows.iter().any(|s| s == alias) {
+                    subflows.push(alias.to_string());
+                }
+            }
+        }
+        subflows
+    }
+
+    pub fn is_subflow(&self) -> bool {
+        self.top_level == Some(false)
+    }
 }
 
 impl_keycloak_resource!(
@@ -1036,5 +1063,30 @@ mod tests {
             RoleRepresentation::object_path("456-def"),
             "roles-by-id/456-def"
         );
+    }
+
+    #[test]
+    fn test_group_identity_normalization() {
+        let remote_group = GroupRepresentation {
+            id: Some("uuid-123".to_string()),
+            name: Some("my-group".to_string()),
+            path: Some("/my-group".to_string()),
+            sub_groups: None,
+            extra: HashMap::new(),
+        };
+
+        let local_group = GroupRepresentation {
+            id: None,
+            name: Some("my-group".to_string()),
+            path: None,
+            sub_groups: None,
+            extra: HashMap::new(),
+        };
+
+        assert_eq!(remote_group.get_identity(), Some("my-group".to_string()));
+        assert_eq!(local_group.get_identity(), Some("my-group".to_string()));
+        assert_eq!(remote_group.get_identity(), local_group.get_identity());
+        assert_eq!(remote_group.get_name(), "my-group");
+        assert_eq!(local_group.get_name(), "my-group");
     }
 }

@@ -201,6 +201,24 @@ pub struct MockUi {
     pub passwords: std::sync::Mutex<Vec<String>>,
 }
 
+impl Default for MockUi {
+    fn default() -> Self {
+        Self {
+            inputs: std::sync::Mutex::new(Vec::new()),
+            confirms: std::sync::Mutex::new(Vec::new()),
+            selects: std::sync::Mutex::new(Vec::new()),
+            passwords: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl MockUi {
+    /// Creates a new empty `MockUi`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 impl Ui for MockUi {
     fn input(&self, _prompt: &str, _default: Option<String>, _allow_empty: bool) -> Result<String> {
         let res = {

@@ -19,6 +19,7 @@ pub async fn apply_realm(ctx: crate::apply::ApplyContext<'_>) -> Result<()> {
         profile,
         ui,
         yes,
+        prompt_mutex,
         ..
     } = ctx;
 
@@ -54,6 +55,7 @@ pub async fn apply_realm(ctx: crate::apply::ApplyContext<'_>) -> Result<()> {
                 &secrets_path,
                 &*ui,
                 yes,
+                prompt_mutex,
             )
             .await?;
         }

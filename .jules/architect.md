@@ -9,3 +9,10 @@ This journal documents critical architectural learnings, boundaries, concepts, a
 ## 2026-07-11 - [Eliminating Fake Tests]
 **Observation:** Found that major integration tests (specifically `tests/plan_test.rs` and `tests/apply_test.rs`) were "fake tests" that lacked assert statements to verify the actual output/behavior of planning and application (reconciliation). They merely ensured that the code does not panic.
 **Action:** Assertions must strictly validate state or behavior, never just check lack of panic. Refactored `tests/plan_test.rs` to assert the exact files listed in `.kajiplan`, and `tests/apply_test.rs` to assert the deletion of `.kajiplan` upon successful application, as well as mock confirmation queue consumption.
+
+## 2026-09-23 - [Authentication Flow Reconciliation & Shared Sub-flows]
+**Observation:** Authentication flows with shared sub-flows exhibited 409 Conflict errors when parent flows auto-created or locked shared sub-flow containers in Keycloak. Additionally, circular subflow references or invalid execution requirement enums could lead to Keycloak API failures midway through reconciliation.
+**Action:** Implemented:
+1. Pure-local pre-flight validation in `src/validate.rs`: requirement enum validation, subflow alias presence check, and DFS cycle detection (`detect_flow_cycles`) with shared referrer tracking.
+2. Topological dependency ordering in `src/apply/generic.rs`: sorting authentication flows into dependency tiers (Tier 0 leaf/shared sub-flows, Tier 1+ dependent parent flows) applied sequentially across tiers and concurrently within each tier.
+3. Graceful 409 Conflict auto-adoption: catching 409 Conflict during flow creation, invalidating client cache, discovering the auto-created remote flow ID, and reconciling via PUT update.

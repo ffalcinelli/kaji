@@ -96,7 +96,7 @@ fn test_models_resource_trait() {
         sub_groups: None,
         extra: HashMap::new(),
     };
-    assert_eq!(group.get_identity(), Some("/gname".to_string()));
+    assert_eq!(group.get_identity(), Some("gname".to_string()));
     assert_eq!(group.get_name(), "gname".to_string());
     assert!(group.has_id());
     group.clear_metadata();

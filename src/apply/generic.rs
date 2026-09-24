@@ -4,12 +4,90 @@ use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::substitute_secrets;
 pub use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE};
 use crate::utils::ui::{Ui, create_progress_bar};
-use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::fs as async_fs;
 use tokio::task::JoinSet;
+
+async fn order_files_topologically<T>(
+    files: Vec<std::path::PathBuf>,
+    profile: Option<&str>,
+) -> Vec<Vec<std::path::PathBuf>>
+where
+    T: KeycloakResource,
+{
+    if T::DIR_NAME != crate::models::AuthenticationFlowRepresentation::DIR_NAME || files.len() <= 1
+    {
+        return vec![files];
+    }
+
+    // Parse each flow file to find its declared alias and referenced sub-flows
+    let mut file_info: Vec<(std::path::PathBuf, String, Vec<String>)> = Vec::new();
+    for path in files {
+        if let Ok(val) = load_yaml_with_overlay(&path, profile).await {
+            if let Ok(flow) =
+                serde_json::from_value::<crate::models::AuthenticationFlowRepresentation>(val)
+            {
+                let alias = flow.alias.clone().unwrap_or_default();
+                let subflows = flow.subflow_aliases();
+                file_info.push((path, alias, subflows));
+                continue;
+            }
+        }
+        file_info.push((path, String::new(), Vec::new()));
+    }
+
+    let mut remaining = file_info;
+    let mut tiers = Vec::new();
+    let mut satisfied_aliases: HashSet<String> = HashSet::new();
+
+    while !remaining.is_empty() {
+        let mut current_tier = Vec::new();
+        let mut next_remaining = Vec::new();
+
+        let pending_aliases: HashSet<String> = remaining
+            .iter()
+            .map(|(_, alias, _)| alias.clone())
+            .filter(|a| !a.is_empty())
+            .collect();
+
+        for (path, alias, subflows) in remaining {
+            // A flow can be applied if all its local subflow dependencies are already satisfied
+            let dependencies_ready = subflows
+                .iter()
+                .all(|sub| !pending_aliases.contains(sub) || satisfied_aliases.contains(sub));
+
+            if dependencies_ready {
+                current_tier.push((path, alias));
+            } else {
+                next_remaining.push((path, alias, subflows));
+            }
+        }
+
+        if current_tier.is_empty() {
+            // Unresolvable cycle or mutual dependency: fall back to applying all remaining in one tier
+            let fallback: Vec<std::path::PathBuf> =
+                next_remaining.into_iter().map(|(p, _, _)| p).collect();
+            tiers.push(fallback);
+            break;
+        }
+
+        let mut tier_paths = Vec::new();
+        for (path, alias) in current_tier {
+            if !alias.is_empty() {
+                satisfied_aliases.insert(alias);
+            }
+            tier_paths.push(path);
+        }
+
+        tiers.push(tier_paths);
+        remaining = next_remaining;
+    }
+
+    tiers
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_resources<T>(ctx: crate::apply::ApplyContext<'_>) -> Result<()>
@@ -36,6 +114,7 @@ where
         ui,
         yes,
         prune,
+        prompt_mutex,
     } = ctx;
 
     let dir_name = T::DIR_NAME;
@@ -73,7 +152,7 @@ where
         {
             continue;
         }
-        if path.extension().is_none_or(|ext| ext != "yaml") {
+        if !is_yaml_file(&path) {
             continue;
         }
         // Skip overlay files themselves
@@ -88,117 +167,174 @@ where
     }
 
     let pb = create_progress_bar(files.len() as u64, &format!("Applying {}", T::LABEL));
-    let mut set = JoinSet::new();
+    let tiers = order_files_topologically::<T>(files, profile.as_deref()).await;
 
-    for path in files {
-        let client = client.clone();
-        let existing_map = Arc::clone(&existing_map);
-        let resolver = Arc::clone(&resolver);
-        let realm_name = realm_name.to_string();
-        let profile = profile.clone();
-        let ui = Arc::clone(&ui);
-        let pb = pb.clone();
-        let secrets_path = Arc::clone(&secrets_path);
+    for tier_files in tiers {
+        let mut set = JoinSet::new();
 
-        set.spawn(async move {
-            let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
-            let local_val_before_sub = val.clone();
-            substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
-            let mut rep: T = serde_json::from_value(val)
-                .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
+        for path in tier_files {
+            let client = client.clone();
+            let existing_map = Arc::clone(&existing_map);
+            let resolver = Arc::clone(&resolver);
+            let realm_name = realm_name.to_string();
+            let profile = profile.clone();
+            let ui = Arc::clone(&ui);
+            let pb = pb.clone();
+            let secrets_path = Arc::clone(&secrets_path);
+            let prompt_mutex = Arc::clone(&prompt_mutex);
 
-            let identity = rep.get_identity().with_context(|| {
-                format!("Failed to get identity for {} in {:?}", T::LABEL, path)
-            })?;
+            set.spawn(async move {
+                let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+                let local_val_before_sub = val.clone();
+                substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
+                let mut rep: T = serde_json::from_value(val)
+                    .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
 
-            let id_opt = existing_map.get(&identity);
-
-            if review {
-                let action = if id_opt.is_some() { "update" } else { "create" };
-                let proceed = ui.confirm(
-                    &format!(
-                        "Do you want to {} {} '{}'?",
-                        action,
-                        T::LABEL,
-                        rep.get_name()
-                    ),
-                    true,
-                )?;
-                if !proceed {
-                    pb.inc(1);
-                    return Ok::<(), anyhow::Error>(());
-                }
-            }
-
-            let mut final_id = None;
-            if let Some(id) = id_opt {
-                rep.set_id(Some(id.clone()));
-                client.update_resource(id, &rep).await.with_context(|| {
-                    format!(
-                        "Failed to update {} '{}' in realm '{}'",
-                        T::LABEL,
-                        rep.get_name(),
-                        realm_name
-                    )
+                let identity = rep.get_identity().with_context(|| {
+                    format!("Failed to get identity for {} in {:?}", T::LABEL, path)
                 })?;
-                pb.println(format!(
-                    "  {} Updated {} {}",
-                    SUCCESS_UPDATE,
-                    T::LABEL,
-                    rep.get_name()
-                ));
-                final_id = Some(id.clone());
-            } else {
-                rep.set_id(None);
-                client.create_resource(&rep).await.with_context(|| {
-                    format!(
-                        "Failed to create {} '{}' in realm '{}'",
-                        T::LABEL,
-                        rep.get_name(),
-                        realm_name
-                    )
-                })?;
-                pb.println(format!(
-                    "  {} Created {} {}",
-                    SUCCESS_CREATE,
-                    T::LABEL,
-                    rep.get_name()
-                ));
 
-                // Fetch resources to get the generated ID of the created resource
-                let fresh_resources = client.get_resources::<T>().await?;
-                if let Some(fresh) = fresh_resources
-                    .into_iter()
-                    .find(|r| r.get_identity() == Some(identity.clone()))
-                {
-                    if let Some(id) = fresh.get_id() {
-                        final_id = Some(id.to_string());
+                let id_opt = existing_map.get(&identity);
+
+                if review {
+                    let action = if id_opt.is_some() { "update" } else { "create" };
+                    let proceed = {
+                        let _lock = prompt_mutex.lock().await;
+                        ui.confirm(
+                            &format!(
+                                "Do you want to {} {} '{}'?",
+                                action,
+                                T::LABEL,
+                                rep.get_name()
+                            ),
+                            true,
+                        )?
+                    };
+                    if !proceed {
+                        pb.inc(1);
+                        return Ok::<(), anyhow::Error>(());
                     }
                 }
-            }
 
-            if let Some(id) = final_id {
-                if let Ok(enriched) = client.get_resource::<T>(&id).await {
-                    check_and_update_enrichment(
-                        &client,
-                        &path,
-                        &local_val_before_sub,
-                        &enriched,
-                        &realm_name,
-                        &secrets_path,
-                        &*ui,
-                        yes,
-                    )
-                    .await?;
+                let mut final_id = None;
+                if let Some(id) = id_opt {
+                    rep.set_id(Some(id.clone()));
+                    client.update_resource(id, &rep).await.with_context(|| {
+                        format!(
+                            "Failed to update {} '{}' in realm '{}'",
+                            T::LABEL,
+                            rep.get_name(),
+                            realm_name
+                        )
+                    })?;
+                    pb.println(format!(
+                        "  {} Updated {} {}",
+                        SUCCESS_UPDATE,
+                        T::LABEL,
+                        rep.get_name()
+                    ));
+                    final_id = Some(id.clone());
+                } else {
+                    rep.set_id(None);
+                    let create_result = client.create_resource(&rep).await;
+                    match create_result {
+                        Ok(maybe_id) => {
+                            pb.println(format!(
+                                "  {} Created {} {}",
+                                SUCCESS_CREATE,
+                                T::LABEL,
+                                rep.get_name()
+                            ));
+
+                            if let Some(id) = maybe_id {
+                                final_id = Some(id);
+                            } else {
+                                // Fallback: Fetch resources to get the generated ID of the created resource
+                                let fresh_resources = client.get_resources::<T>().await?;
+                                if let Some(fresh) = fresh_resources
+                                    .into_iter()
+                                    .find(|r| r.get_identity() == Some(identity.clone()))
+                                {
+                                    if let Some(id) = fresh.get_id() {
+                                        final_id = Some(id.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let err_str = err.to_string();
+                            let is_conflict = err_str.contains("409")
+                                || err_str.to_lowercase().contains("conflict")
+                                || err_str.to_lowercase().contains("already exists");
+
+                            let mut adopted = false;
+                            if is_conflict {
+                                client.invalidate_resource_cache::<T>();
+                                if let Ok(fresh_resources) = client.get_resources::<T>().await {
+                                    if let Some(fresh) = fresh_resources
+                                        .into_iter()
+                                        .find(|r| r.get_identity() == Some(identity.clone()))
+                                    {
+                                        if let Some(existing_id) = fresh.get_id() {
+                                            let mut update_rep = rep.clone();
+                                            update_rep.set_id(Some(existing_id.to_string()));
+                                            if let Ok(()) = client
+                                                .update_resource(existing_id, &update_rep)
+                                                .await
+                                            {
+                                                pb.println(format!(
+                                                    "  {} Reconciled existing {} {} (adopted after conflict)",
+                                                    SUCCESS_UPDATE,
+                                                    T::LABEL,
+                                                    rep.get_name()
+                                                ));
+                                                final_id = Some(existing_id.to_string());
+                                                adopted = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !adopted {
+                                return Err(err).with_context(|| {
+                                    format!(
+                                        "Failed to create {} '{}' in realm '{}'",
+                                        T::LABEL,
+                                        rep.get_name(),
+                                        realm_name
+                                    )
+                                });
+                            }
+                        }
+                    }
                 }
-            }
 
-            pb.inc(1);
-            Ok::<(), anyhow::Error>(())
-        });
+                if let Some(id) = final_id {
+                    if let Ok(enriched) = client.get_resource::<T>(&id).await {
+                        check_and_update_enrichment(
+                            &client,
+                            &path,
+                            &local_val_before_sub,
+                            &enriched,
+                            &realm_name,
+                            &secrets_path,
+                            &*ui,
+                            yes,
+                            Arc::clone(&prompt_mutex),
+                        )
+                        .await?;
+                    }
+                }
+
+                pb.inc(1);
+                Ok::<(), anyhow::Error>(())
+            });
+        }
+
+        crate::utils::join_all_tasks(set, None).await?;
     }
 
-    crate::utils::join_all_tasks(set, None).await?;
     pb.finish_with_message(format!("Applied {}", T::LABEL));
 
     if prune {
@@ -207,18 +343,16 @@ where
             let mut entries = async_fs::read_dir(&resources_dir).await?;
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                if path.extension().is_none_or(|ext| ext != "yaml") {
+                if !is_yaml_file(&path) {
                     continue;
                 }
                 if is_overlay_file(&path, profile.as_deref()) {
                     continue;
                 }
-                if let Ok(content) = async_fs::read_to_string(&path).await {
-                    if let Ok(val) = serde_yaml::from_str::<serde_json::Value>(&content) {
-                        if let Ok(rep) = serde_json::from_value::<T>(val) {
-                            if let Some(identity) = rep.get_identity() {
-                                declared.insert(identity);
-                            }
+                if let Ok(val) = load_yaml_with_overlay(&path, profile.as_deref()).await {
+                    if let Ok(rep) = serde_json::from_value::<T>(val) {
+                        if let Some(identity) = rep.get_identity() {
+                            declared.insert(identity);
                         }
                     }
                 }
@@ -235,6 +369,7 @@ where
                     let proceed = if yes {
                         true
                     } else {
+                        let _lock = prompt_mutex.lock().await;
                         ui.confirm(
                             &format!("Prune/Delete remote {} '{}'?", T::LABEL, remote.get_name()),
                             false,
@@ -315,6 +450,7 @@ pub async fn check_and_update_enrichment<T>(
     secrets_path: &std::path::Path,
     ui: &dyn Ui,
     yes: bool,
+    prompt_mutex: Arc<tokio::sync::Mutex<()>>,
 ) -> Result<()>
 where
     T: KeycloakResource
@@ -323,9 +459,9 @@ where
         + for<'de> serde::Deserialize<'de>
         + Clone,
 {
-    let mut placeholders = std::collections::HashMap::new();
-    let mut path_buf = String::with_capacity(128);
-    find_placeholders(local_val_before_sub, &mut path_buf, &mut placeholders);
+    let mut placeholders = Vec::new();
+    let mut current_path = Vec::new();
+    find_placeholders(local_val_before_sub, &mut current_path, &mut placeholders);
 
     let mut enriched_val = serde_json::to_value(enriched.clone())?;
 
@@ -333,10 +469,10 @@ where
     let prefix = format!("realm_{}_{}", realm_name, T::SECRET_PREFIX);
     crate::utils::secrets::extract_secrets(&mut enriched_val, &prefix, &mut new_secrets);
 
-    for (path_str, placeholder) in &placeholders {
+    for (p, placeholder) in &placeholders {
         set_value_at_path(
             &mut enriched_val,
-            path_str,
+            p,
             serde_json::Value::String(placeholder.clone()),
         );
     }
@@ -352,6 +488,7 @@ where
         let proceed = if yes {
             true
         } else {
+            let _lock = prompt_mutex.lock().await;
             ui.confirm(
                 &format!(
                     "Keycloak enriched the representation of {} '{}'. Update the local file?",
@@ -364,6 +501,7 @@ where
 
         if proceed {
             crate::utils::write_secure(path, &enriched_yaml).await?;
+            let _lock = prompt_mutex.lock().await;
             append_secrets(secrets_path, &new_secrets).await?;
         }
     }
@@ -371,72 +509,71 @@ where
     Ok(())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PathSegment {
+    Key(String),
+    Index(usize),
+}
+
 fn find_placeholders(
     val: &serde_json::Value,
-    path: &mut String,
-    placeholders: &mut std::collections::HashMap<String, String>,
+    current_path: &mut Vec<PathSegment>,
+    placeholders: &mut Vec<(Vec<PathSegment>, String)>,
 ) {
     match val {
         serde_json::Value::String(s) => {
             if s.starts_with("${") && s.ends_with('}') {
-                placeholders.insert(path.clone(), s.clone());
+                placeholders.push((current_path.clone(), s.clone()));
             }
         }
         serde_json::Value::Object(map) => {
             for (k, v) in map {
-                let original_len = path.len();
-                path.push('/');
-                path.push_str(k);
-                find_placeholders(v, path, placeholders);
-                path.truncate(original_len);
+                current_path.push(PathSegment::Key(k.clone()));
+                find_placeholders(v, current_path, placeholders);
+                current_path.pop();
             }
         }
         serde_json::Value::Array(arr) => {
             for (i, v) in arr.iter().enumerate() {
-                let original_len = path.len();
-                use std::fmt::Write;
-                write!(path, "/{}", i).expect("Failed to append array index to JSON path buffer");
-                find_placeholders(v, path, placeholders);
-                path.truncate(original_len);
+                current_path.push(PathSegment::Index(i));
+                find_placeholders(v, current_path, placeholders);
+                current_path.pop();
             }
         }
         _ => {}
     }
 }
 
-fn set_value_at_path(val: &mut serde_json::Value, path: &str, new_val: serde_json::Value) {
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    set_value_at_path_rec(val, &segments, new_val);
-}
-
-fn set_value_at_path_rec(
+fn set_value_at_path(
     val: &mut serde_json::Value,
-    segments: &[&str],
+    segments: &[PathSegment],
     new_val: serde_json::Value,
 ) {
     if segments.is_empty() {
         return;
     }
-    let seg = segments[0];
-    if segments.len() == 1 {
-        if let Some(obj) = val.as_object_mut() {
-            obj.insert(seg.to_string(), new_val);
-        } else if let Some(arr) = val.as_array_mut() {
-            if let Ok(idx) = seg.parse::<usize>() {
-                if idx < arr.len() {
-                    arr[idx] = new_val;
+    match &segments[0] {
+        PathSegment::Key(k) => {
+            if segments.len() == 1 {
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert(k.clone(), new_val);
+                }
+            } else if let Some(obj) = val.as_object_mut() {
+                if let Some(next) = obj.get_mut(k) {
+                    set_value_at_path(next, &segments[1..], new_val);
                 }
             }
         }
-    } else {
-        if let Some(obj) = val.as_object_mut() {
-            if let Some(next) = obj.get_mut(seg) {
-                set_value_at_path_rec(next, &segments[1..], new_val);
-            }
-        } else if let Some(arr) = val.as_array_mut() {
-            if let Ok(idx) = seg.parse::<usize>() {
-                if idx < arr.len() {
-                    set_value_at_path_rec(&mut arr[idx], &segments[1..], new_val);
+        PathSegment::Index(idx) => {
+            if segments.len() == 1 {
+                if let Some(arr) = val.as_array_mut() {
+                    if *idx < arr.len() {
+                        arr[*idx] = new_val;
+                    }
+                }
+            } else if let Some(arr) = val.as_array_mut() {
+                if *idx < arr.len() {
+                    set_value_at_path(&mut arr[*idx], &segments[1..], new_val);
                 }
             }
         }
@@ -556,6 +693,7 @@ mod tests {
             &secrets_path,
             &ui,
             false,
+            Arc::new(tokio::sync::Mutex::new(())),
         )
         .await?;
 
@@ -596,6 +734,81 @@ mod tests {
                 .contains("KEYCLOAK_REALM_TEST_REALM_CLIENT_TEST_CLIENT_SECRET=my-new-secret")
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check_and_update_enrichment_with_slashed_keys() -> Result<()> {
+        let temp = tempdir()?;
+        let client_path = temp.path().join("client.yaml");
+        let secrets_path = temp.path().join(".secrets");
+
+        let local_yaml = serde_json::json!({
+            "clientId": "test-client",
+            "attributes": {
+                "custom/url/endpoint": "${ENDPOINT_URL}",
+                "user.attribute/department": "${DEPT_NAME}"
+            }
+        });
+        fs::write(&client_path, serde_yaml::to_string(&local_yaml)?)?;
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "attributes".to_string(),
+            serde_json::json!({
+                "custom/url/endpoint": "placeholder-to-overwrite",
+                "user.attribute/department": "placeholder-to-overwrite",
+                "other.field": "val"
+            }),
+        );
+
+        let enriched_client = ClientRepresentation {
+            id: Some("gen-id".to_string()),
+            client_id: Some("test-client".to_string()),
+            secret: None,
+            name: None,
+            description: None,
+            enabled: Some(true),
+            protocol: None,
+            redirect_uris: None,
+            web_origins: None,
+            public_client: None,
+            bearer_only: None,
+            service_accounts_enabled: None,
+            extra,
+        };
+
+        let ui = MockUi {
+            inputs: std::sync::Mutex::new(Vec::new()),
+            confirms: std::sync::Mutex::new(vec![true]),
+            selects: std::sync::Mutex::new(Vec::new()),
+            passwords: std::sync::Mutex::new(Vec::new()),
+        };
+
+        let client = KeycloakClient::new("http://dummy".to_string());
+        check_and_update_enrichment(
+            &client,
+            &client_path,
+            &local_yaml,
+            &enriched_client,
+            "test-realm",
+            &secrets_path,
+            &ui,
+            false,
+            Arc::new(tokio::sync::Mutex::new(())),
+        )
+        .await?;
+
+        let content = fs::read_to_string(&client_path)?;
+        let parsed: serde_json::Value = serde_yaml::from_str(&content)?;
+        assert_eq!(
+            parsed["attributes"]["custom/url/endpoint"].as_str(),
+            Some("${ENDPOINT_URL}")
+        );
+        assert_eq!(
+            parsed["attributes"]["user.attribute/department"].as_str(),
+            Some("${DEPT_NAME}")
+        );
         Ok(())
     }
 

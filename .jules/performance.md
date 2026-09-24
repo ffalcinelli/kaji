@@ -17,6 +17,9 @@ This document provides context and guidelines for Google Jules to maintain and i
 4.  **YAML Deep-Merging Overhead**:
     *   Overlays are deep-merged using [src/utils/yaml.rs](src/utils/yaml.rs).
     *   Keep merging algorithms efficient. Avoid deep cloning of complex YAML trees where possible. Use references or move values.
+5.  **Network Query Efficiency & Location Header Extraction**:
+    *   When creating resources via Keycloak's Admin API, Keycloak responds with `HTTP 201 Created` and a `Location: .../{id}` header.
+    *   `KeycloakClient::create_resource` extracts this ID directly to avoid subsequent full-list GET queries (`get_resources::<T>()`), preventing $O(N)$ query storms during concurrent reconciliation.
 
 ## Performance Benchmarking
 
@@ -24,6 +27,7 @@ This document provides context and guidelines for Google Jules to maintain and i
 
 *   **Location**: Benchmark files are located in [benches/](benches).
     *   `bench.rs`: Base planning benchmarks.
+    *   `bench_authenticator_config.rs`: Authenticator config reconciliation benchmarks.
     *   `bench_inspect.rs`: Realm deep inspection performance.
     *   `bench_apply.rs`: Reconciliation performance.
     *   `models_bench.rs`: Model parsing/serialization performance.

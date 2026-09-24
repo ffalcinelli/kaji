@@ -27,72 +27,76 @@ pub async fn rotate_keys_interactive(workspace_dir: &Path, ui: &dyn Ui) -> Resul
 }
 
 pub async fn rotate_keys_yaml(workspace_dir: &Path, realm: &str) -> Result<usize> {
-    let keys_dir = workspace_dir.join(sanitize(realm)).join("components");
+    let realm_dir = workspace_dir.join(sanitize(realm));
+    let target_dirs = [realm_dir.join("keys"), realm_dir.join("components")];
 
     let mut rotated_count = 0;
-    let mut entries = match fs::read_dir(&keys_dir).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(e) => return Err(anyhow::Error::from(e).context("Failed to read components directory")),
-    };
+    for keys_dir in target_dirs {
+        let mut entries = match fs::read_dir(&keys_dir).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(anyhow::Error::from(e).context("Failed to read directory"));
+            }
+        };
 
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .context("Failed to read directory entry")?
-    {
-        let path = entry.path();
-        if path.is_file()
-            && path
-                .extension()
-                .is_some_and(|ext| ext == "yaml" || ext == "yml")
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .context("Failed to read directory entry")?
         {
-            let yaml_content = fs::read_to_string(&path)
-                .await
-                .context("Failed to read key YAML file")?;
+            let path = entry.path();
+            let is_file = entry.file_type().await.is_ok_and(|ft| ft.is_file());
+            if is_file && crate::utils::yaml::is_yaml_file(&path) {
+                let yaml_content = fs::read_to_string(&path)
+                    .await
+                    .context("Failed to read key YAML file")?;
 
-            #[allow(clippy::collapsible_if)]
-            if let Ok(component) = serde_yaml::from_str::<ComponentRepresentation>(&yaml_content) {
-                if component.provider_type.as_deref() == Some("org.keycloak.keys.KeyProvider") {
-                    let mut new_component = component.clone();
-                    new_component.id = None;
+                #[allow(clippy::collapsible_if)]
+                if let Ok(component) =
+                    serde_yaml::from_str::<ComponentRepresentation>(&yaml_content)
+                {
+                    if component.provider_type.as_deref() == Some("org.keycloak.keys.KeyProvider") {
+                        let mut new_component = component.clone();
+                        new_component.id = None;
 
-                    let old_name = new_component
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| "key".to_string());
-                    let timestamp = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .context("System clock is before UNIX EPOCH")?
-                        .as_secs();
-                    new_component.name = Some(format!("{}-rotated-{}", old_name, timestamp));
-
-                    if let Some(config) = &mut new_component.config
-                        && let Some(priority_vals) = config.get_mut("priority")
-                        && let Some(arr) = priority_vals.as_array_mut()
-                        && let Some(first) = arr.first_mut()
-                        && let Some(p_str) = first.as_str()
-                        && let Ok(p_num) = p_str.parse::<i64>()
-                    {
-                        *first = serde_json::Value::String((p_num + 10).to_string());
-                    }
-
-                    let new_filename = format!(
-                        "{}.yaml",
-                        new_component
+                        let old_name = new_component
                             .name
-                            .as_deref()
-                            .context("Missing component name after rotation")?
-                    );
-                    let new_file_path = keys_dir.join(new_filename);
+                            .clone()
+                            .unwrap_or_else(|| "key".to_string());
+                        let timestamp = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .context("System clock is before UNIX EPOCH")?
+                            .as_secs();
+                        new_component.name = Some(format!("{}-rotated-{}", old_name, timestamp));
 
-                    let yaml = serde_yaml::to_string(&new_component)
-                        .context("Failed to serialize rotated key to YAML")?;
-                    crate::utils::write_secure(&new_file_path, &yaml)
-                        .await
-                        .context("Failed to write rotated key YAML file")?;
+                        if let Some(config) = &mut new_component.config
+                            && let Some(priority_vals) = config.get_mut("priority")
+                            && let Some(arr) = priority_vals.as_array_mut()
+                            && let Some(first) = arr.first_mut()
+                            && let Some(p_str) = first.as_str()
+                            && let Ok(p_num) = p_str.parse::<i64>()
+                        {
+                            *first = serde_json::Value::String((p_num + 10).to_string());
+                        }
 
-                    rotated_count += 1;
+                        let new_filename = format!(
+                            "{}.yaml",
+                            new_component
+                                .name
+                                .as_deref()
+                                .context("Missing component name after rotation")?
+                        );
+                        let new_file_path = keys_dir.join(new_filename);
+
+                        let yaml = serde_yaml::to_string(&new_component)
+                            .context("Failed to serialize rotated key to YAML")?;
+                        crate::utils::write_secure(&new_file_path, &yaml)
+                            .await
+                            .context("Failed to write rotated key YAML file")?;
+
+                        rotated_count += 1;
+                    }
                 }
             }
         }
@@ -245,5 +249,51 @@ mod tests {
 
         let count = rotate_keys_yaml(workspace_dir, "master").await.unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_rotate_keys_yaml_in_keys_dir() {
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path();
+        let keys_dir = workspace_dir.join("master").join("keys");
+        fs::create_dir_all(&keys_dir).await.unwrap();
+
+        let component = ComponentRepresentation {
+            id: None,
+            name: Some("rsa-key".to_string()),
+            provider_id: Some("rsa-generated".to_string()),
+            provider_type: Some("org.keycloak.keys.KeyProvider".to_string()),
+            parent_id: Some("master".to_string()),
+            sub_type: None,
+            config: Some({
+                let mut map = HashMap::new();
+                map.insert("priority".to_string(), serde_json::json!(["100"]));
+                map
+            }),
+            extra: HashMap::new(),
+        };
+
+        let yaml = serde_yaml::to_string(&component).unwrap();
+        fs::write(keys_dir.join("rsa-key.yaml"), yaml)
+            .await
+            .unwrap();
+
+        let count = rotate_keys_yaml(workspace_dir, "master").await.unwrap();
+        assert_eq!(count, 1);
+
+        let mut found_rotated = false;
+        let mut entries = fs::read_dir(&keys_dir).await.unwrap();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("rsa-key-rotated-") {
+                found_rotated = true;
+                let content = fs::read_to_string(entry.path()).await.unwrap();
+                let rotated: ComponentRepresentation = serde_yaml::from_str(&content).unwrap();
+                let config = rotated.config.unwrap();
+                let priority_array = config.get("priority").unwrap().as_array().unwrap();
+                assert_eq!(priority_array[0].as_str().unwrap(), "110");
+            }
+        }
+        assert!(found_rotated);
     }
 }

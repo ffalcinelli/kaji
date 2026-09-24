@@ -2,7 +2,7 @@ use crate::client::KeycloakClient;
 use crate::models::{ComponentRepresentation, KeycloakResource};
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::{SPARKLE, WARN};
-use crate::utils::yaml::{is_overlay_file, load_yaml_with_overlay};
+use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use console::style;
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ pub async fn plan_components_or_keys(
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "yaml") {
+            if is_yaml_file(&path) {
                 // Skip overlay files themselves
                 if is_overlay_file(&path, ctx.profile.as_deref()) {
                     continue;
