@@ -119,9 +119,11 @@ where
 
     let dir_name = T::DIR_NAME;
     let resources_dir = workspace_dir.join(dir_name);
-    if !async_fs::try_exists(&resources_dir).await? {
-        return Ok(());
-    }
+    let mut entries = match async_fs::read_dir(&resources_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
 
     let existing_resources = client
         .get_resources::<T>()
@@ -141,7 +143,6 @@ where
         .collect();
     let existing_map = Arc::new(existing_map);
 
-    let mut entries = async_fs::read_dir(&resources_dir).await?;
     let mut files = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
@@ -339,24 +340,27 @@ where
 
     if prune {
         let mut declared = HashSet::new();
-        if async_fs::try_exists(&resources_dir).await? {
-            let mut entries = async_fs::read_dir(&resources_dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                if !is_yaml_file(&path) {
-                    continue;
-                }
-                if is_overlay_file(&path, profile.as_deref()) {
-                    continue;
-                }
-                if let Ok(val) = load_yaml_with_overlay(&path, profile.as_deref()).await {
-                    if let Ok(rep) = serde_json::from_value::<T>(val) {
-                        if let Some(identity) = rep.get_identity() {
-                            declared.insert(identity);
+        match async_fs::read_dir(&resources_dir).await {
+            Ok(mut entries) => {
+                while let Some(entry) = entries.next_entry().await? {
+                    let path = entry.path();
+                    if !is_yaml_file(&path) {
+                        continue;
+                    }
+                    if is_overlay_file(&path, profile.as_deref()) {
+                        continue;
+                    }
+                    if let Ok(val) = load_yaml_with_overlay(&path, profile.as_deref()).await {
+                        if let Ok(rep) = serde_json::from_value::<T>(val) {
+                            if let Some(identity) = rep.get_identity() {
+                                declared.insert(identity);
+                            }
                         }
                     }
                 }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
 
         for remote in &existing_resources {

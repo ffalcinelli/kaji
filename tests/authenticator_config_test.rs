@@ -206,3 +206,147 @@ async fn test_authenticator_config_validation_failures() {
     let err_msg = res.unwrap_err().to_string();
     assert!(err_msg.contains("alias is missing or empty"));
 }
+
+#[tokio::test]
+async fn test_apply_authenticator_config_without_flows_dir() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    fs::create_dir_all(&realm_dir).unwrap();
+
+    fs::write(
+        realm_dir.join("realm.yaml"),
+        "realm: test-realm\nenabled: true\n",
+    )
+    .unwrap();
+
+    let config_dir = realm_dir.join("authenticator-configs");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    // Notice: no "authentication-flows" directory is created!
+    // Write an existing config to update
+    let config = AuthenticatorConfigRepresentation {
+        id: Some("config-1".to_string()),
+        alias: Some("review profile config".to_string()),
+        config: Some({
+            let mut map = std::collections::HashMap::new();
+            map.insert(
+                "updated-key".to_string(),
+                serde_json::json!("updated-value"),
+            );
+            map
+        }),
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        config_dir.join("review profile config.yaml"),
+        serde_yaml::to_string(&config).unwrap(),
+    )
+    .unwrap();
+
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
+        std::collections::HashMap::new(),
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
+    let ui = Arc::new(kaji::utils::ui::DialoguerUi::new());
+
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir,
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui,
+        resolver,
+        profile: None,
+    })
+    .await;
+
+    assert!(res.is_ok());
+}
+
+#[tokio::test]
+async fn test_apply_authenticator_config_with_yml_flow() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    fs::create_dir_all(&realm_dir).unwrap();
+
+    fs::write(
+        realm_dir.join("realm.yaml"),
+        "realm: test-realm\nenabled: true\n",
+    )
+    .unwrap();
+
+    let flows_dir = realm_dir.join("authentication-flows");
+    fs::create_dir_all(&flows_dir).unwrap();
+
+    // Create a flow with .yml extension referencing the new config
+    let flow_yml = r#"
+alias: "flow-1"
+description: "Flow 1"
+providerId: "basic-flow"
+topLevel: true
+builtIn: false
+authenticationExecutions:
+  - authenticator: "another-authenticator"
+    requirement: "REQUIRED"
+    authenticatorConfig: "new config"
+"#;
+    fs::write(flows_dir.join("flow-1.yml"), flow_yml).unwrap();
+
+    let config_dir = realm_dir.join("authenticator-configs");
+    fs::create_dir_all(&config_dir).unwrap();
+
+    let new_config = AuthenticatorConfigRepresentation {
+        id: None,
+        alias: Some("new config".to_string()),
+        config: Some({
+            let mut map = std::collections::HashMap::new();
+            map.insert("some-key".to_string(), serde_json::json!("some-value"));
+            map
+        }),
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        config_dir.join("new-config.yml"),
+        serde_yaml::to_string(&new_config).unwrap(),
+    )
+    .unwrap();
+
+    let resolver = Arc::new(kaji::utils::secrets::EnvResolver::new(
+        std::collections::HashMap::new(),
+    )) as Arc<dyn kaji::utils::secrets::SecretResolver>;
+    let ui = Arc::new(kaji::utils::ui::DialoguerUi::new());
+
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir,
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: false,
+        ui,
+        resolver,
+        profile: None,
+    })
+    .await;
+
+    res.expect("apply::run failed in test_apply_authenticator_config_with_yml_flow");
+}

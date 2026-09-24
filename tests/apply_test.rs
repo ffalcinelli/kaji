@@ -942,3 +942,131 @@ async fn test_apply_pruning() {
     .await
     .expect("Apply pruning failed");
 }
+
+#[tokio::test]
+async fn test_apply_pruning_with_yml() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    let realm = RealmRepresentation {
+        realm: "test-realm".to_string(),
+        enabled: Some(true),
+        display_name: Some("Test Realm".to_string()),
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        realm_dir.join("realm.yaml"),
+        serde_yaml::to_string(&realm).unwrap(),
+    )
+    .unwrap();
+
+    // Create clients directory with client-1.yml (.yml extension)
+    let clients_dir = realm_dir.join("clients");
+    fs::create_dir(&clients_dir).unwrap();
+    let client_rep = ClientRepresentation {
+        id: Some("1".to_string()),
+        client_id: Some("client-1".to_string()),
+        secret: None,
+        name: Some("Client 1".to_string()),
+        description: None,
+        enabled: Some(true),
+        protocol: None,
+        redirect_uris: None,
+        web_origins: None,
+        public_client: None,
+        bearer_only: None,
+        service_accounts_enabled: None,
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        clients_dir.join("client-1.yml"),
+        serde_yaml::to_string(&client_rep).unwrap(),
+    )
+    .unwrap();
+
+    let ui = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true, true, true]),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir,
+        realms_to_apply: &["test-realm".to_string()],
+        yes: false,
+        review: false,
+        prune: true,
+        ui,
+        resolver,
+        profile: None,
+    })
+    .await
+    .expect("Apply pruning with .yml failed");
+}
+
+#[tokio::test]
+async fn test_apply_pruning_missing_local_dir() {
+    let mock_url = start_mock_server().await;
+    let mut client = KeycloakClient::new(mock_url);
+    client.set_target_realm("test-realm".to_string());
+    client
+        .login("admin-cli", Some("secret"), None, None)
+        .await
+        .expect("Login failed");
+
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+
+    let realm = RealmRepresentation {
+        realm: "test-realm".to_string(),
+        enabled: Some(true),
+        display_name: Some("Test Realm".to_string()),
+        extra: std::collections::HashMap::new(),
+    };
+    fs::write(
+        realm_dir.join("realm.yaml"),
+        serde_yaml::to_string(&realm).unwrap(),
+    )
+    .unwrap();
+
+    // No clients, roles, or idp directories created locally!
+    let ui = Arc::new(kaji::utils::ui::MockUi {
+        inputs: std::sync::Mutex::new(Vec::new()),
+        confirms: std::sync::Mutex::new(vec![true; 20]),
+        selects: std::sync::Mutex::new(Vec::new()),
+        passwords: std::sync::Mutex::new(Vec::new()),
+    });
+
+    let res = apply::run(kaji::apply::ApplyArgs {
+        client: &client,
+        workspace_dir,
+        realms_to_apply: &["test-realm".to_string()],
+        yes: true,
+        review: false,
+        prune: true,
+        ui,
+        resolver,
+        profile: None,
+    })
+    .await;
+
+    assert!(res.is_ok());
+}

@@ -27,9 +27,11 @@ where
     let resources_dir = ctx.workspace_dir.join(dir_name);
     let mut changed_files = Vec::new();
     let mut summary = PlanSummary::default();
-    if !async_fs::try_exists(&resources_dir).await? {
-        return Ok((changed_files, summary));
-    }
+    let mut entries = match async_fs::read_dir(&resources_dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((changed_files, summary)),
+        Err(e) => return Err(e.into()),
+    };
 
     let existing_resources =
         ctx.client.get_resources::<T>().await.with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, ctx.realm_name))?;
@@ -41,7 +43,6 @@ where
     let existing_map = Arc::new(existing_map);
 
     let mut set = tokio::task::JoinSet::new();
-    let mut entries = async_fs::read_dir(&resources_dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();

@@ -19,8 +19,12 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
     profile: Option<&str>,
 ) -> Result<Vec<(PathBuf, T)>> {
     let mut results = Vec::new();
-    if fs::try_exists(dir).await? {
-        let mut entries = fs::read_dir(dir).await?;
+    let mut entries = match fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(results),
+        Err(e) => return Err(e.into()),
+    };
+    {
         let mut join_set = JoinSet::new();
         let file_type_str = file_type.to_string();
         let profile_owned = profile.map(|s| s.to_string());
@@ -70,11 +74,17 @@ pub async fn run_with_profile(
     realms_to_validate: &[String],
     profile: Option<&str>,
 ) -> Result<()> {
-    if !fs::try_exists(&workspace_dir).await? {
-        return Err(anyhow::anyhow!(
-            "Hint: Create the workspace directory first or use `kaji init`."
-        ))
-        .with_context(|| format!("Input directory {:?} does not exist", workspace_dir));
+    if let Err(e) = fs::metadata(&workspace_dir).await {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            return Err(anyhow::anyhow!(
+                "Hint: Create the workspace directory first or use `kaji init`."
+            )
+            .context(format!(
+                "Input directory {:?} does not exist",
+                workspace_dir
+            )));
+        }
+        return Err(e.into());
     }
 
     let realms = if realms_to_validate.is_empty() {
@@ -514,31 +524,34 @@ async fn validate_components_in_dir(
     profile: Option<&str>,
 ) -> Result<()> {
     let dir = workspace_dir.join(dir_name);
-    if fs::try_exists(&dir).await? {
-        let components: Vec<(PathBuf, ComponentRepresentation)> =
-            read_yaml_files(&dir, dir_name, profile).await?;
-        for (path, component) in &components {
-            if let Some(name) = &component.name
-                && name.is_empty()
-            {
-                anyhow::bail!("Component name is empty in {:?}", path);
-            }
-            if component
-                .provider_id
-                .as_deref()
-                .unwrap_or_default()
-                .is_empty()
-            {
-                anyhow::bail!("Component providerId is missing or empty in {:?}", path);
-            }
-        }
-        eprintln!(
-            "  {} {} {}",
-            CHECK,
-            style(format!("Validated {}:", dir_name)).dim(),
-            style(components.len()).green()
-        );
+    let components: Vec<(PathBuf, ComponentRepresentation)> =
+        read_yaml_files(&dir, dir_name, profile).await?;
+    if components.is_empty() {
+        return Ok(());
     }
+    for (path, component) in &components {
+        if component
+            .name
+            .as_deref()
+            .is_some_and(|name| name.is_empty())
+        {
+            anyhow::bail!("Component name is empty in {:?}", path);
+        }
+        if component
+            .provider_id
+            .as_deref()
+            .unwrap_or_default()
+            .is_empty()
+        {
+            anyhow::bail!("Component providerId is missing or empty in {:?}", path);
+        }
+    }
+    eprintln!(
+        "  {} {} {}",
+        CHECK,
+        style(format!("Validated {}:", dir_name)).dim(),
+        style(components.len()).green()
+    );
     Ok(())
 }
 
