@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-09-24
+### Security
+- **TOCTOU Vulnerability Fixes & Filesystem Hardening**: Removed redundant `fs::try_exists` checks across all file read, directory creation, and file deletion operations in favor of direct operations with explicit `ErrorKind::NotFound` matching, eliminating race conditions.
+- **Data Race Elimination in Tests**: Replaced `unsafe { std::env::set_var/remove_var }` calls with isolated subprocess test runners to eliminate multithreaded environment mutation races.
+- **Safe Secret Loading**: Loaded environment secrets in `EnvResolver` using scoped `dotenvy::from_path_iter` instead of mutating the process environment.
+- **Inspect Secret Masking**: Added `hashedValue` to the secret field masking heuristic during Keycloak inspection.
+- **Vault Path Sanitization**: Stripped leading slashes in Vault secret paths to prevent false-positive path traversal rejections.
+- **Dependency Security Update**: Updated `rustls` dependency to resolve security advisory.
+
+### Added
+- **Authentication Flow Topological Staging & Auto-Adoption**:
+  - Implemented topological dependency ordering (Tier 0 leaf/shared flows, Tier 1+ parent flows) to ensure correct creation sequence.
+  - Added graceful HTTP 409 Conflict auto-adoption for auto-generated or shared sub-flows in Keycloak.
+  - Added cycle detection (DFS), execution reference integrity checks (`flowAlias`), and requirement enum validation before API execution.
+  - Added sub-flow check in `plan` to visualize topological dependencies and shared flows.
+- **Compound & Embedded Secret Placeholders**: Added support for embedded and multi-variable placeholders (e.g. `"${HOST}:${PORT}"`) in secret resolution.
+- **Cross-Extension Profile Overlays**: Unified `.yaml` and `.yml` extension handling across resource loaders, overlays, and pruning, allowing cross-extension overlay deep-merging (`name.{profile}.yaml` on `name.yml` and vice versa).
+- **Interactive Review Mode for Components & Authenticator Configs**: Added interactive review mode support and prompt mutex synchronization across concurrent tasks during component and authenticator configuration reconciliation.
+- **Key Rotation in `components/`**: Added key rotation support for both `keys/` and `components/` directories.
+- **Workspace Pre-Validation in `plan` & `drift`**: Added automated workspace pre-validation with credential checks prior to initiating Keycloak API calls.
+- **Actionable CLI Hints**: Added contextual guidance with recommended resolution steps when Keycloak authentication credentials or workspace directories are missing (suggesting `kaji init`).
+- **Global CLI Flag Ergonomics**: Added `global = true` to top-level CLI flags, allowing options like `--server` or credentials to be placed after subcommands (e.g. `kaji plan --server ...`) and surfacing them in subcommand help menus.
+
+### Changed
+- **Workspace Scan & File I/O Optimization**: Parallelized directory metadata scanning using `tokio::task::JoinSet`, reducing workspace scan latency on large directories.
+- **Memory & Allocation Efficiency**: Eliminated intermediate string allocations in `append_secrets` and switched from eager `format!` to lazy `.with_context(|| ...)` throughout error paths.
+
 ## [0.0.3] - 2026-08-11
 ### Security
 - **Strict File Permissions**: Guaranteed restrictive file permissions on exported configuration files by removing `fs::write` fallbacks in `write_if_changed_with_mutex`.
