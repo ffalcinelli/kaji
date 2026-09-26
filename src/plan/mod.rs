@@ -450,7 +450,7 @@ pub fn print_diff<T: Serialize>(
             }
         }
     } else if !changes_only {
-        println!("{} No changes for {}", CHECK, name);
+        println!("{} {}", CHECK, style(format!("No changes for {}", name)).green());
     }
     Ok(changed)
 }

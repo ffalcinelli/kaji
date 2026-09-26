@@ -106,7 +106,7 @@ use crate::models::{
     RoleRepresentation, UserRepresentation,
 };
 use crate::utils::secrets::SecretResolver;
-pub use crate::utils::ui::{ACTION, SUCCESS_CREATE, SUCCESS_UPDATE, Ui, WARN};
+pub use crate::utils::ui::{ACTION, ERROR, SUCCESS_CREATE, SUCCESS_UPDATE, Ui, WARN};
 use anyhow::{Context, Result};
 use console::style;
 use std::collections::HashSet;
@@ -179,7 +179,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
                     false,
                 )?;
                 if !proceed {
-                    eprintln!("Aborted.");
+                    eprintln!("{} {}", ERROR, style("Aborted.").red());
                     return Ok(());
                 }
             }
@@ -196,7 +196,7 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
                 false,
             )?;
             if !proceed {
-                eprintln!("Aborted.");
+                eprintln!("{} {}", ERROR, style("Aborted.").red());
                 return Ok(());
             }
         }
