@@ -179,6 +179,7 @@ fn bench_apply_auth_configs(c: &mut Criterion) {
                 secrets_path: Arc::new(workspace_dir.join(".secrets")),
                 resolver: resolver.clone(),
                 planned_files: Arc::new(None),
+                prompt_mutex: Arc::new(tokio::sync::Mutex::new(())),
                 realm_name: "test-realm",
                 profile: None,
                 review: false,
