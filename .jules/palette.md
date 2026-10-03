@@ -26,3 +26,6 @@ Which is not very pleasing to the eye or easy to parse for users.
 ## 2024-05-14 - Global args discoverability
 **Learning:** Adding `global = true` to clap arguments makes them visible in subcommand help menus (e.g. `kaji plan --help`), which significantly improves discoverability for users who might not realize they can pass global options like `--server` or credentials directly to subcommands. It also allows placing global args after the subcommand (e.g., `kaji plan --server ...`), improving ergonomics.
 **Action:** Use `global = true` on top-level shared CLI arguments.
+## 2024-10-03 - Colorize standard UX methods
+**Learning:** Adding colors to the four primary `print_*` methods in the core UI structure directly improves scannability across nearly all commands at once, yielding massive impact for <10 lines of code changed. The `console::style` utility automatically manages TTY detection gracefully, simplifying the implementation.
+**Action:** When adding output coloring, wrap the primary dynamic content with the color rather than the standard emoji prefix, and ensure it happens centrally in the UX/UI utility structure rather than scattering color calls throughout command logic.

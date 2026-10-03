@@ -173,19 +173,19 @@ impl Ui for DialoguerUi {
     }
 
     fn print_info(&self, msg: &str) {
-        eprintln!("{} {}", INFO, msg);
+        eprintln!("{} {}", INFO, console::style(msg).cyan());
     }
 
     fn print_success(&self, msg: &str) {
-        eprintln!("{} {}", SUCCESS, msg);
+        eprintln!("{} {}", SUCCESS, console::style(msg).green());
     }
 
     fn print_error(&self, msg: &str) {
-        eprintln!("{} {}", ERROR, msg);
+        eprintln!("{} {}", ERROR, console::style(msg).red());
     }
 
     fn print_warn(&self, msg: &str) {
-        eprintln!("{} {}", WARN, msg);
+        eprintln!("{} {}", WARN, console::style(msg).yellow());
     }
 }
 

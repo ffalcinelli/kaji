@@ -804,6 +804,7 @@ fn is_uuid(s: &str) -> bool {
 
 /// Trait for defining specialized resource-mapping behaviors for generic client operations.
 #[async_trait]
+#[allow(clippy::double_must_use)]
 pub trait KeycloakResourceMapping: Sized {
     /// Fetches all remote resources of this type.
     async fn fetch_all(client: &KeycloakClient) -> Result<Vec<Self>>
