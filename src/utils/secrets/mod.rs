@@ -9,6 +9,7 @@ pub mod vault;
 
 /// Interface for resolving masked secret values to actual credentials (e.g. from environment or Vault).
 #[async_trait]
+#[allow(clippy::double_must_use)]
 pub trait SecretResolver: Send + Sync {
     /// Resolves the given secret key.
     ///
@@ -110,13 +111,12 @@ fn is_boolean_string(s: &str) -> bool {
 }
 
 /// Try to find an identifier for an object to make secret names better
-fn get_object_identifier(map: &serde_json::Map<String, Value>) -> Option<String> {
+fn get_object_identifier(map: &serde_json::Map<String, Value>) -> Option<&str> {
     map.get("clientId")
         .or_else(|| map.get("username"))
         .or_else(|| map.get("alias"))
         .or_else(|| map.get("name"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
 }
 
 /// Helper to format environment variable names
@@ -156,28 +156,30 @@ pub fn extract_secrets(
     prefix: &str,
     secrets: &mut std::collections::BTreeMap<String, String>,
 ) {
+    let mut prefix_buf = String::with_capacity(prefix.len() + 64);
+    prefix_buf.push_str(prefix);
+    extract_secrets_internal(value, &mut prefix_buf, secrets);
+}
+
+fn extract_secrets_internal(
+    value: &mut Value,
+    prefix_buf: &mut String,
+    secrets: &mut std::collections::BTreeMap<String, String>,
+) {
     match value {
         Value::Object(map) => {
-            let id = get_object_identifier(map);
-
-            let current_prefix = if let Some(id_str) = id {
-                if prefix.is_empty() {
-                    id_str
-                } else {
-                    let mut s = String::with_capacity(prefix.len() + 1 + id_str.len());
-                    s.push_str(prefix);
-                    s.push('_');
-                    s.push_str(&id_str);
-                    s
+            let original_len = prefix_buf.len();
+            if let Some(id_str) = get_object_identifier(map) {
+                if !prefix_buf.is_empty() {
+                    prefix_buf.push('_');
                 }
-            } else {
-                prefix.to_string()
-            };
+                prefix_buf.push_str(id_str);
+            }
 
             for (k, v) in map.iter_mut() {
                 if let Value::String(s) = v {
-                    if is_secret_key(k, &current_prefix) && !is_boolean_string(s) {
-                        let env_var_name = format_env_var_name(&current_prefix, k);
+                    if is_secret_key(k, prefix_buf) && !is_boolean_string(s) {
+                        let env_var_name = format_env_var_name(prefix_buf, k);
                         secrets.insert(env_var_name.clone(), s.clone());
                         let mut replaced = String::with_capacity(env_var_name.len() + 3);
                         replaced.push_str("${");
@@ -186,27 +188,26 @@ pub fn extract_secrets(
                         *s = replaced;
                     }
                 } else if v.is_object() || v.is_array() {
-                    let new_prefix = if current_prefix.is_empty() {
-                        k.clone()
-                    } else {
-                        let mut s = String::with_capacity(current_prefix.len() + 1 + k.len());
-                        s.push_str(&current_prefix);
-                        s.push('_');
-                        s.push_str(k);
-                        s
-                    };
-                    extract_secrets(v, &new_prefix, secrets);
+                    let current_prefix_len = prefix_buf.len();
+                    if !prefix_buf.is_empty() {
+                        prefix_buf.push('_');
+                    }
+                    prefix_buf.push_str(k);
+                    extract_secrets_internal(v, prefix_buf, secrets);
+                    prefix_buf.truncate(current_prefix_len);
                 }
             }
+
+            prefix_buf.truncate(original_len);
         }
         Value::Array(arr) => {
+            let original_len = prefix_buf.len();
             for (i, v) in arr.iter_mut().enumerate() {
-                let idx_str = i.to_string();
-                let mut new_prefix = String::with_capacity(prefix.len() + 1 + idx_str.len());
-                new_prefix.push_str(prefix);
-                new_prefix.push('_');
-                new_prefix.push_str(&idx_str);
-                extract_secrets(v, &new_prefix, secrets);
+                prefix_buf.push('_');
+                use std::fmt::Write;
+                let _ = write!(prefix_buf, "{}", i);
+                extract_secrets_internal(v, prefix_buf, secrets);
+                prefix_buf.truncate(original_len);
             }
         }
         _ => {}
@@ -215,6 +216,7 @@ pub fn extract_secrets(
 
 /// Recursively substitute ${ENV_VAR} or ${vault:path#key} with actual values
 #[async_recursion::async_recursion]
+#[allow(clippy::double_must_use)]
 pub async fn substitute_secrets(
     value: &mut Value,
     resolver: Arc<dyn SecretResolver>,
@@ -305,51 +307,47 @@ fn obfuscate_string(s: &str) -> String {
 
 /// Recursively obfuscate known secret fields
 pub fn obfuscate_secrets(value: &mut Value, prefix: &str) {
+    let mut prefix_buf = String::with_capacity(prefix.len() + 64);
+    prefix_buf.push_str(prefix);
+    obfuscate_secrets_internal(value, &mut prefix_buf);
+}
+
+fn obfuscate_secrets_internal(value: &mut Value, prefix_buf: &mut String) {
     match value {
         Value::Object(map) => {
-            let id = get_object_identifier(map);
-
-            let current_prefix = if let Some(id_str) = id {
-                if prefix.is_empty() {
-                    id_str
-                } else {
-                    let mut s = String::with_capacity(prefix.len() + 1 + id_str.len());
-                    s.push_str(prefix);
-                    s.push('_');
-                    s.push_str(&id_str);
-                    s
+            let original_len = prefix_buf.len();
+            if let Some(id_str) = get_object_identifier(map) {
+                if !prefix_buf.is_empty() {
+                    prefix_buf.push('_');
                 }
-            } else {
-                prefix.to_string()
-            };
+                prefix_buf.push_str(id_str);
+            }
 
             for (k, v) in map.iter_mut() {
                 if let Value::String(s) = v {
-                    if is_secret_key(k, &current_prefix) {
+                    if is_secret_key(k, prefix_buf) {
                         *s = obfuscate_string(s);
                     }
                 } else if v.is_object() || v.is_array() {
-                    let new_prefix = if current_prefix.is_empty() {
-                        k.clone()
-                    } else {
-                        let mut s = String::with_capacity(current_prefix.len() + 1 + k.len());
-                        s.push_str(&current_prefix);
-                        s.push('_');
-                        s.push_str(k);
-                        s
-                    };
-                    obfuscate_secrets(v, &new_prefix);
+                    let current_prefix_len = prefix_buf.len();
+                    if !prefix_buf.is_empty() {
+                        prefix_buf.push('_');
+                    }
+                    prefix_buf.push_str(k);
+                    obfuscate_secrets_internal(v, prefix_buf);
+                    prefix_buf.truncate(current_prefix_len);
                 }
             }
+            prefix_buf.truncate(original_len);
         }
         Value::Array(arr) => {
+            let original_len = prefix_buf.len();
             for (i, v) in arr.iter_mut().enumerate() {
-                let idx_str = i.to_string();
-                let mut new_prefix = String::with_capacity(prefix.len() + 1 + idx_str.len());
-                new_prefix.push_str(prefix);
-                new_prefix.push('_');
-                new_prefix.push_str(&idx_str);
-                obfuscate_secrets(v, &new_prefix);
+                prefix_buf.push('_');
+                use std::fmt::Write;
+                let _ = write!(prefix_buf, "{}", i);
+                obfuscate_secrets_internal(v, prefix_buf);
+                prefix_buf.truncate(original_len);
             }
         }
         _ => {}
@@ -426,6 +424,29 @@ mod tests {
                 .get("KEYCLOAK_PREFIX_CLIENTSECRET_SPECIAL")
                 .unwrap(),
             "secret_value_3"
+        );
+    }
+
+    #[test]
+    fn test_extract_secrets_nested_array() {
+        let mut secrets = std::collections::BTreeMap::new();
+        let mut val = json!({"clientId": "test", "items": [{"secret": "foo"}]});
+        extract_secrets(&mut val, "app", &mut secrets);
+
+        assert_eq!(
+            val["items"][0]["secret"],
+            "${KEYCLOAK_APP_TEST_ITEMS_0_SECRET}"
+        );
+        assert_eq!(secrets.get("KEYCLOAK_APP_TEST_ITEMS_0_SECRET").unwrap(), "foo");
+    }
+
+    #[test]
+    fn test_obfuscate_secrets_nested_array() {
+        let mut val = json!({"clientId": "test", "items": [{"secret": "foo"}]});
+        obfuscate_secrets(&mut val, "app");
+        assert_eq!(
+            val["items"][0]["secret"],
+            "***"
         );
     }
 
