@@ -9,6 +9,7 @@ pub mod vault;
 
 /// Interface for resolving masked secret values to actual credentials (e.g. from environment or Vault).
 #[async_trait]
+#[allow(clippy::double_must_use)]
 pub trait SecretResolver: Send + Sync {
     /// Resolves the given secret key.
     ///
@@ -215,6 +216,7 @@ fn extract_secrets_internal(
 
 /// Recursively substitute ${ENV_VAR} or ${vault:path#key} with actual values
 #[async_recursion::async_recursion]
+#[allow(clippy::double_must_use)]
 pub async fn substitute_secrets(
     value: &mut Value,
     resolver: Arc<dyn SecretResolver>,
