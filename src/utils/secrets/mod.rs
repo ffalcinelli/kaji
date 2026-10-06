@@ -358,6 +358,7 @@ fn obfuscate_secrets_internal(value: &mut Value, prefix_buf: &mut String) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_extract_secrets_arrays() {
@@ -691,5 +692,55 @@ mod tests {
         assert!(!is_boolean_string("random"));
         assert!(!is_boolean_string(""));
         assert!(!is_boolean_string(" true "));
+    }
+
+    #[test]
+    fn test_extract_secrets_empty_prefix_with_id() {
+        let mut val = json!({
+            "alias": "my-id",
+            "secret": "s3cr3t"
+        });
+        let mut secrets = BTreeMap::new();
+        extract_secrets(&mut val, "", &mut secrets);
+        assert_eq!(
+            secrets.get("KEYCLOAK_MY_ID_SECRET"),
+            Some(&"s3cr3t".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_secrets_empty_prefix_nested() {
+        let mut val = json!({
+            "nested": {
+                "secret": "nested-s3cr3t"
+            }
+        });
+        let mut secrets = BTreeMap::new();
+        extract_secrets(&mut val, "", &mut secrets);
+        assert_eq!(
+            secrets.get("KEYCLOAK_NESTED_SECRET"),
+            Some(&"nested-s3cr3t".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_substitute_secrets_unclosed_placeholder() {
+        let resolver = Arc::new(EnvResolver::new(HashMap::new()));
+        let mut val = json!({
+            "key": "prefix_${unclosed_placeholder"
+        });
+        substitute_secrets(&mut val, resolver).await.unwrap();
+        assert_eq!(val["key"], "prefix_${unclosed_placeholder");
+    }
+
+    #[test]
+    fn test_obfuscate_secrets_empty_prefix_nested() {
+        let mut val = json!({
+            "nested": {
+                "secret": "top-secret"
+            }
+        });
+        obfuscate_secrets(&mut val, "");
+        assert_eq!(val["nested"]["secret"], "t***t");
     }
 }

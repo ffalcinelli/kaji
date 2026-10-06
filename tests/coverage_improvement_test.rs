@@ -1172,3 +1172,63 @@ async fn test_apply_authenticator_configs_missing_execution() {
     .await;
     assert!(res.is_err());
 }
+
+#[tokio::test]
+async fn test_cli_run_kaji_test_env() {
+    unsafe {
+        std::env::set_var("KAJI_TEST", "1");
+    }
+    let ui = MockUi::default();
+    let res = kaji::cli::run(PathBuf::from("/tmp"), &ui).await;
+    unsafe {
+        std::env::remove_var("KAJI_TEST");
+    }
+    assert!(res.is_ok());
+}
+
+#[tokio::test]
+async fn test_rotate_keys_read_dir_error() {
+    let dir = tempdir().unwrap();
+    let realm_dir = dir.path().join("my-realm");
+    fs::create_dir_all(&realm_dir).unwrap();
+    // Create keys as a file instead of directory to trigger read_dir error
+    fs::write(realm_dir.join("keys"), "not-a-dir").unwrap();
+    let res = kaji::cli::keys::rotate_keys_yaml(dir.path(), "my-realm").await;
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_change_password_read_error() {
+    let dir = tempdir().unwrap();
+    let user_path = dir.path().join("my-realm").join("users").join("alice.yaml");
+    fs::create_dir_all(&user_path).unwrap(); // alice.yaml is a directory
+    let res =
+        kaji::cli::user::change_user_password_yaml(dir.path(), "my-realm", "alice", "p1").await;
+    assert!(res.is_err());
+}
+
+#[tokio::test]
+async fn test_plan_realm_invalid_yaml() {
+    let dir = tempdir().unwrap();
+    let realm_path = dir.path().join("realm.yaml");
+    fs::write(&realm_path, "invalid: [unclosed").unwrap();
+    let mock_url = start_mock_server().await;
+    let client = KeycloakClient::new(mock_url);
+    let resolver: Arc<dyn SecretResolver> = Arc::new(EnvResolver::new(HashMap::new()));
+    let ui = MockUi::default();
+    let ctx = kaji::plan::PlanContext {
+        client: &client,
+        workspace_dir: dir.path(),
+        realm_name: "test",
+        resolver,
+        profile: None,
+        options: kaji::plan::PlanOptions {
+            changes_only: false,
+            interactive: false,
+            verbose: false,
+        },
+        ui: &ui,
+    };
+    let res = kaji::plan::realm::plan_realm(&ctx).await;
+    assert!(res.is_err());
+}
