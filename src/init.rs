@@ -527,4 +527,73 @@ mod tests {
         let result = run(false, Some(invalid_path), &ui).await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_run_interactive_with_all_inputs() {
+        let dir = tempdir().unwrap();
+        let expected_path = dir.path().join("kaji.toml");
+
+        let ui = MockUi {
+            inputs: Mutex::new(vec![
+                expected_path.to_string_lossy().to_string(), // Output file path
+                "http://myhost".to_string(),                 // server
+                "r1,r2".to_string(),                         // realms
+                "admin".to_string(),                         // user
+                "kaji-cli".to_string(),                      // client_id
+                "prod".to_string(),                          // profile
+                "https://vault:8200".to_string(),            // vault_addr
+                "s.token".to_string(),                       // vault_token
+                "my-workspace".to_string(),                  // workspace
+            ]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        run(true, None, &ui).await.unwrap();
+
+        let content = tokio::fs::read_to_string(&expected_path).await.unwrap();
+        let config: Config = toml::from_str(&content).unwrap();
+        assert_eq!(config.server, Some("http://myhost".to_string()));
+        assert_eq!(
+            config.realms,
+            Some(vec!["r1".to_string(), "r2".to_string()])
+        );
+        assert_eq!(config.user, Some("admin".to_string()));
+        assert_eq!(config.client_id, Some("kaji-cli".to_string()));
+        assert_eq!(config.profile, Some("prod".to_string()));
+        assert_eq!(config.vault_addr, Some("https://vault:8200".to_string()));
+        assert_eq!(config.vault_token, Some("s.token".to_string()));
+        assert_eq!(config.workspace, Some(PathBuf::from("my-workspace")));
+    }
+
+    #[tokio::test]
+    async fn test_run_non_interactive_with_realms_env() {
+        let dir = tempdir().unwrap();
+        let output_path = dir.path().join("kaji.toml");
+
+        unsafe {
+            std::env::set_var("KEYCLOAK_REALMS", "realm1, realm2");
+        }
+
+        let ui = MockUi {
+            inputs: Mutex::new(vec![]),
+            confirms: Mutex::new(vec![]),
+            selects: Mutex::new(vec![]),
+            passwords: Mutex::new(vec![]),
+        };
+
+        let result = run(false, Some(output_path.clone()), &ui).await;
+        unsafe {
+            std::env::remove_var("KEYCLOAK_REALMS");
+        }
+        result.unwrap();
+
+        let content = tokio::fs::read_to_string(&output_path).await.unwrap();
+        let config: Config = toml::from_str(&content).unwrap();
+        assert_eq!(
+            config.realms,
+            Some(vec!["realm1".to_string(), "realm2".to_string()])
+        );
+    }
 }

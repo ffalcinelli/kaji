@@ -720,4 +720,23 @@ mod tests {
         let realms = discover_realms(ws).await.unwrap();
         assert_eq!(realms, vec!["realm1".to_string(), "realm2".to_string()]);
     }
+
+    #[tokio::test]
+    async fn test_discover_realms_not_found() {
+        use tempfile::tempdir;
+        let temp = tempdir().unwrap();
+        let nonexistent = temp.path().join("does_not_exist");
+        let realms = discover_realms(&nonexistent).await.unwrap();
+        assert!(realms.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_discover_realms_not_dir_error() {
+        use tempfile::tempdir;
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("a_file.txt");
+        tokio::fs::write(&file_path, "content").await.unwrap();
+        let result = discover_realms(&file_path).await;
+        assert!(result.is_err());
+    }
 }
