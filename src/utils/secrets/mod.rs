@@ -437,17 +437,17 @@ mod tests {
             val["items"][0]["secret"],
             "${KEYCLOAK_APP_TEST_ITEMS_0_SECRET}"
         );
-        assert_eq!(secrets.get("KEYCLOAK_APP_TEST_ITEMS_0_SECRET").unwrap(), "foo");
+        assert_eq!(
+            secrets.get("KEYCLOAK_APP_TEST_ITEMS_0_SECRET").unwrap(),
+            "foo"
+        );
     }
 
     #[test]
     fn test_obfuscate_secrets_nested_array() {
         let mut val = json!({"clientId": "test", "items": [{"secret": "foo"}]});
         obfuscate_secrets(&mut val, "app");
-        assert_eq!(
-            val["items"][0]["secret"],
-            "***"
-        );
+        assert_eq!(val["items"][0]["secret"], "***");
     }
 
     #[test]
