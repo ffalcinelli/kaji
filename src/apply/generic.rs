@@ -531,14 +531,18 @@ where
 
     // The local value is base + overlay merged: writing it back would leak profile-specific
     // values into the base file, so leave both files untouched.
-    if let Some(overlay) = crate::utils::yaml::find_overlay_path(path, profile).await {
+    if crate::utils::yaml::find_overlay_path(path, profile)
+        .await
+        .is_some()
+    {
         let _lock = prompt_mutex.lock().await;
-        eprintln!(
-            "  {} Skipping local update of {:?}: values come from overlay {:?}",
+        crate::utils::ui::log_line(format!(
+            "  {} Skipping local update of {} '{}': its file has a '{}' profile overlay",
             crate::utils::ui::INFO,
-            path,
-            overlay
-        );
+            T::LABEL,
+            enriched.get_name(),
+            profile.unwrap_or_default()
+        ));
         return Ok(());
     }
 

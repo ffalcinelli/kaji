@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use console::style;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs as async_fs;
 
@@ -26,7 +25,6 @@ pub const REALM_FLOW_BINDINGS: &[&str] = &[
 
 /// Realm state carried from Stage 0 to the final stage of an apply.
 pub struct PendingRealm {
-    path: PathBuf,
     before_sub: Value,
     resolved: Value,
     deferred_bindings: Map<String, Value>,
@@ -167,7 +165,6 @@ pub async fn apply_realm(ctx: crate::apply::ApplyContext<'_>) -> Result<Option<P
     }
 
     Ok(Some(PendingRealm {
-        path: realm_path,
         before_sub,
         resolved,
         deferred_bindings,
@@ -184,6 +181,7 @@ pub async fn finish_realm(
     };
     let crate::apply::ApplyContext {
         client,
+        workspace_dir,
         secrets_path,
         realm_name,
         profile,
@@ -220,7 +218,7 @@ pub async fn finish_realm(
 
     if let Ok(enriched) = client.get_realm().await {
         crate::apply::generic::check_and_update_enrichment(
-            &pending.path,
+            &workspace_dir.join("realm.yaml"),
             profile.as_deref(),
             crate::apply::generic::LocalSource {
                 before_sub: &pending.before_sub,
