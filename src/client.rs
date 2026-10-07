@@ -271,10 +271,13 @@ impl KeycloakClient {
     }
 
     /// Lists the roles of a client (including attributes).
-    pub async fn get_client_roles(&self, client_uuid: &str) -> Result<Vec<RoleRepresentation>> {
+    pub async fn get_client_roles(
+        &self,
+        client_internal_id: &str,
+    ) -> Result<Vec<RoleRepresentation>> {
         let url = format!(
             "{}?briefRepresentation=false",
-            self.realm_url(&["clients", client_uuid, "roles"])?
+            self.realm_url(&["clients", client_internal_id, "roles"])?
         );
         self.get(&url).await
     }
@@ -282,12 +285,15 @@ impl KeycloakClient {
     /// Creates a client role.
     pub async fn create_client_role(
         &self,
-        client_uuid: &str,
+        client_internal_id: &str,
         role: &RoleRepresentation,
     ) -> Result<()> {
         let role = role.clone().pre_save(self).await?;
-        self.post(&self.realm_url(&["clients", client_uuid, "roles"])?, &role)
-            .await
+        self.post(
+            &self.realm_url(&["clients", client_internal_id, "roles"])?,
+            &role,
+        )
+        .await
     }
 
     /// Lists the composites of a role.
@@ -348,7 +354,7 @@ impl KeycloakClient {
         self.get(&self.realm_url(&segments)?).await
     }
 
-    /// Adds or removes role mappings; `target` is `["realm"]` or `["clients", client_uuid]`.
+    /// Adds or removes role mappings; `target` is `["realm"]` or `["clients", client_internal_id]`.
     pub async fn change_role_mappings(
         &self,
         owner: &[&str],
@@ -377,10 +383,10 @@ impl KeycloakClient {
     /// Fetches a client role by name.
     pub async fn get_client_role(
         &self,
-        client_uuid: &str,
+        client_internal_id: &str,
         name: &str,
     ) -> Result<RoleRepresentation> {
-        self.get(&self.realm_url(&["clients", client_uuid, "roles", name])?)
+        self.get(&self.realm_url(&["clients", client_internal_id, "roles", name])?)
             .await
     }
 
@@ -388,7 +394,7 @@ impl KeycloakClient {
     /// `default-client-scopes` or `optional-client-scopes`).
     pub async fn get_client_scope_links(
         &self,
-        client_uuid: &str,
+        client_internal_id: &str,
         kind: &str,
     ) -> Result<Vec<String>> {
         #[derive(Deserialize)]
@@ -398,7 +404,7 @@ impl KeycloakClient {
         let url = format!(
             "{}/clients/{}/{}",
             self.realm_admin_url(),
-            client_uuid,
+            client_internal_id,
             kind
         );
         let links: Vec<Link> = self.get(&url).await?;
@@ -408,14 +414,14 @@ impl KeycloakClient {
     /// Links a client scope to a client.
     pub async fn link_client_scope(
         &self,
-        client_uuid: &str,
+        client_internal_id: &str,
         kind: &str,
         scope_id: &str,
     ) -> Result<()> {
         let url = format!(
             "{}/clients/{}/{}/{}",
             self.realm_admin_url(),
-            client_uuid,
+            client_internal_id,
             kind,
             scope_id
         );
@@ -425,14 +431,14 @@ impl KeycloakClient {
     /// Unlinks a client scope from a client.
     pub async fn unlink_client_scope(
         &self,
-        client_uuid: &str,
+        client_internal_id: &str,
         kind: &str,
         scope_id: &str,
     ) -> Result<()> {
         let url = format!(
             "{}/clients/{}/{}/{}",
             self.realm_admin_url(),
-            client_uuid,
+            client_internal_id,
             kind,
             scope_id
         );

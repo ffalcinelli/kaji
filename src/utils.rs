@@ -834,6 +834,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_join_all_tasks_reports_panics() {
+        let mut set = tokio::task::JoinSet::new();
+        set.spawn(async {
+            if std::hint::black_box(true) {
+                panic!("boom");
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+        let err = join_all_tasks(set, Some("Realm task panicked"))
+            .await
+            .unwrap_err();
+        assert!(format!("{:#}", err).contains("Realm task panicked"));
+    }
+
+    #[tokio::test]
     async fn test_join_all_tasks_waits_for_all_and_aggregates_errors() {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};

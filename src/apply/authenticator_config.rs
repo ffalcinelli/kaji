@@ -219,9 +219,9 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
             .await
         {
             crate::apply::generic::check_and_update_enrichment(
+                &path,
+                profile.as_deref(),
                 crate::apply::generic::LocalSource {
-                    path: &path,
-                    profile: profile.as_deref(),
                     before_sub: &local_val_before_sub,
                     resolved: &local_val_resolved,
                 },

@@ -220,9 +220,9 @@ pub async fn finish_realm(
 
     if let Ok(enriched) = client.get_realm().await {
         crate::apply::generic::check_and_update_enrichment(
+            &pending.path,
+            profile.as_deref(),
             crate::apply::generic::LocalSource {
-                path: &pending.path,
-                profile: profile.as_deref(),
                 before_sub: &pending.before_sub,
                 resolved: &pending.resolved,
             },

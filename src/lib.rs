@@ -753,6 +753,19 @@ mod tests {
     }
 
     #[test]
+    fn test_drift_detected_message_and_missing_server() {
+        assert_eq!(
+            DriftDetected(3).to_string(),
+            "Drift detected: 3 resource(s) differ from the workspace"
+        );
+        let cli = Cli::try_parse_from_with_sources(["kaji", "validate"]).unwrap();
+        let mut cli = cli;
+        cli.server = None;
+        let err = ConnectionSettings::resolve(&cli, None).err().unwrap();
+        assert!(format!("{:#}", err).contains("server URL not provided"));
+    }
+
+    #[test]
     fn test_explicit_flags_override_profile() {
         let profile = profile_with("https://profile", Some("profile-user"));
 

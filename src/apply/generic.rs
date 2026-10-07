@@ -332,12 +332,9 @@ where
                         }
                         rep.prepare_enriched(&mut enriched);
                         check_and_update_enrichment(
-                            LocalSource {
-                                path: &path,
-                                profile: profile.as_deref(),
-                                before_sub: &local_val_before_sub,
-                                resolved: &local_val_resolved,
-                            },
+                            &path,
+profile.as_deref(),
+LocalSource { before_sub: &local_val_before_sub, resolved: &local_val_resolved },
                             &enriched,
                             &realm_name,
                             &secrets_path,
@@ -500,12 +497,8 @@ where
 /// Value Keycloak returns in place of stored secrets (IdP client secrets, LDAP bind credentials, ...).
 const KEYCLOAK_MASKED_SECRET: &str = "**********";
 
-/// Inputs describing the local file that produced an applied resource.
+/// Local values of the file that produced an applied resource.
 pub struct LocalSource<'a> {
-    /// Path of the base YAML file.
-    pub path: &'a std::path::Path,
-    /// Active profile, if any (used to detect overlays).
-    pub profile: Option<&'a str>,
     /// Local value (base + overlay) before secret substitution.
     pub before_sub: &'a serde_json::Value,
     /// Local value (base + overlay) after secret substitution.
@@ -514,6 +507,8 @@ pub struct LocalSource<'a> {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn check_and_update_enrichment<T>(
+    path: &std::path::Path,
+    profile: Option<&str>,
     local: LocalSource<'_>,
     enriched: &T,
     realm_name: &str,
@@ -530,8 +525,6 @@ where
         + Clone,
 {
     let LocalSource {
-        path,
-        profile,
         before_sub: local_val_before_sub,
         resolved: local_val_resolved,
     } = local;
@@ -953,9 +946,9 @@ mod tests {
 
         // Call check_and_update_enrichment with yes = false, confirm = true
         check_and_update_enrichment(
+            &client_path,
+            None,
             LocalSource {
-                path: &client_path,
-                profile: None,
                 before_sub: &local_yaml,
                 resolved: &resolved,
             },
@@ -1057,9 +1050,9 @@ mod tests {
         resolved["attributes"]["user.attribute/department"] =
             serde_json::json!("placeholder-to-overwrite");
         check_and_update_enrichment(
+            &client_path,
+            None,
             LocalSource {
-                path: &client_path,
-                profile: None,
                 before_sub: &local_yaml,
                 resolved: &resolved,
             },
@@ -1107,9 +1100,9 @@ mod tests {
         fs::write(&path, &original)?;
         let enriched: ClientRepresentation = serde_json::from_value(enriched)?;
         check_and_update_enrichment(
+            &path,
+            profile,
             LocalSource {
-                path: &path,
-                profile,
                 before_sub: local,
                 resolved,
             },

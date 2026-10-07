@@ -396,10 +396,11 @@ async fn inspect_client_roles(
     use crate::client::KeycloakResourceMapping;
     let mut exported = 0usize;
     for remote_client in client.get_clients().await? {
-        let (Some(uuid), Some(client_id)) = (remote_client.id, remote_client.client_id) else {
+        let (Some(internal_id), Some(client_id)) = (remote_client.id, remote_client.client_id)
+        else {
             continue;
         };
-        let roles = match client.get_client_roles(&uuid).await {
+        let roles = match client.get_client_roles(&internal_id).await {
             Ok(roles) => roles,
             // The client was deleted while inspecting (e.g. a realm removed concurrently).
             Err(e) if crate::client::is_not_found(&e) => continue,

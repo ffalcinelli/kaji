@@ -120,14 +120,15 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
     let clients = clients_by_dir_name(client).await?;
 
     for dir in dirs {
-        let (client_uuid, client_id) = clients.get(&dir.dir_name).cloned().with_context(|| {
-            format!(
-                "Client '{}' of roles directory {:?} not found in realm '{}'",
-                dir.dir_name, dir.roles_dir, realm_name
-            )
-        })?;
+        let (client_internal_id, client_id) =
+            clients.get(&dir.dir_name).cloned().with_context(|| {
+                format!(
+                    "Client '{}' of roles directory {:?} not found in realm '{}'",
+                    dir.dir_name, dir.roles_dir, realm_name
+                )
+            })?;
         let existing: HashMap<String, RoleRepresentation> = client
-            .get_client_roles(&client_uuid)
+            .get_client_roles(&client_internal_id)
             .await?
             .into_iter()
             .map(|r| (r.name.clone(), r))
@@ -163,7 +164,7 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
                 }
             }
             rep.client_role = true;
-            rep.container_id = Some(client_uuid.clone());
+            rep.container_id = Some(client_internal_id.clone());
             let role_id = match current.and_then(|c| c.id.clone()) {
                 Some(id) => {
                     rep.id = Some(id.clone());
@@ -177,12 +178,12 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
                 None => {
                     rep.id = None;
                     client
-                        .create_client_role(&client_uuid, &rep)
+                        .create_client_role(&client_internal_id, &rep)
                         .await
                         .with_context(|| format!("Failed to create {}", label))?;
                     log_line(format!("  {} Created {}", SUCCESS_CREATE, label));
                     client
-                        .get_client_role(&client_uuid, &rep.name)
+                        .get_client_role(&client_internal_id, &rep.name)
                         .await?
                         .id
                         .with_context(|| format!("Created {} has no ID", label))?
@@ -192,9 +193,9 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
             if let Ok(mut enriched) = client.get_resource::<RoleRepresentation>(&role_id).await {
                 rep.prepare_enriched(&mut enriched);
                 crate::apply::generic::check_and_update_enrichment(
+                    &path,
+                    profile.as_deref(),
                     crate::apply::generic::LocalSource {
-                        path: &path,
-                        profile: profile.as_deref(),
                         before_sub: &before_sub,
                         resolved: &resolved,
                     },
@@ -285,7 +286,7 @@ pub async fn apply_role_composites(ctx: crate::apply::ApplyContext<'_>) -> Resul
     }
     let clients = clients_by_dir_name(client).await?;
     for dir in dirs {
-        let Some((client_uuid, client_id)) = clients.get(&dir.dir_name) else {
+        let Some((client_internal_id, client_id)) = clients.get(&dir.dir_name) else {
             continue;
         };
         for path in role_files(&dir.roles_dir, profile.as_deref()).await? {
@@ -297,7 +298,7 @@ pub async fn apply_role_composites(ctx: crate::apply::ApplyContext<'_>) -> Resul
                 continue;
             }
             let id = client
-                .get_client_role(client_uuid, &rep.name)
+                .get_client_role(client_internal_id, &rep.name)
                 .await?
                 .id
                 .with_context(|| {

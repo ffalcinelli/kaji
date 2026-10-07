@@ -214,6 +214,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_plan_read_errors() -> Result<()> {
+        let dir = tempdir()?;
+        // Unreadable plan (a directory)
+        std::fs::create_dir(dir.path().join(PLAN_FILE_NAME))?;
+        let err = PlanFile::read(dir.path()).await.unwrap_err();
+        assert!(format!("{:#}", err).contains("Failed to read"));
+        std::fs::remove_dir(dir.path().join(PLAN_FILE_NAME))?;
+        // Unsupported version
+        std::fs::write(
+            dir.path().join(PLAN_FILE_NAME),
+            r#"{"version": 99, "profile": null, "files": []}"#,
+        )?;
+        let err = PlanFile::read(dir.path()).await.unwrap_err();
+        assert!(format!("{:#}", err).contains("Unsupported plan version 99"));
+        // A planned file outside the workspace cannot be recorded
+        let outside = tempdir()?;
+        let file = outside.path().join("x.yaml");
+        std::fs::write(&file, "a: 1")?;
+        assert!(PlanFile::build(dir.path(), None, &[file]).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_plan_read_missing_and_legacy() -> Result<()> {
         let dir = tempdir()?;
         assert!(PlanFile::read(dir.path()).await?.is_none());

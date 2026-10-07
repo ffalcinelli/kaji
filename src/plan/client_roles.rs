@@ -36,9 +36,9 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
             .map(|(_, id)| id.clone())
             .unwrap_or_else(|| dir.dir_name.clone());
         let existing: HashMap<String, RoleRepresentation> = match remote_client {
-            Some((uuid, _)) => ctx
+            Some((internal_id, _)) => ctx
                 .client
-                .get_client_roles(uuid)
+                .get_client_roles(internal_id)
                 .await?
                 .into_iter()
                 .map(|r| (r.name.clone(), r))

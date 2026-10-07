@@ -239,9 +239,9 @@ pub async fn process_component_file(
     if let Some(id) = final_id {
         if let Ok(enriched) = client.get_resource::<ComponentRepresentation>(&id).await {
             crate::apply::generic::check_and_update_enrichment(
+                &path,
+                profile.as_deref(),
                 crate::apply::generic::LocalSource {
-                    path: &path,
-                    profile: profile.as_deref(),
                     before_sub: &local_val_before_sub,
                     resolved: &local_val_resolved,
                 },

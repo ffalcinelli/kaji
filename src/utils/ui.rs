@@ -314,6 +314,15 @@ impl Ui for MockUi {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_progress_helpers_never_lose_messages() {
+        assert_eq!(super::suspend_progress(|| 42), 42);
+        let pb = super::create_progress_bar(1, "x");
+        super::report(&pb, "reported line");
+        super::log_line("logged line");
+        pb.finish();
+    }
+
     use super::*;
 
     #[test]

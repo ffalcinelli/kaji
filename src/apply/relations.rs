@@ -29,7 +29,7 @@ pub fn declared_names(
 pub async fn reconcile_client_scopes(
     client: &KeycloakClient,
     rep: &ClientRepresentation,
-    client_uuid: &str,
+    client_internal_id: &str,
 ) -> Result<()> {
     let kinds = [
         ("defaultClientScopes", "default-client-scopes"),
@@ -53,7 +53,7 @@ pub async fn reconcile_client_scopes(
     for (path, wanted) in &desired {
         if wanted.is_some() {
             let names = client
-                .get_client_scope_links(client_uuid, path)
+                .get_client_scope_links(client_internal_id, path)
                 .await?
                 .into_iter()
                 .collect();
@@ -70,7 +70,7 @@ pub async fn reconcile_client_scopes(
                 .get(scope)
                 .with_context(|| format!("Client scope '{}' not found", scope))?;
             client
-                .unlink_client_scope(client_uuid, path, id)
+                .unlink_client_scope(client_internal_id, path, id)
                 .await
                 .with_context(|| {
                     format!(
@@ -94,7 +94,7 @@ pub async fn reconcile_client_scopes(
                 )
             })?;
             client
-                .link_client_scope(client_uuid, path, id)
+                .link_client_scope(client_internal_id, path, id)
                 .await
                 .with_context(|| {
                     format!("Failed to add {} '{}' to client '{}'", path, scope, name)
@@ -256,7 +256,7 @@ pub async fn reconcile_role_mappings(
                 .get(&client_id)
                 .map(|m| m.mappings.clone())
                 .unwrap_or_default();
-            let uuid = client_ids
+            let internal_id = client_ids
                 .get(&client_id)
                 .with_context(|| format!("Client '{}' not found", client_id))?;
             let remove: Vec<_> = have
@@ -267,18 +267,23 @@ pub async fn reconcile_role_mappings(
             let have_names: HashSet<&String> = have.iter().map(|r| &r.name).collect();
             let mut add = Vec::new();
             for name in wanted_names.iter().filter(|n| !have_names.contains(n)) {
-                add.push(client.get_client_role(uuid, name).await.with_context(|| {
-                    format!(
-                        "Client role '{}' of client '{}' assigned to {} not found",
-                        name, client_id, owner_label
-                    )
-                })?);
+                add.push(
+                    client
+                        .get_client_role(internal_id, name)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Client role '{}' of client '{}' assigned to {} not found",
+                                name, client_id, owner_label
+                            )
+                        })?,
+                );
             }
             let what = format!("roles of client {}", client_id);
             apply_mapping_change(
                 client,
                 owner,
-                &["clients", uuid],
+                &["clients", internal_id],
                 owner_label,
                 &what,
                 remove,
@@ -479,15 +484,15 @@ pub async fn reconcile_group(
 pub async fn client_id_maps(
     client: &KeycloakClient,
 ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
-    let mut by_uuid = HashMap::new();
+    let mut by_internal_id = HashMap::new();
     let mut by_client_id = HashMap::new();
     for c in client.get_clients().await? {
-        if let (Some(uuid), Some(client_id)) = (c.id, c.client_id) {
-            by_uuid.insert(uuid.clone(), client_id.clone());
-            by_client_id.insert(client_id, uuid);
+        if let (Some(internal_id), Some(client_id)) = (c.id, c.client_id) {
+            by_internal_id.insert(internal_id.clone(), client_id.clone());
+            by_client_id.insert(client_id, internal_id);
         }
     }
-    Ok((by_uuid, by_client_id))
+    Ok((by_internal_id, by_client_id))
 }
 
 /// Loads a role's composites into `composites` (Keycloak export format:
@@ -500,7 +505,7 @@ pub async fn load_role_composites(
         return Ok(());
     };
     let composites = client.get_role_composites(&id).await?;
-    let (by_uuid, _) = client_id_maps(client).await?;
+    let (by_internal_id, _) = client_id_maps(client).await?;
     let mut realm = Vec::new();
     let mut clients: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for c in composites {
@@ -508,7 +513,7 @@ pub async fn load_role_composites(
             let client_id = c
                 .container_id
                 .as_ref()
-                .and_then(|uuid| by_uuid.get(uuid))
+                .and_then(|internal_id| by_internal_id.get(internal_id))
                 .cloned()
                 .unwrap_or_default();
             clients.entry(client_id).or_default().push(c.name);
@@ -568,14 +573,14 @@ pub async fn reconcile_role_composites(
         })
         .unwrap_or_default();
 
-    let (by_uuid, by_client_id) = client_id_maps(client).await?;
+    let (by_internal_id, by_client_id) = client_id_maps(client).await?;
     let current = client.get_role_composites(role_id).await?;
     let key_of = |r: &crate::models::RoleRepresentation| {
         if r.client_role {
             let client_id = r
                 .container_id
                 .as_ref()
-                .and_then(|uuid| by_uuid.get(uuid))
+                .and_then(|internal_id| by_internal_id.get(internal_id))
                 .cloned()
                 .unwrap_or_default();
             (Some(client_id), r.name.clone())
@@ -603,15 +608,20 @@ pub async fn reconcile_role_composites(
     }
     for (client_id, name) in &wanted_client {
         if !have.contains(&(Some(client_id.clone()), name.clone())) {
-            let uuid = by_client_id
+            let internal_id = by_client_id
                 .get(client_id)
                 .with_context(|| format!("Client '{}' not found", client_id))?;
-            add.push(client.get_client_role(uuid, name).await.with_context(|| {
-                format!(
-                    "Composite role '{}' of client '{}' for {} not found",
-                    name, client_id, label
-                )
-            })?);
+            add.push(
+                client
+                    .get_client_role(internal_id, name)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Composite role '{}' of client '{}' for {} not found",
+                            name, client_id, label
+                        )
+                    })?,
+            );
         }
     }
     if !remove.is_empty() {

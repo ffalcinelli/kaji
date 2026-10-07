@@ -588,6 +588,21 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn test_realm_name_must_match_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let realm_dir = temp.path().join("prod");
+        tokio::fs::create_dir_all(&realm_dir).await.unwrap();
+        tokio::fs::write(realm_dir.join("realm.yaml"), "realm: staging\n")
+            .await
+            .unwrap();
+        let err = run(temp.path().to_path_buf(), &["prod".to_string()])
+            .await
+            .unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("'staging'") && msg.contains("'prod'"), "{msg}");
+    }
+
     #[test]
     fn test_validate_flow_alias_forbidden_char_parens() {
         let flows = vec![make_flow("Step Up (combined) Context Selection")];

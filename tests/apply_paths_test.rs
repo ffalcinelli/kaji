@@ -40,6 +40,15 @@ async fn start(responses: Vec<(&str, u16, Value)>) -> (String, Arc<Mutex<Recorde
                 let mut st = state.lock().unwrap();
                 st.calls.push((key.clone(), body));
                 match st.responses.get(&key) {
+                    // `{"__location": url}` answers with a Location header
+                    Some((status, body)) if body.get("__location").is_some() => (
+                        StatusCode::from_u16(*status).unwrap(),
+                        [(
+                            axum::http::header::LOCATION,
+                            body["__location"].as_str().unwrap_or_default().to_string(),
+                        )],
+                    )
+                        .into_response(),
                     Some((status, body)) => (
                         StatusCode::from_u16(*status).unwrap(),
                         axum::Json(body.clone()),
@@ -377,4 +386,68 @@ async fn plan_reports_shared_and_new_sub_flows() {
     // parent-b, parent-c, shared, only-child are new; parent-a differs (executions)
     assert_eq!(summary.created, 4);
     assert_eq!(summary.updated, 1);
+}
+
+#[tokio::test]
+async fn plan_reports_undeclared_remote_resources() {
+    let (url, _state) = start(vec![(
+        "GET /admin/realms/r/roles",
+        200,
+        json!([{"id": "r1", "name": "declared"}, {"id": "r2", "name": "orphan"},
+               {"id": "r3", "name": "offline_access"}]),
+    )])
+    .await;
+    let c = client(url);
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("r/roles/declared.yaml"),
+        "name: declared\n",
+    );
+    let summary = kaji::plan::run_with_outcome(
+        kaji::plan::PlanArgs {
+            client: &c,
+            workspace_dir: dir.path().to_path_buf(),
+            changes_only: true,
+            interactive: false,
+            realms_to_plan: &["r".to_string()],
+            ui: Arc::new(MockUi::new()),
+            resolver: Arc::new(EnvResolver::new(HashMap::new())),
+            profile: None,
+            verbose: false,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    // offline_access is a built-in role and never reported
+    assert_eq!(summary.orphaned, 1);
+}
+
+#[tokio::test]
+async fn failed_post_save_reconciliation_names_the_resource() {
+    let (url, _state) = start(vec![(
+        "POST /admin/realms/r/clients",
+        201,
+        json!({"__location": "http://x/admin/realms/r/clients/c1"}),
+    )])
+    .await;
+    let c = client(url);
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("clients/app.yaml"),
+        "clientId: app\ndefaultClientScopes:\n- missing-scope\n",
+    );
+    let err = apply::generic::apply_resources::<kaji::models::ClientRepresentation>(ctx(
+        &c,
+        dir.path(),
+        ui(vec![]),
+        false,
+        true,
+        false,
+    ))
+    .await
+    .unwrap_err();
+    let msg = format!("{:#}", err);
+    assert!(msg.contains("Failed to reconcile clients 'app'"), "{msg}");
+    assert!(msg.contains("missing-scope"), "{msg}");
 }

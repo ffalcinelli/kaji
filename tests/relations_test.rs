@@ -764,3 +764,72 @@ async fn relationship_errors_name_the_missing_reference() {
         .unwrap();
     assert_eq!(state.lock().unwrap().calls.len(), before);
 }
+
+#[tokio::test]
+async fn client_role_prune_asks_without_yes() {
+    let (url, state) = start(vec![
+        (CLIENTS, 200, json!([{"id": "ca", "clientId": "api"}])),
+        (
+            "GET /admin/realms/r/clients/ca/roles",
+            200,
+            json!([{"id": "r1", "name": "reader"}, {"id": "r2", "name": "orphan"}]),
+        ),
+    ])
+    .await;
+    let c = client(url);
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("clients/api/roles/reader.yaml"),
+        "name: reader\n",
+    );
+    let ui = MockUi::new();
+    *ui.confirms.lock().unwrap() = vec![false];
+    let ui = Arc::new(ui);
+    let mut prune_ctx = ctx(&c, dir.path(), ui.clone(), true);
+    prune_ctx.yes = false;
+    apply::client_roles::apply_client_roles(prune_ctx)
+        .await
+        .unwrap();
+    assert!(ui.confirms.lock().unwrap().is_empty(), "prune prompt shown");
+    assert!(calls(&state, "DELETE /admin/realms/r/roles-by-id/r2").is_empty());
+}
+
+#[tokio::test]
+async fn sub_group_created_without_location_is_found_by_name() {
+    // Stateful server: the child appears in /children once it has been created.
+    let created = Arc::new(Mutex::new(false));
+    let shared = Arc::clone(&created);
+    let app = axum::Router::new().fallback(move |method: Method, uri: Uri| {
+        let created = Arc::clone(&shared);
+        async move {
+            let path = uri.path().to_string();
+            match (method.as_str(), path.as_str()) {
+                ("POST", "/admin/realms/r/groups/g1/children") => {
+                    *created.lock().unwrap() = true;
+                    StatusCode::CREATED.into_response()
+                }
+                ("GET", "/admin/realms/r/groups/g1/children") => {
+                    if *created.lock().unwrap() {
+                        axum::Json(json!([{"id": "new-id", "name": "new-team"}])).into_response()
+                    } else {
+                        axum::Json(json!([])).into_response()
+                    }
+                }
+                ("GET", _) => axum::Json(json!([])).into_response(),
+                _ => StatusCode::NO_CONTENT.into_response(),
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let c = client(url);
+    let group: GroupRepresentation = serde_json::from_value(json!({
+        "name": "org",
+        "subGroups": [{"name": "new-team", "subGroups": []}]
+    }))
+    .unwrap();
+    relations::reconcile_group(&c, &group, "g1").await.unwrap();
+    assert!(*created.lock().unwrap());
+}
