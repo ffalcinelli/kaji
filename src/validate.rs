@@ -143,6 +143,17 @@ async fn validate_realm_config(workspace_dir: &Path, profile: Option<&str>) -> R
     if realm.realm.is_empty() {
         anyhow::bail!("Realm name is empty in realm.yaml");
     }
+    if let Some(dir_name) = workspace_dir.file_name().and_then(|n| n.to_str())
+        && realm.realm != dir_name
+    {
+        anyhow::bail!(
+            "Realm name '{}' in realm.yaml does not match its directory '{}' \
+             (applying it would rename realm '{}')",
+            realm.realm,
+            dir_name,
+            dir_name
+        );
+    }
     eprintln!(
         "  {} {} {}",
         CHECK,
@@ -877,7 +888,7 @@ mod tests {
         tokio::fs::create_dir_all(&clients_dir).await.unwrap();
 
         // Write realm.yaml
-        tokio::fs::write(ws.join("realm.yaml"), "realm: test-realm\n")
+        tokio::fs::write(ws.join("realm.yaml"), "realm: realm\n")
             .await
             .unwrap();
 

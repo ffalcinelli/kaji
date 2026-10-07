@@ -1,8 +1,10 @@
 #![allow(missing_docs)]
 //! Plan module for calculating diffs and detecting configuration drift.
 
+pub mod client_roles;
 pub mod components;
 pub mod generic;
+pub mod plan_file;
 pub mod realm;
 
 macro_rules! plan_generic_resources {
@@ -43,12 +45,15 @@ pub struct PlanOptions {
 pub struct PlanSummary {
     pub created: usize,
     pub updated: usize,
+    /// Remote resources not declared locally (removed only by `apply --prune`).
+    pub orphaned: usize,
 }
 
 impl PlanSummary {
     pub fn add(&mut self, other: &PlanSummary) {
         self.created += other.created;
         self.updated += other.updated;
+        self.orphaned += other.orphaned;
     }
 
     pub fn total(&self) -> usize {
@@ -83,6 +88,16 @@ pub struct PlanArgs<'a> {
 /// # Errors
 /// Returns an error if directory read fails or Keycloak connection fails.
 pub async fn run(args: PlanArgs<'_>) -> Result<()> {
+    run_with_outcome(args, true).await.map(|_| ())
+}
+
+/// Calculates configuration drift and returns the plan summary.
+///
+/// When `write_plan` is false (e.g. `kaji drift`), the `.kajiplan` file is left untouched.
+///
+/// # Errors
+/// Returns an error if directory read fails or Keycloak connection fails.
+pub async fn run_with_outcome(args: PlanArgs<'_>, write_plan: bool) -> Result<PlanSummary> {
     let PlanArgs {
         client,
         workspace_dir,
@@ -114,10 +129,11 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
             WARN,
             style(format!("No realms found to plan in {:?}", workspace_dir)).yellow()
         );
-        return Ok(());
+        return Ok(PlanSummary::default());
     }
 
     let mut set = tokio::task::JoinSet::new();
+    let mut sequential = Vec::new();
 
     for realm_name in realms {
         let mut realm_client = client.clone();
@@ -127,7 +143,7 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
         let ui = Arc::clone(&ui);
         let profile = profile.clone();
 
-        set.spawn(async move {
+        let task = async move {
             eprintln!(
                 "\n{} {}",
                 ACTION,
@@ -157,24 +173,33 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
             plan_single_realm(ctx, &mut changed_files, &mut summary).await?;
 
             Ok::<(Vec<PathBuf>, PlanSummary), anyhow::Error>((changed_files, summary))
-        });
+        };
+        if interactive {
+            // Prompts of concurrent realms would interleave: plan one realm at a time.
+            sequential.push(task.await?);
+        } else {
+            set.spawn(task);
+        }
     }
 
     let mut changed_files = Vec::new();
     let mut total_summary = PlanSummary::default();
-    for res in crate::utils::join_all_tasks(set, None).await? {
+    let concurrent = crate::utils::join_all_tasks(set, None).await?;
+    for res in sequential.into_iter().chain(concurrent) {
         let (files, summary) = res;
         changed_files.extend(files);
         total_summary.add(&summary);
     }
     changed_files.sort();
 
-    let plan_file = workspace_dir.join(".kajiplan");
+    let plan_path = workspace_dir.join(plan_file::PLAN_FILE_NAME);
     if changed_files.is_empty() {
-        match async_fs::remove_file(&plan_file).await {
-            Ok(_) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
+        if write_plan {
+            match async_fs::remove_file(&plan_path).await {
+                Ok(_) => (),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e.into()),
+            }
         }
         eprintln!(
             "\n{} {}",
@@ -184,8 +209,12 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
                 .bold()
         );
     } else {
-        let content = serde_json::to_string_pretty(&changed_files)?;
-        crate::utils::write_secure(&plan_file, &content).await?;
+        if write_plan {
+            plan_file::PlanFile::build(&workspace_dir, profile.as_deref(), &changed_files)
+                .await?
+                .write(&workspace_dir)
+                .await?;
+        }
         eprintln!(
             "\n{} {}",
             MEMO,
@@ -199,8 +228,19 @@ pub async fn run(args: PlanArgs<'_>) -> Result<()> {
             .bold()
         );
     }
+    if total_summary.orphaned > 0 {
+        eprintln!(
+            "{} {}",
+            WARN,
+            style(format!(
+                "{} remote resource(s) are not declared locally and would be deleted by `apply --prune`.",
+                total_summary.orphaned
+            ))
+            .yellow()
+        );
+    }
 
-    Ok(())
+    Ok(total_summary)
 }
 
 use crate::models::{
@@ -244,16 +284,22 @@ async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
     }
 
     // 2. Fetch remote flows to determine which local flows are "to create" (not yet in Keycloak).
-    let remote_flows = ctx
+    let remote_flows = match ctx
         .client
         .get_resources::<AuthenticationFlowRepresentation>()
         .await
-        .with_context(|| {
-            format!(
-                "Failed to fetch authentication flows for realm '{}' during sub-flow collision check",
-                ctx.realm_name
-            )
-        })?;
+    {
+        Ok(flows) => flows,
+        Err(e) if crate::client::is_not_found(&e) => Vec::new(),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to fetch authentication flows for realm '{}' during sub-flow collision check",
+                    ctx.realm_name
+                )
+            });
+        }
+    };
     let remote_aliases: HashSet<String> = remote_flows
         .iter()
         .filter_map(|f| f.get_identity())
@@ -335,6 +381,11 @@ async fn plan_single_realm(
         ]
     );
 
+    // Client roles live under clients/<clientId>/roles/
+    let (mut role_changes, role_summary) = client_roles::plan_client_roles(&ctx).await?;
+    changed_files.append(&mut role_changes);
+    summary.add(&role_summary);
+
     // 3. Warn about potential 409 sub-flow collisions in authentication flows
     check_flow_subflow_collisions(&ctx).await?;
 
@@ -375,6 +426,99 @@ pub fn prompt_interactive_change<T: Serialize>(
     }
 }
 
+/// Removes object keys whose value is an empty object or array (recursively).
+fn drop_empty_collections(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            for v in map.values_mut() {
+                drop_empty_collections(v);
+            }
+            map.retain(|_, v| match v {
+                Value::Object(m) => !m.is_empty(),
+                Value::Array(a) => !a.is_empty(),
+                _ => true,
+            });
+        }
+        Value::Array(items) => {
+            for v in items {
+                drop_empty_collections(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Removes object keys from `remote` that `local` does not declare (recursively).
+///
+/// Arrays are compared as a whole once declared; elements of arrays of objects are projected
+/// when both arrays have the same length.
+fn project_onto(remote: &mut serde_json::Value, local: &serde_json::Value) {
+    use serde_json::Value;
+    match (remote, local) {
+        (Value::Object(r), Value::Object(l)) => {
+            r.retain(|k, _| l.contains_key(k));
+            for (k, rv) in r.iter_mut() {
+                if let Some(lv) = l.get(k) {
+                    project_onto(rv, lv);
+                }
+            }
+        }
+        (Value::Array(r), Value::Array(l)) => {
+            // Pair elements by identity (array order may differ), by position as a fallback.
+            const KEYS: &[&str] = &[
+                "id",
+                "clientId",
+                "name",
+                "alias",
+                "authenticator",
+                "flowAlias",
+            ];
+            let identity = |v: &Value| {
+                KEYS.iter()
+                    .find_map(|k| v.get(*k).map(|id| (*k, id.clone())))
+            };
+            let same_len = r.len() == l.len();
+            for (index, rv) in r.iter_mut().enumerate() {
+                let local = match identity(rv) {
+                    Some((key, id)) => l.iter().find(|lv| lv.get(key) == Some(&id)),
+                    None if same_len => l.get(index),
+                    None => None,
+                };
+                if let Some(lv) = local {
+                    project_onto(rv, lv);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Copies Keycloak's `**********` masks from the remote value onto the local value.
+fn mask_like_remote(remote: &serde_json::Value, local: &mut serde_json::Value) {
+    use serde_json::Value;
+    match (remote, local) {
+        (Value::String(r), local) if r == crate::utils::secrets::KEYCLOAK_MASK => {
+            if local.is_string() {
+                *local = Value::String(r.clone());
+            }
+        }
+        (Value::Object(r), Value::Object(l)) => {
+            for (k, rv) in r {
+                if let Some(lv) = l.get_mut(k) {
+                    mask_like_remote(rv, lv);
+                }
+            }
+        }
+        (Value::Array(r), Value::Array(l)) if r.len() == l.len() => {
+            for (rv, lv) in r.iter().zip(l.iter_mut()) {
+                mask_like_remote(rv, lv);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn print_diff<T: Serialize>(
     name: &str,
     old: Option<&T>,
@@ -383,15 +527,39 @@ pub fn print_diff<T: Serialize>(
     verbose: bool,
     prefix: &str,
 ) -> Result<bool> {
+    print_resource_diff(name, old, new, changes_only, verbose, prefix, false)
+}
+
+/// Like [`print_diff`]; with `partial_updates`, remote fields the local file omits are ignored
+/// (for resource types whose Keycloak update endpoint leaves omitted fields unchanged).
+pub fn print_resource_diff<T: Serialize>(
+    name: &str,
+    old: Option<&T>,
+    new: &T,
+    changes_only: bool,
+    verbose: bool,
+    prefix: &str,
+    partial_updates: bool,
+) -> Result<bool> {
+    let mut new_val = serde_json::to_value(new)?;
     let old_yaml = if let Some(o) = old {
         let mut val = serde_json::to_value(o)?;
+        // Keycloak never returns some stored secrets: they cannot be compared, so the local
+        // value is shown as masked too instead of reporting a permanent change.
+        mask_like_remote(&val, &mut new_val);
+        if partial_updates {
+            // Keycloak leaves omitted fields untouched: only compare what the file declares.
+            project_onto(&mut val, &new_val);
+        }
+        // Keycloak returns empty collections for unset fields: they equal absent ones.
+        drop_empty_collections(&mut val);
+        drop_empty_collections(&mut new_val);
         obfuscate_secrets(&mut val, prefix);
         crate::utils::to_sorted_yaml(&val)?
     } else {
         String::new()
     };
 
-    let mut new_val = serde_json::to_value(new)?;
     obfuscate_secrets(&mut new_val, prefix);
     let new_yaml = crate::utils::to_sorted_yaml(&new_val)?;
 
@@ -469,6 +637,65 @@ mod tests {
         name: String,
         value: i32,
         secret: String,
+    }
+
+    #[test]
+    fn test_partial_local_file_only_compares_declared_keys() {
+        let diff = |old: &serde_json::Value, new: &serde_json::Value| {
+            print_resource_diff("c", Some(old), new, true, false, "client", true).unwrap()
+        };
+        let remote = serde_json::json!({
+            "clientId": "app", "enabled": true, "publicClient": true,
+            "attributes": {"a": "1", "b": "2"},
+            "redirectUris": ["https://a", "https://b"]
+        });
+        let partial = serde_json::json!({"clientId": "app", "attributes": {"a": "1"}});
+        assert!(!diff(&remote, &partial));
+        // Without partial updates (e.g. roles), omitted fields are real changes.
+        assert!(print_diff("c", Some(&remote), &partial, true, false, "client").unwrap());
+
+        let changed = serde_json::json!({"clientId": "app", "attributes": {"a": "9"}});
+        assert!(diff(&remote, &changed));
+
+        // Declared arrays are compared as a whole.
+        let fewer_uris = serde_json::json!({"clientId": "app", "redirectUris": ["https://a"]});
+        assert!(diff(&remote, &fewer_uris));
+    }
+
+    #[test]
+    fn test_partial_projection_pairs_array_elements_by_identity() {
+        let remote = serde_json::json!({"name": "s", "protocolMappers": [
+            {"id": "b", "name": "B", "config": {"k": "1", "extra": "x"}},
+            {"id": "a", "name": "A", "config": {"k": "2"}}
+        ]});
+        let local = serde_json::json!({"name": "s", "protocolMappers": [
+            {"id": "a", "name": "A", "config": {"k": "2"}},
+            {"id": "b", "name": "B", "config": {"k": "1", "extra": "x"}}
+        ]});
+        assert!(
+            !print_resource_diff("s", Some(&remote), &local, true, false, "scope", true).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_empty_collections_equal_absent_fields() {
+        let remote =
+            serde_json::json!({"name": "r", "attributes": {}, "composites": {"realm": []}});
+        let local = serde_json::json!({"name": "r"});
+        assert!(!print_diff("r", Some(&remote), &local, true, false, "role").unwrap());
+        let local_with = serde_json::json!({"name": "r", "attributes": {"a": ["1"]}});
+        assert!(print_diff("r", Some(&remote), &local_with, true, false, "role").unwrap());
+    }
+
+    #[test]
+    fn test_masked_remote_secret_is_not_a_change() {
+        let remote = serde_json::json!({"alias": "idp", "config": {"clientSecret": "**********"}});
+        let local = serde_json::json!({"alias": "idp", "config": {"clientSecret": "real"}});
+        assert!(!print_diff("IdP", Some(&remote), &local, true, false, "idp").unwrap());
+
+        let changed = serde_json::json!({"alias": "idp", "config": {"clientSecret": "new"}});
+        let previous = serde_json::json!({"alias": "idp", "config": {"clientSecret": "old"}});
+        assert!(print_diff("IdP", Some(&previous), &changed, true, false, "idp").unwrap());
     }
 
     #[test]

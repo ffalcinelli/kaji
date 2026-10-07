@@ -73,6 +73,10 @@ pub trait KeycloakResource {
     }
     /// Clears read-only or server-assigned metadata fields prior to export.
     fn clear_metadata(&mut self) {}
+    /// True if Keycloak's update endpoint leaves fields omitted from the body unchanged
+    /// (verified against Keycloak 26.8.0). Roles, groups and identity providers instead reset
+    /// omitted fields, so a partial local file there really removes values.
+    const PARTIAL_UPDATES: bool = false;
 }
 
 /// Metadata attributes for resolving and formatting secrets of a resource.
@@ -95,10 +99,12 @@ macro_rules! impl_keycloak_resource {
         $(, clear_metadata = |$clear_self:ident| $clear_expr:block)?
         $(, get_filename = |$filename_self:ident| $filename_expr:expr)?
         $(, object_path = |$obj_id:ident| $obj_path_expr:expr)?
+        $(, partial_updates = $partial:expr)?
     ) => {
         impl KeycloakResource for $type {
             const API_PATH: &'static str = $api_path;
             $(const DIR_NAME: &'static str = $dir_name;)?
+            $(const PARTIAL_UPDATES: bool = $partial;)?
 
             fn get_id(&self) -> Option<&str> {
                 None $( .or(self.$id_field.to_option_string()) )?
@@ -129,7 +135,7 @@ macro_rules! impl_resource_meta {
     };
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct RealmRepresentation {
     pub realm: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,12 +146,30 @@ pub struct RealmRepresentation {
     pub extra: HashMap<String, Value>,
 }
 
+impl std::fmt::Debug for RealmRepresentation {
+    /// `extra` holds the whole realm (including e.g. `smtpServer.password`): only list its keys.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut keys: Vec<&String> = self.extra.keys().collect();
+        keys.sort();
+        f.debug_struct("RealmRepresentation")
+            .field("realm", &self.realm)
+            .field("enabled", &self.enabled)
+            .field("display_name", &self.display_name)
+            .field("extra_keys", &keys)
+            .finish()
+    }
+}
+
 impl_keycloak_resource!(
     RealmRepresentation,
     api_path = "realms",
     id_field = realm,
     identity = |self| Some(self.realm.as_str()),
-    name = |self| self.realm.as_str()
+    name = |self| self.realm.as_str(),
+    clear_metadata = |self| {
+        self.extra.remove("id");
+    },
+    partial_updates = true
 );
 
 impl_resource_meta!(
@@ -321,9 +345,18 @@ impl_keycloak_resource!(
         .unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
+        self.extra.remove("access");
         self.id = None;
-    }
+    },
+    partial_updates = true
 );
+
+impl ClientRepresentation {
+    /// The client ID, or `unknown` (for messages).
+    pub fn get_client_id_or_unknown(&self) -> &str {
+        self.client_id.as_deref().unwrap_or("unknown")
+    }
+}
 
 impl_resource_meta!(
     ClientRepresentation,
@@ -364,6 +397,27 @@ impl_keycloak_resource!(
 
 impl_resource_meta!(RoleRepresentation, label = "roles", secret_prefix = "role");
 
+/// Client role mappings of one client (`GET .../role-mappings`).
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ClientMappingsRepresentation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
+    #[serde(default)]
+    pub mappings: Vec<RoleRepresentation>,
+}
+
+/// Direct role mappings of a user or group (`GET .../role-mappings`).
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct MappingsRepresentation {
+    #[serde(rename = "realmMappings", default)]
+    pub realm_mappings: Vec<RoleRepresentation>,
+    /// Keyed by client ID.
+    #[serde(rename = "clientMappings", default)]
+    pub client_mappings: HashMap<String, ClientMappingsRepresentation>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ClientScopeRepresentation {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -389,7 +443,8 @@ impl_keycloak_resource!(
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
         self.id = None;
-    }
+    },
+    partial_updates = true
 );
 
 impl_resource_meta!(
@@ -429,7 +484,7 @@ impl_keycloak_resource!(
         .unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
-        self.id = None;
+        self.clear_server_fields();
     },
     get_filename = |self| format!(
         "{}-{}",
@@ -437,6 +492,27 @@ impl_keycloak_resource!(
         self.id.as_deref().unwrap_or("unknown")
     )
 );
+
+impl GroupRepresentation {
+    /// The group name, or `unknown` (for messages).
+    pub fn get_name_or_unknown(&self) -> &str {
+        self.name.as_deref().unwrap_or("unknown")
+    }
+
+    /// Removes server-assigned and derived fields, recursively for sub-groups.
+    pub fn clear_server_fields(&mut self) {
+        self.id = None;
+        self.path = None;
+        for key in ["access", "subGroupCount", "parentId"] {
+            self.extra.remove(key);
+        }
+        if let Some(children) = self.sub_groups.as_mut() {
+            for child in children {
+                child.clear_server_fields();
+            }
+        }
+    }
+}
 
 impl_resource_meta!(
     GroupRepresentation,
@@ -519,8 +595,11 @@ impl_keycloak_resource!(
     name = |self| self.username.as_deref().unwrap_or("unknown"),
     has_id = |self| self.id.is_some(),
     clear_metadata = |self| {
+        self.extra.remove("access");
+        self.extra.remove("createdTimestamp");
         self.id = None;
-    }
+    },
+    partial_updates = true
 );
 
 impl_resource_meta!(UserRepresentation, label = "users", secret_prefix = "user");
@@ -546,16 +625,75 @@ pub struct AuthenticationExecutionExportRepresentation {
         skip_serializing_if = "Option::is_none"
     )]
     pub authenticator_flow: Option<bool>,
-    #[serde(
-        rename = "flowAlias",
-        alias = "displayName",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "flowAlias", skip_serializing_if = "Option::is_none")]
     pub flow_alias: Option<String>,
     #[serde(rename = "userSetupAllowed", skip_serializing_if = "Option::is_none")]
     pub user_setup_allowed: Option<bool>,
+    #[serde(flatten, deserialize_with = "without_misspelled_flow_flag")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Keycloak returns a misspelled duplicate of `authenticatorFlow` (`autheticatorFlow`) on every
+/// execution; drop it so it never ends up in local files or diffs.
+fn without_misspelled_flow_flag<'de, D>(deserializer: D) -> Result<HashMap<String, Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut map = HashMap::<String, Value>::deserialize(deserializer)?;
+    map.remove("autheticatorFlow");
+    Ok(map)
+}
+
+impl AuthenticationExecutionExportRepresentation {
+    /// Returns true if this execution runs a sub-flow rather than an authenticator.
+    pub fn is_subflow(&self) -> bool {
+        self.authenticator_flow == Some(true) || self.flow_alias.is_some()
+    }
+}
+
+/// Row returned by `GET /authentication/flows/{alias}/executions`.
+///
+/// Rows are flattened across nesting levels (`level` 0 = direct child of the flow). Unlike the
+/// export format used in local files, the provider is `providerId`, the linked config is its ID
+/// (`authenticationConfig`) and sub-flows are only identified by `displayName`/`flowId`.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct AuthenticationExecutionInfoRepresentation {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<String>,
+    #[serde(rename = "displayName", skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Alias of the linked authenticator config.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+    #[serde(rename = "providerId", skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    /// ID of the linked authenticator config.
+    #[serde(
+        rename = "authenticationConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authentication_config: Option<String>,
+    #[serde(rename = "authenticationFlow", skip_serializing_if = "Option::is_none")]
+    pub authentication_flow: Option<bool>,
+    #[serde(rename = "flowId", skip_serializing_if = "Option::is_none")]
+    pub flow_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+}
+
+impl AuthenticationExecutionInfoRepresentation {
+    /// Returns true if this row is a sub-flow execution.
+    pub fn is_subflow(&self) -> bool {
+        self.authentication_flow == Some(true)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -772,6 +910,7 @@ pub struct KeyMetadataRepresentation {
     #[serde(rename = "publicKey")]
     pub public_key: Option<String>,
     pub certificate: Option<String>,
+    #[serde(rename = "use")]
     pub use_: Option<String>,
     #[serde(rename = "validTo")]
     pub valid_to: Option<i64>,
@@ -1051,6 +1190,40 @@ mod tests {
         let mut os_none2: Option<String> = None;
         os_none2.set_from_option_string(None);
         assert_eq!(os_none2, None);
+    }
+
+    #[test]
+    fn test_execution_drops_misspelled_flow_flag() {
+        let exec: AuthenticationExecutionExportRepresentation = serde_json::from_value(json!({
+            "authenticator": "auth-cookie",
+            "authenticatorFlow": false,
+            "autheticatorFlow": false,
+            "custom": 1
+        }))
+        .unwrap();
+        assert!(!exec.extra.contains_key("autheticatorFlow"));
+        assert_eq!(exec.extra.get("custom"), Some(&json!(1)));
+        assert!(!exec.is_subflow());
+    }
+
+    #[test]
+    fn test_realm_debug_hides_extra_values() {
+        let realm: RealmRepresentation = serde_json::from_value(json!({
+            "realm": "r",
+            "smtpServer": {"password": "smtp-secret"}
+        }))
+        .unwrap();
+        let debug = format!("{:?}", realm);
+        assert!(debug.contains("smtpServer"));
+        assert!(!debug.contains("smtp-secret"));
+    }
+
+    #[test]
+    fn test_key_metadata_use_field() {
+        let key: KeyMetadataRepresentation =
+            serde_json::from_value(json!({"kid": "k", "use": "SIG"})).unwrap();
+        assert_eq!(key.use_.as_deref(), Some("SIG"));
+        assert_eq!(serde_json::to_value(&key).unwrap()["use"], "SIG");
     }
 
     #[test]

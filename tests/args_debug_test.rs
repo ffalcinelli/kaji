@@ -18,6 +18,10 @@ fn test_cli_debug_obfuscation() {
         vault_addr: None,
         vault_token: Some("secret_vault".to_string()),
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let debug_str = format!("{:?}", cli);

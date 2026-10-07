@@ -100,12 +100,6 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         Err(e) => return Err(e.into()),
     }
 
-    let mut remote_executions_cache: HashMap<
-        String,
-        Vec<crate::models::AuthenticationExecutionExportRepresentation>,
-    > = HashMap::new();
-    let remote_flows = client.get_authentication_flows_raw().await?;
-
     let pb = create_progress_bar(files.len() as u64, "Applying authenticator configs");
 
     // 3. Process each config
@@ -113,6 +107,7 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
         let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
         let local_val_before_sub = val.clone();
         substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
+        let local_val_resolved = val.clone();
         let mut local_config: AuthenticatorConfigRepresentation = serde_json::from_value(val)
             .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
 
@@ -141,10 +136,13 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
             let remote_id = remote.id.clone().context("Remote config is missing 'id'")?;
             local_config.id = Some(remote_id.clone());
             client.update_resource(&remote_id, &local_config).await?;
-            pb.println(format!(
-                "  {} Updated authenticator config {}",
-                SUCCESS_UPDATE, alias
-            ));
+            crate::utils::ui::report(
+                &pb,
+                format!(
+                    "  {} Updated authenticator config {}",
+                    SUCCESS_UPDATE, alias
+                ),
+            );
             final_id = remote_id;
         } else {
             // New config! Create it
@@ -183,17 +181,15 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
                 alias
             ))?;
 
-            // Fetch remote executions for this flow to get the execution ID
-            let remote_executions = if let Some(execs) = remote_executions_cache.get(&flow_alias) {
-                execs.clone()
-            } else {
-                let execs = client.get_flow_executions(&flow_alias).await?;
-                remote_executions_cache.insert(flow_alias.clone(), execs.clone());
-                execs
-            };
-            let remote_exec = remote_executions
+            // Find the matching direct child execution of the remote flow without a config.
+            // (Configs belong to exactly one execution in Keycloak.)
+            let remote_exec = client
+                .get_flow_executions(&flow_alias)
+                .await?
                 .into_iter()
-                .find(|e| e.authenticator.as_deref() == Some(&provider_id))
+                .filter(|e| e.level.unwrap_or(0) == 0 && !e.is_subflow())
+                .filter(|e| e.provider_id.as_deref() == Some(provider_id.as_str()))
+                .min_by_key(|e| e.authentication_config.is_some())
                 .with_context(|| {
                     format!(
                         "Could not find remote execution with provider '{}' in flow '{}'",
@@ -204,51 +200,17 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
             let execution_id = remote_exec.id.context("Remote execution is missing 'id'")?;
 
             // Create config on Keycloak
-            let created_config = client
+            let new_config_id = client
                 .create_authenticator_config_for_execution(&execution_id, &local_config)
                 .await?;
-            let new_config_id = created_config
-                .id
-                .context("Created config is missing 'id'")?;
 
-            pb.println(format!(
-                "  {} Created authenticator config {} (associated with execution {})",
-                SUCCESS_CREATE, alias, execution_id
-            ));
-
-            // Invalidate cache for this flow since we updated it by associating it with a new config
-            remote_executions_cache.remove(&flow_alias);
-
-            // Link this config to all other referencing executions
-            // Scan all remote flows & executions
-            for remote_flow in &remote_flows {
-                if let Some(r_flow_alias) = &remote_flow.alias {
-                    let executions = if let Some(execs) = remote_executions_cache.get(r_flow_alias)
-                    {
-                        execs.clone()
-                    } else if let Ok(execs) = client.get_flow_executions(r_flow_alias).await {
-                        remote_executions_cache.insert(r_flow_alias.clone(), execs.clone());
-                        execs
-                    } else {
-                        continue;
-                    };
-
-                    for mut exec in executions {
-                        let should_link =
-                            should_link_execution(&local_flows_map, r_flow_alias, &exec, &alias);
-
-                        // If it should link, and is not already linked to this config ID:
-                        if should_link && exec.authenticator_config.as_ref() != Some(&new_config_id)
-                        {
-                            exec.authenticator_config = Some(new_config_id.clone());
-                            client.update_flow_execution(r_flow_alias, &exec).await?;
-
-                            // Invalidate cache for this flow since we updated it
-                            remote_executions_cache.remove(r_flow_alias);
-                        }
-                    }
-                }
-            }
+            crate::utils::ui::report(
+                &pb,
+                format!(
+                    "  {} Created authenticator config {} (associated with execution {})",
+                    SUCCESS_CREATE, alias, execution_id
+                ),
+            );
             final_id = new_config_id;
         }
 
@@ -257,9 +219,12 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
             .await
         {
             crate::apply::generic::check_and_update_enrichment(
-                client,
-                &path,
-                &local_val_before_sub,
+                crate::apply::generic::LocalSource {
+                    path: &path,
+                    profile: profile.as_deref(),
+                    before_sub: &local_val_before_sub,
+                    resolved: &local_val_resolved,
+                },
                 &enriched,
                 realm_name,
                 &secrets_path,
@@ -274,23 +239,4 @@ pub async fn apply_authenticator_configs(ctx: crate::apply::ApplyContext<'_>) ->
     }
     pb.finish_with_message("Applied authenticator configs");
     Ok(())
-}
-
-fn should_link_execution(
-    local_flows_map: &HashMap<
-        String,
-        Vec<crate::models::AuthenticationExecutionExportRepresentation>,
-    >,
-    r_flow_alias: &str,
-    exec: &crate::models::AuthenticationExecutionExportRepresentation,
-    alias: &str,
-) -> bool {
-    // Check if this execution is supposed to be linked locally
-    // (we find it in local flows by flow_alias and provider_id)
-    local_flows_map.get(r_flow_alias).is_some_and(|loc_execs| {
-        loc_execs.iter().any(|loc_exec| {
-            loc_exec.authenticator == exec.authenticator
-                && loc_exec.authenticator_config.as_deref() == Some(alias)
-        })
-    })
 }

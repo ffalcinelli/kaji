@@ -1,0 +1,48 @@
+name: Live Keycloak
+
+# Runs tests/real_integration_test.rs against a real Keycloak server.
+# Opt-in for pull requests: add the `live-tests` label.
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+    types: [ opened, synchronize, reopened, labeled ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KEYCLOAK_IMAGE: quay.io/keycloak/keycloak:26.8.0
+
+jobs:
+  live-keycloak:
+    name: Live Keycloak 26.8.0
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'live-tests')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Start Keycloak
+        run: |
+          docker run -d --name keycloak -p 8080:8080 -p 9000:9000 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+            -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            -e KC_HEALTH_ENABLED=true \
+            "$KEYCLOAK_IMAGE" start-dev
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:9000/health/ready >/dev/null; then exit 0; fi
+            sleep 3
+          done
+          docker logs keycloak
+          exit 1
+      - name: Run live integration tests
+        env:
+          KAJI_IT_URL: http://localhost:8080
+        run: cargo test --test real_integration_test

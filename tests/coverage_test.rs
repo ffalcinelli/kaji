@@ -231,7 +231,11 @@ async fn test_apply_edge_cases() {
     .unwrap();
 
     // 5. Test with empty .kajiplan
-    fs::write(workspace_dir.join(".kajiplan"), "[]").unwrap();
+    fs::write(
+        workspace_dir.join(".kajiplan"),
+        r#"{"version":1,"profile":null,"files":[]}"#,
+    )
+    .unwrap();
     apply::run(kaji::apply::ApplyArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),

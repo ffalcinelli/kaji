@@ -64,7 +64,13 @@ async fn test_coverage_gaps_apply_generic() {
     let plan_file = workspace_dir.join(".kajiplan");
     // We want to apply only r1, so r2 should be skipped (hitting DA:68)
     let planned_files = vec![realm_dir.join("roles/r1.yaml")];
-    fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
+    kaji::plan::plan_file::PlanFile::build(&workspace_dir, None, &planned_files)
+        .await
+        .unwrap()
+        .write(&workspace_dir)
+        .await
+        .unwrap();
+    assert!(plan_file.exists());
 
     apply::run(kaji::apply::ApplyArgs {
         client: &client,
@@ -877,7 +883,11 @@ async fn test_plan_components_interactive() {
         provider_type: Some("org.keycloak.storage.UserStorageProvider".to_string()),
         parent_id: Some("different-realm".to_string()),
         sub_type: None,
-        config: Some(HashMap::new()),
+        // A real difference (an empty config equals an absent one)
+        config: Some(HashMap::from([(
+            "vendor".to_string(),
+            serde_json::json!(["other"]),
+        )])),
         extra: HashMap::new(),
     };
     fs::write(

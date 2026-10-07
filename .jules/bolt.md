@@ -25,3 +25,7 @@
 ## 2024-05-24 - Async IO TOCTOU and concurrent tasks
 **Learning:** Checking for file existence before reading with `fs::try_exists()` -> `fs::read()` is a common anti-pattern in async Rust. It causes an extra I/O operation and is vulnerable to TOCTOU.
 **Action:** Instead, just attempt to read the file directly and handle the `std::io::ErrorKind::NotFound` error. Also, `tokio::fs::read_dir` sequential metadata fetches with `file_type().await` can be painfully slow for large directories. Using `tokio::task::JoinSet::spawn` to check file types in parallel offers a massive speedup when scanning a workspace directory.
+
+## 2024-10-03 - Recursive Path Construction Optimization
+**Learning:** In recursive functions that construct paths (like `extract_secrets` appending `_` and keys), creating a new `String` using `format!` or `String::with_capacity` at every depth allocates frequently on the heap. This causes massive memory allocations and slowdowns on deep or large tree structures like complex Keycloak JSON objects.
+**Action:** Always use a single mutable `String` buffer (`&mut String`) combined with `.truncate(original_len)` to build paths during recursive traversal instead of allocating at every depth.

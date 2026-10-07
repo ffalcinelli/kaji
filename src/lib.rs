@@ -37,6 +37,24 @@ use utils::secrets::vault::VaultResolver;
 use utils::secrets::{CompositeResolver, EnvResolver, SecretResolver};
 
 static ACTION: Emoji<'_, '_> = Emoji("🚀 ", ">> ");
+
+/// Error returned by `kaji drift` when the server differs from the workspace.
+///
+/// The binary maps it to exit code 2 so CI pipelines can tell drift apart from failures.
+#[derive(Debug)]
+pub struct DriftDetected(pub usize);
+
+impl std::fmt::Display for DriftDetected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Drift detected: {} resource(s) differ from the workspace",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for DriftDetected {}
 static SEARCH: Emoji<'_, '_> = Emoji("🔍 ", "> ");
 
 /// Connection profile details for a target environment.
@@ -60,6 +78,12 @@ pub struct Profile {
     pub vault_token: Option<String>,
     /// Timeout in seconds (optional).
     pub timeout: Option<u64>,
+    /// Realm used to obtain the admin token (optional, default `master`).
+    #[serde(default)]
+    pub auth_realm: Option<String>,
+    /// Allow plain HTTP connections to a non-local server (optional).
+    #[serde(default)]
+    pub allow_insecure_http: Option<bool>,
 }
 
 /// Loads a profile configuration file from the `profiles/` directory in the workspace.
@@ -122,37 +146,140 @@ pub async fn load_config_file(custom_path: Option<&std::path::Path>) -> Result<C
     }
 }
 
+/// Chooses between a CLI/env value and a profile value.
+///
+/// Precedence: explicit CLI flag > profile > environment variable / TOML configuration.
+fn pick(
+    cli: &Cli,
+    id: &str,
+    cli_val: Option<String>,
+    profile_val: Option<String>,
+) -> Option<String> {
+    if cli.is_explicit(id) {
+        cli_val.or(profile_val)
+    } else {
+        profile_val.or(cli_val)
+    }
+}
+
+/// Effective Keycloak connection settings after applying precedence rules.
+struct ConnectionSettings {
+    server: String,
+    client_id: String,
+    client_secret: Option<String>,
+    user: Option<String>,
+    password: Option<String>,
+}
+
+impl ConnectionSettings {
+    fn resolve(cli: &Cli, profile: Option<&Profile>) -> Result<Self> {
+        let server = pick(
+            cli,
+            "server",
+            cli.server.clone(),
+            profile.map(|p| p.server_url.clone()),
+        )
+        .context("Hint: Try running `kaji init` to generate a default config, or pass `--server`.")
+        .context("Keycloak server URL not provided (neither via --server nor --profile)")?;
+        let client_id = pick(
+            cli,
+            "client_id",
+            cli.client_id.clone(),
+            profile.and_then(|p| p.client_id.clone()),
+        )
+        .unwrap_or_else(|| "admin-cli".to_string());
+        Ok(Self {
+            server,
+            client_id,
+            client_secret: pick(
+                cli,
+                "client_secret",
+                cli.client_secret.clone(),
+                profile.and_then(|p| p.client_secret.clone()),
+            ),
+            user: pick(
+                cli,
+                "user",
+                cli.user.clone(),
+                profile.and_then(|p| p.user.clone()),
+            ),
+            password: pick(
+                cli,
+                "password",
+                cli.password.clone(),
+                profile.and_then(|p| p.password.clone()),
+            ),
+        })
+    }
+}
+
+/// Resolves `${VAR}` placeholders in a profile's connection fields from the environment and the
+/// profile's secrets file (e.g. `client_secret: "${PROD_KAJI_SECRET}"`).
+///
+/// # Errors
+/// Returns an error if a placeholder cannot be resolved.
+pub async fn resolve_profile_placeholders(
+    mut profile: Profile,
+    workspace: &std::path::Path,
+) -> Result<Profile> {
+    let secrets_file = profile.secrets_file.as_deref().unwrap_or(".secrets");
+    let env_path = workspace.join(secrets_file);
+    let mut vars = std::env::vars().collect::<HashMap<String, String>>();
+    if let Ok(iter) = dotenvy::from_path_iter(&env_path) {
+        for (k, v) in iter.flatten() {
+            vars.insert(k, v);
+        }
+    }
+    let resolver = EnvResolver::new(vars);
+
+    profile.server_url = utils::secrets::substitute_string(&profile.server_url, &resolver)
+        .await
+        .context("Failed to resolve profile 'server_url'")?;
+    for (name, field) in [
+        ("client_id", &mut profile.client_id),
+        ("client_secret", &mut profile.client_secret),
+        ("user", &mut profile.user),
+        ("password", &mut profile.password),
+        ("vault_addr", &mut profile.vault_addr),
+        ("vault_token", &mut profile.vault_token),
+    ] {
+        if let Some(value) = field.as_mut() {
+            *value = utils::secrets::substitute_string(value, &resolver)
+                .await
+                .with_context(|| format!("Failed to resolve profile '{}'", name))?;
+        }
+    }
+    Ok(profile)
+}
+
 /// Initializes a `KeycloakClient` by logging in using credentials from the CLI or active profile.
 ///
 /// # Errors
 /// Returns an error if connection URL is missing or login authentication fails.
 pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<KeycloakClient> {
-    let server = profile
-        .map(|p| p.server_url.clone())
-        .or_else(|| cli.server.clone())
-        .context("Hint: Try running `kaji init` to generate a default config, or pass `--server`.")
-        .context("Keycloak server URL not provided (neither via --server nor --profile)")?;
-
-    let client_id = profile
-        .and_then(|p| p.client_id.clone())
-        .or_else(|| cli.client_id.clone())
-        .unwrap_or_else(|| "admin-cli".to_string());
-
-    let client_secret = profile
-        .and_then(|p| p.client_secret.clone())
-        .or_else(|| cli.client_secret.clone());
-
-    let user = profile
-        .and_then(|p| p.user.clone())
-        .or_else(|| cli.user.clone());
-
-    let password = profile
-        .and_then(|p| p.password.clone())
-        .or_else(|| cli.password.clone());
+    let ConnectionSettings {
+        server,
+        client_id,
+        client_secret,
+        user,
+        password,
+    } = ConnectionSettings::resolve(cli, profile)?;
 
     let timeout_secs = cli.timeout.unwrap_or(10);
-    let mut client =
-        KeycloakClient::new(server).with_timeout(std::time::Duration::from_secs(timeout_secs));
+    let auth_realm = pick(
+        cli,
+        "auth_realm",
+        cli.auth_realm.clone(),
+        profile.and_then(|p| p.auth_realm.clone()),
+    )
+    .unwrap_or_else(|| "master".to_string());
+    let allow_insecure_http =
+        cli.allow_insecure_http || profile.and_then(|p| p.allow_insecure_http) == Some(true);
+    let mut client = KeycloakClient::new(server)
+        .with_allow_insecure_http(allow_insecure_http)
+        .with_timeout(std::time::Duration::from_secs(timeout_secs))
+        .with_concurrency(cli.concurrency.unwrap_or(client::DEFAULT_CONCURRENCY))
+        .with_auth_realm(auth_realm);
     client
         .login(
             &client_id,
@@ -191,13 +318,18 @@ pub async fn init_secrets(
 
     let mut resolvers: Vec<Box<dyn SecretResolver>> = Vec::new();
 
-    let vault_addr = profile
-        .and_then(|p| p.vault_addr.clone())
-        .or_else(|| cli.vault_addr.clone());
-
-    let vault_token = profile
-        .and_then(|p| p.vault_token.clone())
-        .or_else(|| cli.vault_token.clone());
+    let vault_addr = pick(
+        cli,
+        "vault_addr",
+        cli.vault_addr.clone(),
+        profile.and_then(|p| p.vault_addr.clone()),
+    );
+    let vault_token = pick(
+        cli,
+        "vault_token",
+        cli.vault_token.clone(),
+        profile.and_then(|p| p.vault_token.clone()),
+    );
 
     if let (Some(addr), Some(token)) = (vault_addr, vault_token) {
         resolvers.push(Box::new(VaultResolver::new(&addr, &token)?));
@@ -256,23 +388,12 @@ async fn handle_validate(cli: &Cli, workspace: &std::path::Path) -> Result<()> {
 }
 
 fn check_credentials_presence(cli: &Cli, profile: Option<&Profile>) -> Result<()> {
-    let _server = profile
-        .map(|p| p.server_url.clone())
-        .or_else(|| cli.server.clone())
-        .context("Hint: Try running `kaji init` to generate a default config, or pass `--server`.")
-        .context("Keycloak server URL not provided (neither via --server nor --profile)")?;
-
-    let client_secret = profile
-        .and_then(|p| p.client_secret.clone())
-        .or_else(|| cli.client_secret.clone());
-
-    let user = profile
-        .and_then(|p| p.user.clone())
-        .or_else(|| cli.user.clone());
-
-    let password = profile
-        .and_then(|p| p.password.clone())
-        .or_else(|| cli.password.clone());
+    let ConnectionSettings {
+        client_secret,
+        user,
+        password,
+        ..
+    } = ConnectionSettings::resolve(cli, profile)?;
 
     if client_secret.is_none() && (user.is_none() || password.is_none()) {
         return Err(anyhow::anyhow!(
@@ -418,18 +539,24 @@ async fn handle_drift(
         .cyan()
         .bold()
     );
-    plan::run(plan::PlanArgs {
-        client: &client,
-        workspace_dir: workspace.to_path_buf(),
-        changes_only: true,
-        interactive: false,
-        realms_to_plan: &cli.realms,
-        ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
-        resolver,
-        profile: cli.profile.clone(),
-        verbose,
-    })
+    let summary = plan::run_with_outcome(
+        plan::PlanArgs {
+            client: &client,
+            workspace_dir: workspace.to_path_buf(),
+            changes_only: true,
+            interactive: false,
+            realms_to_plan: &cli.realms,
+            ui: Arc::new(crate::utils::ui::DialoguerUi::new()),
+            resolver,
+            profile: cli.profile.clone(),
+            verbose,
+        },
+        false,
+    )
     .await?;
+    if summary.total() > 0 {
+        return Err(DriftDetected(summary.total()).into());
+    }
     Ok(())
 }
 
@@ -488,11 +615,24 @@ pub async fn run_app(cli: Cli) -> Result<()> {
     if cli.profile.is_none() {
         cli.profile = config.profile.clone();
     }
+    if cli.concurrency.is_none() {
+        cli.concurrency = config.concurrency;
+    }
+    if cli.auth_realm.is_none() {
+        cli.auth_realm = config.auth_realm.clone();
+    }
+    if !cli.allow_insecure_http {
+        cli.allow_insecure_http = config.allow_insecure_http == Some(true);
+    }
     if cli.vault_addr.is_none() {
         cli.vault_addr = config.vault_addr.clone();
     }
     if cli.vault_token.is_none() {
         cli.vault_token = config.vault_token.clone();
+    }
+
+    for realm in &cli.realms {
+        utils::validate_realm_name(realm)?;
     }
 
     // 3. Fallback default for client_id
@@ -517,7 +657,8 @@ pub async fn run_app(cli: Cli) -> Result<()> {
 
     // 5. Load profile if requested
     let profile = if let Some(p) = &cli.profile {
-        Some(load_profile(&workspace, p).await?)
+        let loaded = load_profile(&workspace, p).await?;
+        Some(resolve_profile_placeholders(loaded, &workspace).await?)
     } else {
         None
     };
@@ -594,6 +735,76 @@ pub async fn run_app(cli: Cli) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn profile_with(server: &str, user: Option<&str>) -> Profile {
+        Profile {
+            server_url: server.to_string(),
+            client_id: None,
+            client_secret: None,
+            user: user.map(String::from),
+            password: None,
+            secrets_file: None,
+            vault_addr: None,
+            vault_token: None,
+            timeout: None,
+            auth_realm: None,
+            allow_insecure_http: None,
+        }
+    }
+
+    #[test]
+    fn test_explicit_flags_override_profile() {
+        let profile = profile_with("https://profile", Some("profile-user"));
+
+        // Values from environment variables (not explicit flags) lose to the profile.
+        let cli = Cli::try_parse_from_with_sources(["kaji", "validate"]).unwrap();
+        let mut cli = cli;
+        cli.server = Some("https://env".to_string());
+        cli.user = Some("env-user".to_string());
+        let settings = ConnectionSettings::resolve(&cli, Some(&profile)).unwrap();
+        assert_eq!(settings.server, "https://profile");
+        assert_eq!(settings.user.as_deref(), Some("profile-user"));
+
+        // Explicit flags win over the profile.
+        let cli = Cli::try_parse_from_with_sources([
+            "kaji",
+            "validate",
+            "--server",
+            "https://flag",
+            "--user",
+            "flag-user",
+        ])
+        .unwrap();
+        let settings = ConnectionSettings::resolve(&cli, Some(&profile)).unwrap();
+        assert_eq!(settings.server, "https://flag");
+        assert_eq!(settings.user.as_deref(), Some("flag-user"));
+        assert_eq!(settings.client_id, "admin-cli");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_profile_placeholders() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".secrets.prod"),
+            "PROD_KAJI_SECRET=s3cr3t\nPROD_HOST=kc.example.com\n",
+        )
+        .unwrap();
+        let mut profile = profile_with("https://${PROD_HOST}", None);
+        profile.secrets_file = Some(".secrets.prod".to_string());
+        profile.client_secret = Some("${PROD_KAJI_SECRET}".to_string());
+
+        let resolved = resolve_profile_placeholders(profile.clone(), dir.path())
+            .await
+            .unwrap();
+        assert_eq!(resolved.server_url, "https://kc.example.com");
+        assert_eq!(resolved.client_secret.as_deref(), Some("s3cr3t"));
+
+        profile.password = Some("${KAJI_TEST_UNDEFINED_PROFILE_VAR}".to_string());
+        let err = resolve_profile_placeholders(profile, dir.path())
+            .await
+            .unwrap_err();
+        assert!(format!("{:#}", err).contains("KAJI_TEST_UNDEFINED_PROFILE_VAR"));
+    }
 
     #[tokio::test]
     async fn test_load_profile_success() {

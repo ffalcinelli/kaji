@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs as async_fs;
 
 /// Deep merges two JSON values. `b` is merged into `a`.
@@ -21,6 +21,22 @@ pub fn is_yaml_file(path: &Path) -> bool {
         .is_some_and(|ext| ext == "yaml" || ext == "yml")
 }
 
+/// Returns the profile overlay file (`name.{profile}.yaml|yml`) for a base file, if it exists.
+pub async fn find_overlay_path(base_path: &Path, profile: Option<&str>) -> Option<PathBuf> {
+    let profile_name = profile?;
+    let stem = base_path.file_stem()?.to_str()?;
+    let ext = base_path.extension()?.to_str()?;
+    let alt_ext = if ext == "yaml" { "yml" } else { "yaml" };
+    for candidate_ext in [ext, alt_ext] {
+        let candidate =
+            base_path.with_file_name(format!("{}.{}.{}", stem, profile_name, candidate_ext));
+        if async_fs::try_exists(&candidate).await.unwrap_or(false) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Loads a base YAML file and optionally merges it with a profile-specific overlay.
 pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> Result<Value> {
     let content = async_fs::read_to_string(base_path)
@@ -30,117 +46,92 @@ pub async fn load_yaml_with_overlay(base_path: &Path, profile: Option<&str>) -> 
     let mut val: Value = serde_yaml::from_str(&content)
         .with_context(|| format!("Failed to parse base YAML file: {:?}", base_path))?;
 
-    if let Some(profile_name) = profile
-        && let Some(stem) = base_path.file_stem().and_then(|s| s.to_str())
-        && let Some(ext) = base_path.extension().and_then(|e| e.to_str())
-    {
-        let overlay_path = base_path.with_file_name(format!("{}.{}.{}", stem, profile_name, ext));
-        let alt_ext = if ext == "yaml" { "yml" } else { "yaml" };
-        let alt_overlay_path =
-            base_path.with_file_name(format!("{}.{}.{}", stem, profile_name, alt_ext));
-
-        let actual_overlay = if async_fs::try_exists(&overlay_path).await.unwrap_or(false) {
-            Some(overlay_path)
-        } else if async_fs::try_exists(&alt_overlay_path)
+    if let Some(path) = find_overlay_path(base_path, profile).await {
+        let overlay_content = async_fs::read_to_string(&path)
             .await
-            .unwrap_or(false)
-        {
-            Some(alt_overlay_path)
-        } else {
-            None
-        };
-
-        if let Some(path) = actual_overlay {
-            let overlay_content = async_fs::read_to_string(&path)
-                .await
-                .with_context(|| format!("Failed to read overlay YAML file: {:?}", path))?;
-            let overlay_val: Value = serde_yaml::from_str(&overlay_content)
-                .with_context(|| format!("Failed to parse overlay YAML file: {:?}", path))?;
-            deep_merge(&mut val, &overlay_val);
-        }
+            .with_context(|| format!("Failed to read overlay YAML file: {:?}", path))?;
+        let overlay_val: Value = serde_yaml::from_str(&overlay_content)
+            .with_context(|| format!("Failed to parse overlay YAML file: {:?}", path))?;
+        deep_merge(&mut val, &overlay_val);
     }
 
     Ok(val)
 }
 
-/// Returns true if the file is a profile-specific overlay.
+/// Profile names treated as overlays even without a matching `profiles/<name>.yaml` file.
+const COMMON_PROFILES: &[&str] = &[
+    "prod",
+    "production",
+    "dev",
+    "development",
+    "stage",
+    "staging",
+    "test",
+    "local",
+    "default",
+];
+
+/// Returns true if the file is a profile-specific overlay (`<stem>.<profile>.yaml|yml`).
+///
+/// A file is only an overlay when its base file (`<stem>.yaml` or `<stem>.yml`) exists next to
+/// it, so resources whose names contain dots (e.g. a client `app.test`) are never skipped.
 pub fn is_overlay_file(path: &Path, profile: Option<&str>) -> bool {
     if !is_yaml_file(path) {
         return false;
     }
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
 
-    if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-        // Pattern: *.profile.yaml or *.profile.yml
-        if let Some(p) = profile
-            && (file_name.ends_with(&format!(".{}.yaml", p))
-                || file_name.ends_with(&format!(".{}.yml", p)))
-        {
-            return true;
-        }
-
-        // Generic pattern for any profile: *.*.yaml or *.*.yml
-        // Avoid matching ".hidden.yaml" which splits to ["", "hidden", "yaml"]
-        let parts: Vec<&str> = file_name.split('.').collect();
-        if parts.len() >= 3 && !parts[0].is_empty() {
-            let potential_profile = parts[parts.len() - 2];
-
-            // 1. Check if potential_profile matches active profile exactly
-            if Some(potential_profile) == profile {
-                return true;
-            }
-
-            // 2. Check if a profile configuration file exists for this name
-            // Walk up to find profiles dir
-            let mut current = path.parent();
-            let mut found_profiles_dir = None;
-            while let Some(dir) = current {
-                if dir.as_os_str().is_empty() {
-                    break;
-                }
-                let p_dir = dir.join("profiles");
-                if p_dir.is_dir() {
-                    found_profiles_dir = Some(p_dir);
-                    break;
-                }
-                current = dir.parent();
-            }
-
-            // Fallback to CWD profiles dir
-            let profiles_dir = found_profiles_dir.or_else(|| {
-                if let Ok(cwd) = std::env::current_dir() {
-                    let p_dir = cwd.join("profiles");
-                    if p_dir.is_dir() {
-                        return Some(p_dir);
-                    }
-                }
-                None
-            });
-
-            if let Some(p_dir) = profiles_dir
-                && (p_dir.join(format!("{}.yaml", potential_profile)).is_file()
-                    || p_dir.join(format!("{}.yml", potential_profile)).is_file())
-            {
-                return true;
-            }
-
-            // 3. Fallback check for common profile names to keep unit tests passing
-            let common_profiles = [
-                "prod",
-                "production",
-                "dev",
-                "development",
-                "stage",
-                "staging",
-                "test",
-                "local",
-                "default",
-            ];
-            if common_profiles.contains(&potential_profile) {
-                return true;
-            }
-        }
+    // Avoid matching ".hidden.yaml" which splits to ["", "hidden", "yaml"]
+    let parts: Vec<&str> = file_name.split('.').collect();
+    if parts.len() < 3 || parts[0].is_empty() {
+        return false;
     }
-    false
+    let potential_profile = parts[parts.len() - 2];
+    if potential_profile.is_empty() {
+        return false;
+    }
+
+    let stem = parts[..parts.len() - 2].join(".");
+    let dir = path.parent().unwrap_or_else(|| Path::new(""));
+    let base_exists = ["yaml", "yml"]
+        .iter()
+        .any(|ext| dir.join(format!("{}.{}", stem, ext)).is_file());
+    if !base_exists {
+        return false;
+    }
+
+    Some(potential_profile) == profile
+        || is_defined_profile(path, potential_profile)
+        || COMMON_PROFILES.contains(&potential_profile)
+}
+
+/// Returns true if `profiles/<name>.yaml|yml` exists in a parent directory of `path` or the CWD.
+fn is_defined_profile(path: &Path, name: &str) -> bool {
+    let mut current = path.parent();
+    let mut found_profiles_dir = None;
+    while let Some(dir) = current {
+        if dir.as_os_str().is_empty() {
+            break;
+        }
+        let p_dir = dir.join("profiles");
+        if p_dir.is_dir() {
+            found_profiles_dir = Some(p_dir);
+            break;
+        }
+        current = dir.parent();
+    }
+
+    let profiles_dir = found_profiles_dir.or_else(|| {
+        let p_dir = std::env::current_dir().ok()?.join("profiles");
+        p_dir.is_dir().then_some(p_dir)
+    });
+
+    profiles_dir.is_some_and(|p_dir| {
+        p_dir.join(format!("{}.yaml", name)).is_file()
+            || p_dir.join(format!("{}.yml", name)).is_file()
+    })
 }
 
 #[cfg(test)]
@@ -213,26 +204,72 @@ mod tests {
         assert_eq!(val["config"]["k2"], "v2");
     }
 
+    /// Creates the given files (empty) in a fresh temp dir.
+    fn files(names: &[&str]) -> tempfile::TempDir {
+        let dir = tempdir().unwrap();
+        for name in names {
+            fs::write(dir.path().join(name), "").unwrap();
+        }
+        dir
+    }
+
     #[test]
     fn test_is_overlay_file_exact_profile() {
-        assert!(is_overlay_file(Path::new("role.prod.yaml"), Some("prod")));
-        assert!(is_overlay_file(Path::new("role.prod.yml"), Some("prod")));
-        assert!(is_overlay_file(Path::new("client.test.yaml"), Some("test")));
+        let d = files(&[
+            "role.yaml",
+            "role.prod.yaml",
+            "role.prod.yml",
+            "client.yml",
+            "client.test.yaml",
+        ]);
+        assert!(is_overlay_file(
+            &d.path().join("role.prod.yaml"),
+            Some("prod")
+        ));
+        assert!(is_overlay_file(
+            &d.path().join("role.prod.yml"),
+            Some("prod")
+        ));
+        assert!(is_overlay_file(
+            &d.path().join("client.test.yaml"),
+            Some("test")
+        ));
     }
 
     #[test]
     fn test_is_overlay_file_generic_profile() {
-        // Even if we specify profile "prod", "test.yaml" is detected as an overlay file
-        // (which is correctly handled so we know to skip it during Apply)
-        assert!(is_overlay_file(Path::new("client.test.yaml"), Some("prod")));
-        assert!(is_overlay_file(Path::new("client.test.yml"), Some("prod")));
+        // Overlays of other profiles are still recognized (and skipped during Apply)
+        let d = files(&["client.yaml"]);
+        assert!(is_overlay_file(
+            &d.path().join("client.test.yaml"),
+            Some("prod")
+        ));
+        assert!(is_overlay_file(
+            &d.path().join("client.test.yml"),
+            Some("prod")
+        ));
     }
 
     #[test]
     fn test_is_overlay_file_no_profile() {
-        // Without a profile, only files with common or defined profile tokens are overlays
-        assert!(is_overlay_file(Path::new("role.prod.yaml"), None));
-        assert!(!is_overlay_file(Path::new("my.resource.yaml"), None));
+        let d = files(&["role.yaml", "my.yaml"]);
+        assert!(is_overlay_file(&d.path().join("role.prod.yaml"), None));
+        assert!(!is_overlay_file(&d.path().join("my.resource.yaml"), None));
+    }
+
+    #[test]
+    fn test_is_overlay_file_requires_base_file() {
+        // Resources whose names contain profile-like tokens are not overlays without a base.
+        let d = files(&["app.test.yaml", "john.dev.yaml"]);
+        assert!(!is_overlay_file(&d.path().join("app.test.yaml"), None));
+        assert!(!is_overlay_file(
+            &d.path().join("app.test.yaml"),
+            Some("test")
+        ));
+        assert!(!is_overlay_file(
+            &d.path().join("john.dev.yaml"),
+            Some("prod")
+        ));
     }
 
     #[test]
@@ -274,9 +311,14 @@ mod tests {
 
     #[test]
     fn test_is_overlay_file_matching_profile() {
+        let d = files(&["my.yaml"]);
         assert!(is_overlay_file(
-            Path::new("my.customprofile.yaml"),
+            &d.path().join("my.customprofile.yaml"),
             Some("customprofile")
+        ));
+        assert!(!is_overlay_file(
+            &d.path().join("my.customprofile.yaml"),
+            None
         ));
     }
 
@@ -288,109 +330,18 @@ mod tests {
         fs::create_dir(&profiles_dir).unwrap();
         fs::write(profiles_dir.join("custom.yaml"), "").unwrap();
 
-        let realm_dir = workspace_dir.join("realm");
-        let clients_dir = realm_dir.join("clients");
+        let clients_dir = workspace_dir.join("realm").join("clients");
         fs::create_dir_all(&clients_dir).unwrap();
-        let file_path = clients_dir.join("client.custom.yaml");
+        fs::write(clients_dir.join("client.yaml"), "").unwrap();
 
-        assert!(is_overlay_file(&file_path, None));
-    }
-
-    #[test]
-    fn test_is_overlay_file_cwd_fallback() {
-        let cwd = std::env::current_dir().unwrap();
-        let profiles_dir = cwd.join("profiles");
-        let created = if !profiles_dir.exists() {
-            std::fs::create_dir(&profiles_dir).is_ok()
-        } else {
-            false
-        };
-        if created {
-            std::fs::write(profiles_dir.join("temp_profile.yaml"), "").unwrap();
-        }
-
-        // Call is_overlay_file on a path with no parent profiles dir, matching temp_profile
-        let path = std::path::Path::new("role.temp_profile.yaml");
-        let result = is_overlay_file(path, None);
-
-        // Cleanup
-        if created {
-            let _ = std::fs::remove_file(profiles_dir.join("temp_profile.yaml"));
-            let _ = std::fs::remove_dir(&profiles_dir);
-        }
-
-        assert!(result);
-    }
-
-    #[test]
-    #[cfg(not(windows))] // Cannot delete active current directory on Windows
-    fn test_is_overlay_file_cwd_fallback_err() {
-        // Run this test in a subprocess to avoid polluting global state (CWD) in concurrent tests
-        if std::env::var("RUN_CWD_ERR_TEST").is_ok() {
-            let temp = tempdir().unwrap();
-            let deleted_dir = temp.path().join("deleted");
-            std::fs::create_dir(&deleted_dir).unwrap();
-            std::env::set_current_dir(&deleted_dir).unwrap();
-            std::fs::remove_dir(&deleted_dir).unwrap();
-
-            let path = Path::new("role.prod.yaml");
-            let result = is_overlay_file(path, None);
-
-            assert!(result); // Falls back to common profiles ("prod")
-            std::process::exit(0);
-        }
-
-        let exe = std::env::current_exe().unwrap();
-        let output = std::process::Command::new(exe)
-            .arg("utils::yaml::tests::test_is_overlay_file_cwd_fallback_err")
-            .arg("--exact")
-            .arg("--nocapture")
-            .env("RUN_CWD_ERR_TEST", "1")
-            .output()
-            .unwrap();
-
-        // Ensure the subprocess actually ran the test and didn't just filter out 0 tests
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains("running 1 test"),
-            "Subprocess didn't run the test. Output: {}",
-            stdout
-        );
-        assert!(output.status.success(), "Subprocess failed: {:?}", output);
-    }
-
-    #[test]
-    fn test_is_overlay_file_cwd_fallback_no_profiles_dir() {
-        // Run this test in a subprocess to avoid polluting global state (CWD) in concurrent tests
-        if std::env::var("RUN_CWD_NO_PROFILES_TEST").is_ok() {
-            let temp = tempdir().unwrap();
-            std::env::set_current_dir(temp.path()).unwrap();
-
-            // Path with common profile token
-            let path = Path::new("role.dev.yaml");
-            let result = is_overlay_file(path, None);
-
-            assert!(result); // Falls back to common profiles ("dev")
-            std::process::exit(0);
-        }
-
-        let exe = std::env::current_exe().unwrap();
-        let output = std::process::Command::new(exe)
-            .arg("utils::yaml::tests::test_is_overlay_file_cwd_fallback_no_profiles_dir")
-            .arg("--exact")
-            .arg("--nocapture")
-            .env("RUN_CWD_NO_PROFILES_TEST", "1")
-            .output()
-            .unwrap();
-
-        // Ensure the subprocess actually ran the test and didn't just filter out 0 tests
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains("running 1 test"),
-            "Subprocess didn't run the test. Output: {}",
-            stdout
-        );
-        assert!(output.status.success(), "Subprocess failed: {:?}", output);
+        assert!(is_overlay_file(
+            &clients_dir.join("client.custom.yaml"),
+            None
+        ));
+        assert!(!is_overlay_file(
+            &clients_dir.join("client.other.yaml"),
+            None
+        ));
     }
 
     #[test]

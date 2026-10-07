@@ -1,6 +1,6 @@
 use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::substitute_secrets;
-use crate::utils::ui::SPARKLE;
+use crate::utils::ui::{SPARKLE, WARN};
 use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -33,8 +33,12 @@ where
         Err(e) => return Err(e.into()),
     };
 
-    let existing_resources =
-        ctx.client.get_resources::<T>().await.with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, ctx.realm_name))?;
+    let existing_resources = match ctx.client.get_resources::<T>().await {
+        Ok(resources) => resources,
+        // The realm does not exist yet: everything declared locally will be created.
+        Err(e) if crate::client::is_not_found(&e) => Vec::new(),
+        Err(e) => return Err(e).with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, ctx.realm_name)),
+    };
 
     let existing_map: HashMap<String, T> = existing_resources
         .into_iter()
@@ -57,6 +61,7 @@ where
             let existing_map = Arc::clone(&existing_map);
             let realm_name = ctx.realm_name.to_string();
             let profile = ctx.profile.clone();
+            let client = ctx.client.clone();
 
             set.spawn(async move {
                 let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
@@ -64,25 +69,34 @@ where
                 let local: T = serde_json::from_value(val).with_context(|| format!("Failed to deserialize YAML file {:?} in realm '{}'", path, realm_name))?;
 
                 let identity = local.get_identity().with_context(|| format!("Failed to get identity for {} in {:?} in realm '{}'", T::LABEL, path, realm_name))?;
-                let remote = existing_map.get(&identity).cloned();
+                let mut remote = existing_map.get(&identity).cloned();
+                // Relationships (e.g. a user's groups) are only loaded when the file declares them.
+                if let Some(remote) = remote.as_mut() {
+                    remote.load_relations(&client, Some(&local)).await.with_context(|| format!("Failed to load relationships of {} '{}' in realm '{}'", T::LABEL, local.get_name(), realm_name))?;
+                }
 
                 Ok::<(T, PathBuf, Option<T>), anyhow::Error>((local, path, remote))
             });
         }
     }
 
+    let mut declared = std::collections::HashSet::new();
     for res in crate::utils::join_all_tasks(set, None).await? {
         let (local, path, remote) = res;
+        if let Some(identity) = local.get_identity() {
+            declared.insert(identity);
+        }
 
         let is_update = remote.is_some();
         let mut remote_clone = None;
         let changed = if let Some(r) = remote {
+            // Server identifiers are environment specific and never applied: ignore them.
             let mut rc = r.clone();
-            if !local.has_id() {
-                rc.clear_metadata();
-            }
+            rc.clear_metadata();
+            let mut lc = local.clone();
+            lc.clear_metadata();
             let diff_name = format!("{} {}", T::LABEL, local.get_name());
-            let ch = print_diff(&diff_name, Some(&rc), &local, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX)?;
+            let ch = super::print_resource_diff(&diff_name, Some(&rc), &lc, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX, T::PARTIAL_UPDATES)?;
             remote_clone = Some(rc);
             ch
         } else {
@@ -104,6 +118,25 @@ where
                 }
             }
         }
+    }
+    let mut orphaned: Vec<String> = existing_map
+        .iter()
+        .filter(|(identity, remote)| {
+            !declared.contains(*identity)
+                && !crate::apply::generic::is_protected_resource(*remote, identity, ctx.realm_name)
+        })
+        .map(|(_, remote)| remote.get_name())
+        .collect();
+    if !orphaned.is_empty() {
+        orphaned.sort();
+        eprintln!(
+            "\n{} {} remote {} not declared locally (deleted only by `apply --prune`): {}",
+            WARN,
+            orphaned.len(),
+            T::LABEL,
+            orphaned.join(", ")
+        );
+        summary.orphaned += orphaned.len();
     }
     Ok((changed_files, summary))
 }

@@ -108,6 +108,18 @@ This project uses `cargo-husky` to manage Git hooks. To set up your development 
 
 Running tests will automatically install the Git hooks in your `.git/hooks` directory. The pre-commit hook ensures that `cargo fmt` and `cargo clippy` pass before any code is committed.
 
+### Live Keycloak tests
+
+`tests/real_integration_test.rs` runs against a real Keycloak (pinned to **26.8.0** in `docker-compose.yml`). The tests are skipped unless `KAJI_IT_URL` is set:
+
+```bash
+# Ports are configurable in case 8080/9000 are taken
+KAJI_IT_PORT=8180 KAJI_IT_MGMT_PORT=9180 docker compose up -d --wait
+KAJI_IT_URL=http://localhost:8180 cargo test --test real_integration_test
+```
+
+Tests marked `#[ignore = "known bug: ..."]` document confirmed defects that are not fixed yet (see the Known Issues section in [AGENTS.md](AGENTS.md)). In CI they run in the `Live Keycloak` workflow (on `main`, manual dispatch, or PRs labeled `live-tests`).
+
 ---
 
 ## 🌍 Environment Profiles
@@ -125,6 +137,8 @@ client_secret: "${PROD_KAJI_SECRET}"
 secrets_file: ".secrets.prod"  # Load environment secrets from this file
 timeout: 30                    # Keycloak request timeout in seconds (optional)
 ```
+
+Placeholders in profile connection fields (`server_url`, `client_id`, `client_secret`, `user`, `password`, `vault_addr`, `vault_token`) are resolved from the environment and the profile's `secrets_file`.
 
 ### 2. Use Overlays
 Avoid duplicating entire resource files for small environment-specific changes. Create an overlay file matching the pattern `resource.{profile}.yaml`:
@@ -144,6 +158,10 @@ redirectUris:
 ```
 
 When running with `--profile prod`, `kaji` deep-merges the overlay onto the base configuration.
+
+A file is only treated as an overlay when its base file exists next to it (`my-app.prod.yaml` requires `my-app.yaml` or `my-app.yml`). Resources whose names contain dots, such as a client `app.test`, are therefore never mistaken for overlays.
+
+When `apply` notices that Keycloak enriched a resource, it offers to update the local file. Files that have an active overlay are never rewritten, so profile-specific values cannot leak into the base file.
 
 ---
 
@@ -192,11 +210,28 @@ vault_token = "my-vault-token"
 
 # Keycloak request timeout in seconds (optional)
 timeout = 10
+
+# Maximum concurrent HTTP requests to Keycloak (optional, default 16;
+# also --concurrency or KAJI_CONCURRENCY)
+concurrency = 16
+
+# Realm used to obtain the admin token (optional, default "master";
+# also --auth-realm or KEYCLOAK_AUTH_REALM)
+auth_realm = "master"
+
+# Allow plain HTTP to a non-local server, e.g. http://keycloak:8080 inside a cluster
+# (optional; also --allow-insecure-http or KAJI_ALLOW_INSECURE_HTTP). HTTPS is otherwise
+# required except for localhost, 127.0.0.1 and ::1.
+allow_insecure_http = false
 ```
+
+Profiles accept `auth_realm` and `allow_insecure_http` as well.
+
+`kaji` refreshes its admin access token automatically during long runs, retries transient Keycloak responses (HTTP 429/502/503/504, honoring `Retry-After`), and fetches paginated lists such as users completely.
 
 #### Precedence / Priority Rules
 When resolving settings, `kaji` merges settings from different sources in the following priority order (highest to lowest):
-1. **CLI Flags** (explicitly passed on command line, e.g. `--server` or `--workspace`)
+1. **CLI Flags** (explicitly passed on command line, e.g. `--server` or `--workspace`; values coming from environment variables such as `KEYCLOAK_URL` rank below the profile)
 2. **Profile Configuration** (loaded from `profiles/` directory when `--profile` or `profile` is specified)
 3. **Environment Variables** (e.g. `KEYCLOAK_URL`, `KEYCLOAK_CLIENT_ID`)
 4. **Config File** (`kaji.toml` / `.kaji.toml`)
@@ -244,7 +279,7 @@ kaji -p prod validate
 ### `plan`
 Calculates the "diff" between local files and the remote server. By default, it shows a minimal, clean unified diff (collapsed with 3 lines of context).
 
-In addition to the diff output, `plan` also runs a **sub-flow collision check** for authentication flows: if a flow that is marked "to create" is referenced as a sub-flow (`flowAlias`) inside another local flow, a warning is emitted. Keycloak may auto-create that sub-flow when the parent flow is applied, which would cause a `409 Conflict`. If this happens, re-running `kaji plan` after the failed apply will re-fetch the updated remote state and correctly show the auto-created flow as "to update".
+In addition to the diff output, `plan` also runs a **sub-flow check** for authentication flows and reports sub-flows shared by several parent flows or created together with their parent.
 ```bash
 # Plan for a specific profile
 kaji plan --profile prod
@@ -257,12 +292,20 @@ kaji plan --verbose
 kaji plan --interactive
 ```
 
+`plan` writes a `.kajiplan` file containing the changed files (relative to the workspace), the profile, and a content hash of each file and its overlay. `apply` refuses plans made for a different profile or whose files changed after planning; run `kaji plan` again in that case.
+
+Local files may be **partial**. For the realm, clients, client scopes and users, Keycloak keeps fields that a file omits, so `plan` only compares the declared keys. Roles, groups and identity providers are replaced as a whole by Keycloak: omitted fields are shown as removals, because `apply` really clears them (for identity providers this includes the whole `config`).
+
+`plan` also lists remote resources that are not declared locally. They are only deleted by `apply --prune`.
+
 ### `apply`
-Reconciles the remote state. It follows a **staged application order** (Realms → Roles → Clients → Users) to ensure dependencies are met.
+Reconciles the remote state. It follows a **staged application order** (Realm → Roles/Client Scopes/Required Actions → Flows/Groups → Identity Providers/Clients → Users/Authenticator Configs/Components/Keys → realm flow bindings) so that every referenced resource exists before it is used, even when bootstrapping a new realm.
 
 **`apply` automatically runs `validate` first** (pure local file I/O — no network cost). If validation fails, apply aborts immediately with a clear error message pointing to the offending file, before making any API calls to Keycloak. Validation enforces execution requirement enums, ensures subflows specify valid aliases, and detects circular dependency graphs using DFS.
 
-Authentication flows and shared sub-flows are automatically partitioned into **topological dependency tiers** (leaf/shared sub-flows applied first) with **graceful 409 Conflict auto-adoption**, preventing race conditions and auto-creation conflicts during application.
+Authentication flows use Keycloak's export format: each flow file lists its `authenticationExecutions` (`authenticator` or `authenticatorFlow: true` + `flowAlias`, `requirement`, optional `priority` and `authenticatorConfig` alias), and sub-flows live in their own files with `topLevel: false`. Flows are applied in **topological tiers** (sub-flows first), then their executions are reconciled: missing executions are added (sub-flows are linked), undeclared ones are removed, and requirements/priorities are updated. Executions without `priority` are ordered as listed. Built-in flows only accept requirement/priority changes; copy a built-in flow to change its structure. Leaving out `authenticationExecutions` keeps the remote executions untouched.
+
+> Flow files exported by kaji versions before this change contain execution rows in the wrong format; run `kaji inspect` again to regenerate them.
 ```bash
 # Apply planned changes for production
 kaji apply --profile prod --yes
@@ -274,8 +317,30 @@ kaji apply --profile prod --review
 kaji apply --profile prod --prune
 ```
 
+`apply` creates realms that do not exist yet (`realm.yaml`'s `realm` must match its directory name) and registers required actions that are not registered.
+
+**Relationships** use Keycloak's export format and are reconciled through their dedicated endpoints (Keycloak ignores most of them on create/update):
+
+| Where | Keys |
+| :--- | :--- |
+| Client files | `defaultClientScopes`, `optionalClientScopes` |
+| User files | `groups` (paths such as `/org/team`), `realmRoles`, `clientRoles: {clientId: [role]}` |
+| Group files | `realmRoles`, `clientRoles`, nested `subGroups` (sub-groups that are no longer declared are deleted) |
+| Role files | `composites: {realm: [role], client: {clientId: [role]}}` |
+| `clients/<clientId>/roles/<role>.yaml` | Client roles |
+
+A relationship key that a file does not declare is left untouched.
+
+Workspaces are **portable across environments**: server-assigned IDs are not exported by `inspect` (except component IDs used for parent references), are ignored by `plan`, and are never written back by `apply`. Components are matched by type, name and parent rather than by ID, so an LDAP provider and its mappers exported from one environment apply cleanly to another.
+
+**Prune** only considers resource types whose directory exists in the realm (an empty directory means "manage this type, nothing declared"). It never deletes Keycloak's own resources:
+- built-in flows (`builtIn: true`), default client scopes (`profile`, `email`, `acr`, `basic`, `organization`, ...), and system clients (including the `<realm>-realm` clients in `master`);
+- default roles;
+- required actions (they are never unregistered);
+- service-account users, and all users of the `master` realm.
+
 ### `drift`
-A shortcut for `plan --changes-only`. By default, it prints collapsed unified diffs.
+A read-only variant of `plan --changes-only`. It never writes `.kajiplan`, and it **exits with code 2 when drift is detected** (0 when in sync, 1 on errors), which makes it suitable for CI. By default, it prints collapsed unified diffs.
 ```bash
 kaji drift --profile prod
 
@@ -284,7 +349,7 @@ kaji drift --verbose
 ```
 
 ### `clean`
-Removes local YAML files that are no longer referenced or are invalid.
+Removes the realm directories of the workspace (or only those given with `--realms`) and the `.kajiplan` file. Profiles, `.secrets*` files and any other file in the workspace are kept.
 ```bash
 kaji clean --yes
 ```
@@ -316,6 +381,8 @@ kaji init --interactive
 1. **Environment Variables**: Placeholders like `${VAR_NAME}` are resolved from the environment or a local `.secrets` file.
 2. **HashiCorp Vault**: Placeholders like `${vault:mount/path#field}` are resolved from a live Vault instance using the KV2 engine.
 
+Only `${UPPER_SNAKE_CASE}` names and `${vault:...}` references are placeholders. Anything else is left untouched, so Keycloak's own localization keys like `${client_account}` or `${profileScopeConsentText}` work as-is. Placeholders can be embedded in longer strings (`https://${HOST}/callback`). To write a literal `${NAME}`, escape it as `$${NAME}`.
+
 #### Example 1: `confidential-client.yaml` (using Environment Variable)
 ```yaml
 clientId: internal-api
@@ -344,7 +411,7 @@ protocol: openid-connect
 ### Usage Workflow
 
 1. Run `kaji inspect` to bootstrap your local configuration.
-2. Sensitive values are automatically replaced with `${KEYCLOAK_...}` placeholders and saved to a `.secrets` file.
+2. Sensitive values are automatically replaced with `${KEYCLOAK_...}` placeholders and saved to a `.secrets` file. Re-running `inspect` updates existing keys in place instead of duplicating them, and never overwrites a stored secret with Keycloak's `**********` mask.
 3. **DO NOT commit the `.secrets` file**.
 4. (Optional) Replace placeholders with `vault:` syntax if using HashiCorp Vault.
 5. Provide secrets via environment variables or set `VAULT_ADDR` and `VAULT_TOKEN`.
