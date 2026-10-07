@@ -29,18 +29,25 @@ pub async fn run(
         return Ok(());
     }
 
-    let targets = if realms_to_clean.is_empty() {
-        vec![workspace_dir.clone()]
+    // Only realm directories (and the plan) are ever removed: profiles, secrets files and
+    // anything else in the workspace (possibly the project root) are left alone.
+    let realms = if realms_to_clean.is_empty() {
+        crate::utils::discover_realms(&workspace_dir).await?
     } else {
-        let mut valid_targets = Vec::new();
-        for r in realms_to_clean {
-            let p = workspace_dir.join(r);
-            if fs::try_exists(&p).await.unwrap_or(false) {
-                valid_targets.push(p);
-            }
-        }
-        valid_targets
+        realms_to_clean.to_vec()
     };
+    let mut targets = Vec::new();
+    for r in &realms {
+        crate::utils::validate_realm_name(r)?;
+        let p = workspace_dir.join(r);
+        if fs::try_exists(&p).await.unwrap_or(false) {
+            targets.push(p);
+        }
+    }
+    let plan_path = workspace_dir.join(crate::plan::plan_file::PLAN_FILE_NAME);
+    if realms_to_clean.is_empty() && fs::try_exists(&plan_path).await.unwrap_or(false) {
+        targets.push(plan_path);
+    }
 
     if targets.is_empty() {
         eprintln!("{} {}", WARN, style("No targets found to clean.").yellow());
@@ -48,18 +55,11 @@ pub async fn run(
     }
 
     if !yes {
-        let msg = if realms_to_clean.is_empty() {
-            format!(
-                "Are you sure you want to delete everything in {:?}?",
-                workspace_dir
-            )
-        } else {
-            format!(
-                "Are you sure you want to delete the following realms in {:?}: {}?",
-                workspace_dir,
-                realms_to_clean.join(", ")
-            )
-        };
+        let msg = format!(
+            "Are you sure you want to delete the following realms in {:?}: {}?",
+            workspace_dir,
+            realms.join(", ")
+        );
 
         if !ui.confirm(&msg, false)? {
             eprintln!("{} {}", ERROR, style("Aborted.").red());
@@ -70,49 +70,25 @@ pub async fn run(
     let mut set = tokio::task::JoinSet::new();
 
     for target in targets {
-        if target == workspace_dir && realms_to_clean.is_empty() {
-            eprintln!(
-                "{} {}",
-                ACTION,
-                style(format!("Cleaning all configuration in {:?}", workspace_dir)).cyan()
-            );
-            let mut entries = fs::read_dir(&workspace_dir).await?;
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                let file_type = entry.file_type().await?;
-                set.spawn(async move {
-                    if file_type.is_dir() {
-                        fs::remove_dir_all(&path)
-                            .await
-                            .with_context(|| format!("Failed to remove dir {:?}", path))
-                    } else {
-                        fs::remove_file(&path)
-                            .await
-                            .with_context(|| format!("Failed to remove file {:?}", path))
-                    }
-                });
-            }
-        } else {
-            eprintln!(
-                "{} {}",
-                ACTION,
-                style(format!("Cleaning realm directory {:?}", target)).cyan()
-            );
-            set.spawn(async move {
-                let metadata = fs::metadata(&target)
+        eprintln!(
+            "{} {}",
+            ACTION,
+            style(format!("Removing {:?}", target)).cyan()
+        );
+        set.spawn(async move {
+            let metadata = fs::metadata(&target)
+                .await
+                .with_context(|| format!("Failed to get metadata for {:?}", target))?;
+            if metadata.is_dir() {
+                fs::remove_dir_all(&target)
                     .await
-                    .with_context(|| format!("Failed to get metadata for {:?}", target))?;
-                if metadata.is_dir() {
-                    fs::remove_dir_all(&target)
-                        .await
-                        .with_context(|| format!("Failed to remove dir {:?}", target))
-                } else {
-                    fs::remove_file(&target)
-                        .await
-                        .with_context(|| format!("Failed to remove file {:?}", target))
-                }
-            });
-        }
+                    .with_context(|| format!("Failed to remove dir {:?}", target))
+            } else {
+                fs::remove_file(&target)
+                    .await
+                    .with_context(|| format!("Failed to remove file {:?}", target))
+            }
+        });
     }
 
     crate::utils::join_all_tasks(set, Some("Join error")).await?;
@@ -152,11 +128,21 @@ mod tests {
             passwords: Mutex::new(vec![]),
         };
 
+        fs::create_dir(workspace_dir.join("profiles"))
+            .await
+            .unwrap();
+        fs::write(workspace_dir.join(".kajiplan"), "{}")
+            .await
+            .unwrap();
+
         run(workspace_dir.clone(), true, &[], &ui).await.unwrap();
 
         assert!(workspace_dir.exists());
-        let mut entries = fs::read_dir(&workspace_dir).await.unwrap();
-        assert!(entries.next_entry().await.unwrap().is_none());
+        assert!(!workspace_dir.join("realm1").exists());
+        assert!(!workspace_dir.join(".kajiplan").exists());
+        // Secrets and profiles are never deleted.
+        assert!(workspace_dir.join(".secrets").exists());
+        assert!(workspace_dir.join("profiles").exists());
     }
 
     #[tokio::test]
@@ -181,6 +167,20 @@ mod tests {
         assert!(workspace_dir.exists());
         assert!(!workspace_dir.join("realm1").exists());
         assert!(workspace_dir.join("realm2").exists());
+    }
+
+    #[tokio::test]
+    async fn test_clean_rejects_path_traversal() {
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().join("ws");
+        fs::create_dir(&workspace_dir).await.unwrap();
+        fs::write(dir.path().join("outside.txt"), "keep")
+            .await
+            .unwrap();
+        let ui = MockUi::new();
+        let res = run(workspace_dir, true, &["../".to_string()], &ui).await;
+        assert!(res.is_err());
+        assert!(dir.path().join("outside.txt").exists());
     }
 
     #[tokio::test]

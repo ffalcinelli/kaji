@@ -351,7 +351,8 @@ async fn test_plan() {
 
     let new_component = kaji::models::ComponentRepresentation {
         id: None,
-        name: Some("new-component".to_string()),
+        // Not on the server (the mock's "new-component" matches by portable key and is in sync)
+        name: Some("brand-new-component".to_string()),
         provider_id: Some("ldap".to_string()),
         provider_type: Some("org.keycloak.storage.UserStorageProvider".to_string()),
         sub_type: None,
@@ -409,7 +410,13 @@ async fn test_plan() {
     let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists(), "Plan file .kajiplan should exist");
     let plan_content = fs::read_to_string(&plan_file).unwrap();
-    let planned_paths: Vec<std::path::PathBuf> = serde_json::from_str(&plan_content).unwrap();
+    let planned_paths: Vec<std::path::PathBuf> =
+        serde_json::from_str::<kaji::plan::plan_file::PlanFile>(&plan_content)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
 
     let planned_names: Vec<String> = planned_paths
         .iter()

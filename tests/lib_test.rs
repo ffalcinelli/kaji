@@ -20,6 +20,10 @@ async fn test_init_client_fail() {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let res = init_client(&cli, None).await;
@@ -43,6 +47,10 @@ async fn test_init_client_missing_server_url() {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let res = init_client(&cli, None).await;
@@ -73,6 +81,10 @@ async fn test_init_client_missing_credentials() {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let res = init_client(&cli, None).await;
@@ -105,6 +117,10 @@ async fn test_run_app_plan_non_existent() {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let res = run_app(cli).await;
@@ -131,6 +147,10 @@ async fn test_run_app_apply_non_existent() {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let res = run_app(cli).await;

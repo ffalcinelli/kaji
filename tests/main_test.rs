@@ -277,7 +277,7 @@ async fn test_drift_command() {
 
     fs::write(
         realm_dir.join("realm.yaml"),
-        "realm: test-realm\nenabled: true\n",
+        "realm: test-realm\nenabled: true\ndisplayName: Changed Locally\n",
     )
     .unwrap();
 
@@ -291,5 +291,9 @@ async fn test_drift_command() {
         .arg("--workspace")
         .arg(&workspace)
         .assert()
-        .success();
+        // The local realm differs from the mock server: drift exits with code 2
+        .code(2)
+        .stderr(predicates::str::contains("Drift detected"));
+    // Drift is read-only and never writes a plan
+    assert!(!workspace.join(".kajiplan").exists());
 }

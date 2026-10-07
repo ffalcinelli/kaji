@@ -19,7 +19,10 @@ pub async fn start_mock_server() -> String {
             "/realms/master/protocol/openid-connect/token",
             post(token_handler),
         )
-        .route("/admin/realms", axum::routing::get(get_realms_handler))
+        .route(
+            "/admin/realms",
+            axum::routing::get(get_realms_handler).post(create_realm_handler),
+        )
         .route(
             "/admin/realms/{realm}",
             axum::routing::get(get_realm_handler).put(generic_handler),
@@ -92,7 +95,9 @@ pub async fn start_mock_server() -> String {
         )
         .route(
             "/admin/realms/{realm}/authentication/flows/{id}",
-            axum::routing::put(generic_handler).delete(generic_handler),
+            axum::routing::get(get_flow_by_id_handler)
+                .put(generic_handler)
+                .delete(generic_handler),
         )
         .route(
             "/admin/realms/{realm}/authentication/required-actions/{alias}",
@@ -121,6 +126,34 @@ pub async fn start_mock_server() -> String {
         .route(
             "/admin/realms/{realm}/authentication/executions/{execution}/config",
             axum::routing::post(create_config_handler),
+        )
+        .route(
+            "/admin/realms/{realm}/authentication/executions",
+            axum::routing::post(create_execution_handler),
+        )
+        .route(
+            "/admin/realms/{realm}/roles/{name}",
+            axum::routing::get(
+                |axum::extract::Path((_realm, name)): axum::extract::Path<(String, String)>| async move {
+                    Json(serde_json::json!({"id": format!("{}-id", name), "name": name}))
+                },
+            ),
+        )
+        .route(
+            "/admin/realms/{realm}/groups/{id}/children",
+            axum::routing::get(|| async { Json(serde_json::json!([])) }),
+        )
+        .route(
+            "/admin/realms/{realm}/users/{id}/groups",
+            axum::routing::get(|| async { Json(serde_json::json!([])) }),
+        )
+        .route(
+            "/admin/realms/{realm}/users/{id}/role-mappings",
+            axum::routing::get(|| async { Json(serde_json::json!({})) }),
+        )
+        .route(
+            "/admin/realms/{realm}/authentication/executions/{execution}",
+            axum::routing::delete(generic_handler),
         );
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -169,6 +202,10 @@ async fn token_handler(axum::Form(payload): axum::Form<TokenRequest>) -> impl In
             })),
         )
     }
+}
+
+async fn create_realm_handler(Json(_body): Json<serde_json::Value>) -> impl IntoResponse {
+    StatusCode::CREATED
 }
 
 async fn get_realm_handler(
@@ -324,6 +361,74 @@ async fn get_users_handler(
     }
 }
 
+/// A flow as returned by `GET /authentication/flows` (executions in export format).
+fn mock_flow(id: &str, alias: &str, with_config: bool) -> serde_json::Value {
+    let mut first = serde_json::json!({
+        "authenticator": "review-profile",
+        "authenticatorFlow": false,
+        "autheticatorFlow": false,
+        "requirement": "REQUIRED",
+        "priority": 1,
+        "userSetupAllowed": false
+    });
+    if with_config {
+        first["authenticatorConfig"] = serde_json::json!("review profile config");
+    }
+    serde_json::json!({
+        "id": id,
+        "alias": alias,
+        "providerId": "basic-flow",
+        "topLevel": true,
+        "builtIn": false,
+        "authenticationExecutions": [
+            first,
+            {
+                "authenticator": "another-authenticator",
+                "authenticatorFlow": false,
+                "autheticatorFlow": false,
+                "requirement": "REQUIRED",
+                "priority": 2,
+                "userSetupAllowed": false
+            }
+        ]
+    })
+}
+
+async fn get_flow_by_id_handler(
+    axum::extract::Path((realm, id)): axum::extract::Path<(String, String)>,
+) -> impl IntoResponse {
+    let alias = match id.as_str() {
+        "f1" => "flow-1",
+        "f2" => "flow-2",
+        "f3" => "flow-3",
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Could not find flow by id"})),
+            );
+        }
+    };
+    (
+        StatusCode::OK,
+        Json(mock_flow(&id, alias, realm == "test-realm")),
+    )
+}
+
+async fn create_execution_handler(
+    axum::extract::Path(realm): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    (
+        StatusCode::CREATED,
+        [(
+            axum::http::header::LOCATION,
+            format!(
+                "http://localhost/admin/realms/{}/authentication/executions/new-exec",
+                realm
+            ),
+        )],
+    )
+}
+
 async fn get_flows_handler(
     axum::extract::Path(realm): axum::extract::Path<String>,
 ) -> impl IntoResponse {
@@ -336,17 +441,15 @@ async fn get_flows_handler(
     if realm == "test-realm" {
         (
             StatusCode::OK,
-            Json(serde_json::json!([
-                { "id": "f1", "alias": "flow-1", "providerId": "basic-flow" }
-            ])),
+            Json(serde_json::json!([mock_flow("f1", "flow-1", true)])),
         )
     } else if realm == "cache-realm" {
         (
             StatusCode::OK,
             Json(serde_json::json!([
-                { "id": "f1", "alias": "flow-1", "providerId": "basic-flow" },
-                { "id": "f2", "alias": "flow-2", "providerId": "basic-flow" },
-                { "id": "f3", "alias": "flow-3", "providerId": "basic-flow" }
+                mock_flow("f1", "flow-1", false),
+                mock_flow("f2", "flow-2", false),
+                mock_flow("f3", "flow-3", false)
             ])),
         )
     } else {
@@ -491,16 +594,23 @@ async fn get_flow_executions_handler(
             Json(serde_json::json!([
                 {
                     "id": "exec-1",
-                    "authenticator": "review-profile",
-                    "authenticatorConfig": "config-1",
+                    "providerId": "review-profile",
+                    "displayName": "Review Profile",
+                    "alias": "review profile config",
+                    "authenticationConfig": "config-1",
                     "requirement": "REQUIRED",
-                    "priority": 1
+                    "priority": 1,
+                    "level": 0,
+                    "index": 0
                 },
                 {
                     "id": "exec-2",
-                    "authenticator": "another-authenticator",
+                    "providerId": "another-authenticator",
+                    "displayName": "Another Authenticator",
                     "requirement": "REQUIRED",
-                    "priority": 2
+                    "priority": 2,
+                    "level": 0,
+                    "index": 1
                 }
             ])),
         )
@@ -510,15 +620,21 @@ async fn get_flow_executions_handler(
             Json(serde_json::json!([
                 {
                     "id": "exec-3",
-                    "authenticator": "review-profile",
+                    "providerId": "review-profile",
+                    "displayName": "Review Profile",
                     "requirement": "REQUIRED",
-                    "priority": 1
+                    "priority": 1,
+                    "level": 0,
+                    "index": 0
                 },
                 {
                     "id": "exec-4",
-                    "authenticator": "another-authenticator",
+                    "providerId": "another-authenticator",
+                    "displayName": "Another Authenticator",
                     "requirement": "REQUIRED",
-                    "priority": 2
+                    "priority": 2,
+                    "level": 0,
+                    "index": 1
                 }
             ])),
         )
@@ -568,12 +684,25 @@ async fn create_config_handler(
         if let Some(obj) = response_body.as_object_mut() {
             obj.insert("id".to_string(), serde_json::json!(config_id));
         }
-        (StatusCode::CREATED, Json(response_body))
+        // Keycloak answers 201 with the new ID in the Location header
+        (
+            StatusCode::CREATED,
+            [(
+                axum::http::header::LOCATION,
+                format!(
+                    "http://localhost/admin/realms/{}/authentication/config/{}",
+                    realm, config_id
+                ),
+            )],
+            Json(response_body),
+        )
+            .into_response()
     } else {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "bad request"})),
         )
+            .into_response()
     }
 }
 

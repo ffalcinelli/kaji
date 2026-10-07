@@ -2,9 +2,12 @@
 //! Apply module for applying local configuration changes to Keycloak.
 
 pub mod authenticator_config;
+pub mod client_roles;
 pub mod components;
+pub mod flow_executions;
 pub mod generic;
 pub mod realm;
+pub mod relations;
 
 macro_rules! spawn_apply_stage {
     ($set:expr, $client:expr, $dir:expr, $secrets_path:expr, $resolver:expr, $planned_files:expr, $realm_name:expr, $profile:expr, $review:expr, $ui:expr, $yes:expr, $prune:expr, $prompt_mutex:expr, [ $($t:ty),* ]) => {
@@ -168,11 +171,13 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     let secrets_path = Arc::new(workspace_dir.join(secrets_file));
 
     // Check for .kajiplan
-    let plan_path = workspace_dir.join(".kajiplan");
-    let planned_files = if async_fs::try_exists(&plan_path).await.unwrap_or(false) {
-        let content = async_fs::read_to_string(&plan_path).await?;
-        let items: Vec<PathBuf> = serde_json::from_str(&content)?;
-        if items.is_empty() {
+    let plan = crate::plan::plan_file::PlanFile::read(&workspace_dir).await?;
+    let plan_path = workspace_dir.join(crate::plan::plan_file::PLAN_FILE_NAME);
+    let planned_files = match plan {
+        Some(plan) if !plan.files.is_empty() => {
+            Arc::new(Some(plan.verify(&workspace_dir, profile.as_deref()).await?))
+        }
+        _ => {
             if !yes {
                 let proceed = ui.confirm(
                     "No planned changes found. Send everything to Keycloak anyway?",
@@ -183,24 +188,8 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
                     return Ok(());
                 }
             }
-
             Arc::new(None)
-        } else {
-            let hashset: HashSet<PathBuf> = items.into_iter().collect();
-            Arc::new(Some(hashset))
         }
-    } else {
-        if !yes {
-            let proceed = ui.confirm(
-                "No planned changes found. Send everything to Keycloak anyway?",
-                false,
-            )?;
-            if !proceed {
-                eprintln!("{} {}", ERROR, style("Aborted.").red());
-                return Ok(());
-            }
-        }
-        Arc::new(None)
     };
 
     let realms = if realms_to_apply.is_empty() {
@@ -262,8 +251,10 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     crate::utils::join_all_tasks(set, None).await?;
 
     // Success - remove plan
-    if async_fs::try_exists(&plan_path).await.unwrap_or(false) {
-        let _ = async_fs::remove_file(plan_path).await;
+    match async_fs::remove_file(&plan_path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("Failed to remove {:?}", plan_path)),
     }
 
     Ok(())
@@ -284,7 +275,30 @@ pub struct ApplyContext<'a> {
     pub prompt_mutex: Arc<tokio::sync::Mutex<()>>,
 }
 
+impl ApplyContext<'_> {
+    /// Returns a copy of this context sharing the same client, resolver, UI and locks.
+    fn reborrow(&self) -> ApplyContext<'_> {
+        ApplyContext {
+            client: self.client,
+            workspace_dir: self.workspace_dir.clone(),
+            secrets_path: Arc::clone(&self.secrets_path),
+            resolver: Arc::clone(&self.resolver),
+            planned_files: Arc::clone(&self.planned_files),
+            realm_name: self.realm_name,
+            profile: self.profile.clone(),
+            review: self.review,
+            ui: Arc::clone(&self.ui),
+            yes: self.yes,
+            prune: self.prune,
+            prompt_mutex: Arc::clone(&self.prompt_mutex),
+        }
+    }
+}
+
 async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
+    // Stage 0: Realm (flow bindings to flows that do not exist yet are deferred to the last stage)
+    let pending_realm = realm::apply_realm(ctx.reborrow()).await?;
+
     let ApplyContext {
         client,
         workspace_dir,
@@ -298,47 +312,9 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
         yes,
         prune,
         prompt_mutex,
-    } = ctx;
-    // Stage 0: Realms
-    realm::apply_realm(crate::apply::ApplyContext {
-        client,
-        workspace_dir: workspace_dir.clone(),
-        secrets_path: Arc::clone(&secrets_path),
-        resolver: Arc::clone(&resolver),
-        planned_files: Arc::clone(&planned_files),
-        realm_name,
-        profile: profile.clone(),
-        review,
-        ui: Arc::clone(&ui),
-        yes,
-        prune,
-        prompt_mutex: Arc::clone(&prompt_mutex),
-    })
-    .await?;
+    } = ctx.reborrow();
 
-    // Stage 1: Identity Providers, Roles
-    {
-        let mut set = JoinSet::new();
-        spawn_apply_stage!(
-            set,
-            client,
-            workspace_dir,
-            secrets_path,
-            resolver,
-            planned_files,
-            realm_name,
-            profile,
-            review,
-            ui,
-            yes,
-            prune,
-            prompt_mutex,
-            [IdentityProviderRepresentation, RoleRepresentation]
-        );
-        crate::utils::join_all_tasks(set, None).await?;
-    }
-
-    // Stage 2: Clients, Client Scopes, Authentication Flows, Required Actions, Groups
+    // Stage 1: Roles, Client Scopes, Required Actions (no dependencies besides the realm)
     {
         let mut set = JoinSet::new();
         spawn_apply_stage!(
@@ -356,17 +332,84 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             prune,
             prompt_mutex,
             [
-                ClientRepresentation,
+                RoleRepresentation,
                 ClientScopeRepresentation,
-                AuthenticationFlowRepresentation,
-                RequiredActionProviderRepresentation,
-                GroupRepresentation
+                RequiredActionProviderRepresentation
             ]
         );
         crate::utils::join_all_tasks(set, None).await?;
     }
 
-    // Stage 3: Users, Components, Keys
+    // Stage 2: Authentication Flows
+    {
+        let mut set = JoinSet::new();
+        spawn_apply_stage!(
+            set,
+            client,
+            workspace_dir,
+            secrets_path,
+            resolver,
+            planned_files,
+            realm_name,
+            profile,
+            review,
+            ui,
+            yes,
+            prune,
+            prompt_mutex,
+            [AuthenticationFlowRepresentation]
+        );
+        crate::utils::join_all_tasks(set, None).await?;
+    }
+
+    // Stage 3: Identity Providers (reference flows), Clients (reference client scopes and flows)
+    {
+        let mut set = JoinSet::new();
+        spawn_apply_stage!(
+            set,
+            client,
+            workspace_dir,
+            secrets_path,
+            resolver,
+            planned_files,
+            realm_name,
+            profile,
+            review,
+            ui,
+            yes,
+            prune,
+            prompt_mutex,
+            [IdentityProviderRepresentation, ClientRepresentation]
+        );
+        crate::utils::join_all_tasks(set, None).await?;
+    }
+
+    // Stage 4: Client roles, then role composites (may reference any client role), then groups
+    // with sub-groups and role mappings
+    client_roles::apply_client_roles(ctx.reborrow()).await?;
+    client_roles::apply_role_composites(ctx.reborrow()).await?;
+    {
+        let mut set = JoinSet::new();
+        spawn_apply_stage!(
+            set,
+            client,
+            workspace_dir,
+            secrets_path,
+            resolver,
+            planned_files,
+            realm_name,
+            profile,
+            review,
+            ui,
+            yes,
+            prune,
+            prompt_mutex,
+            [GroupRepresentation]
+        );
+        crate::utils::join_all_tasks(set, None).await?;
+    }
+
+    // Stage 5: Users, Authenticator Configs, Components, Keys
     {
         let mut set = JoinSet::new();
         spawn_apply_stage!(
@@ -432,7 +475,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                     planned_files: plan_co,
                     realm_name: &rn_co,
                     profile: p_co,
-                    review: false,
+                    review,
                     ui: ui_co,
                     yes,
                     prune: false,
@@ -462,7 +505,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                     planned_files: plan_ke,
                     realm_name: &rn_ke,
                     profile: p_ke,
-                    review: false,
+                    review,
                     ui: ui_ke,
                     yes,
                     prune: false,
@@ -475,6 +518,9 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
 
         crate::utils::join_all_tasks(set, None).await?;
     }
+
+    // Stage 6: Realm flow bindings and local enrichment sync
+    realm::finish_realm(ctx.reborrow(), pending_realm).await?;
 
     Ok(())
 }

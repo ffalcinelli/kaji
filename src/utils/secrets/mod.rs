@@ -81,6 +81,14 @@ pub fn is_secret_key(key: &str, prefix: &str) -> bool {
         || lower_key.contains("creation")
         || lower_key.contains("delivery")
         || lower_key.contains("reset")
+        // Endpoints and durations, e.g. IdP `tokenUrl`, realm `accessTokenLifespan`
+        || lower_key.contains("url")
+        || lower_key.contains("endpoint")
+        || lower_key.contains("lifespan")
+        || lower_key.ends_with("uri")
+        // Lists of credential types, e.g. realm `requiredCredentials`, conditional credential
+        // authenticator config `credentials`
+        || lower_key.ends_with("credentials")
     {
         return false;
     }
@@ -178,7 +186,10 @@ fn extract_secrets_internal(
 
             for (k, v) in map.iter_mut() {
                 if let Value::String(s) = v {
-                    if is_secret_key(k, prefix_buf) && !is_boolean_string(s) {
+                    if is_secret_key(k, prefix_buf)
+                        && !is_boolean_string(s)
+                        && !contains_placeholder(s)
+                    {
                         let env_var_name = format_env_var_name(prefix_buf, k);
                         secrets.insert(env_var_name.clone(), s.clone());
                         let mut replaced = String::with_capacity(env_var_name.len() + 3);
@@ -186,6 +197,24 @@ fn extract_secrets_internal(
                         replaced.push_str(&env_var_name);
                         replaced.push('}');
                         *s = replaced;
+                    }
+                } else if let (Value::Array(arr), true) = (&mut *v, is_secret_key(k, prefix_buf)) {
+                    // Component configs store values as string arrays, e.g. `bindCredential: [..]`
+                    let single = arr.len() == 1;
+                    for (i, item) in arr.iter_mut().enumerate() {
+                        if let Value::String(s) = item
+                            && !is_boolean_string(s)
+                            && !contains_placeholder(s)
+                            && s != KEYCLOAK_MASK
+                        {
+                            let mut env_var_name = format_env_var_name(prefix_buf, k);
+                            if !single {
+                                use std::fmt::Write;
+                                let _ = write!(env_var_name, "_{}", i);
+                            }
+                            secrets.insert(env_var_name.clone(), s.clone());
+                            *s = format!("${{{}}}", env_var_name);
+                        }
                     }
                 } else if v.is_object() || v.is_array() {
                     let current_prefix_len = prefix_buf.len();
@@ -214,6 +243,100 @@ fn extract_secrets_internal(
     }
 }
 
+/// A piece of a string value: literal text or a secret placeholder name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Segment {
+    /// Literal text, already unescaped.
+    Literal(String),
+    /// A placeholder name (the text between `${` and `}`).
+    Placeholder(String),
+}
+
+/// Returns true if `name` is a valid secret placeholder name.
+///
+/// Only `UPPER_SNAKE_CASE` environment-style names and `vault:` references are placeholders.
+/// Anything else (e.g. Keycloak localization keys such as `${client_account}` or
+/// `${profileScopeConsentText}`) is kept as literal text.
+pub fn is_placeholder_name(name: &str) -> bool {
+    if let Some(reference) = name.strip_prefix("vault:") {
+        return !reference.is_empty();
+    }
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_uppercase() || c == '_')
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Splits a string into literal and placeholder segments.
+///
+/// `$${...}` escapes a placeholder and yields the literal text `${...}`.
+pub fn parse_segments(s: &str) -> Vec<Segment> {
+    let mut segments = Vec::new();
+    let mut literal = String::new();
+    let mut rest = s;
+    while let Some(pos) = rest.find("${") {
+        if pos > 0 && rest.as_bytes()[pos - 1] == b'$' {
+            // Escaped: `$${` -> literal `${`
+            literal.push_str(&rest[..pos - 1]);
+            literal.push_str("${");
+            rest = &rest[pos + 2..];
+            continue;
+        }
+        literal.push_str(&rest[..pos]);
+        let after = &rest[pos + 2..];
+        match after.find('}') {
+            Some(end) if is_placeholder_name(&after[..end]) => {
+                if !literal.is_empty() {
+                    segments.push(Segment::Literal(std::mem::take(&mut literal)));
+                }
+                segments.push(Segment::Placeholder(after[..end].to_string()));
+                rest = &after[end + 1..];
+            }
+            _ => {
+                literal.push_str("${");
+                rest = after;
+            }
+        }
+    }
+    literal.push_str(rest);
+    if !literal.is_empty() {
+        segments.push(Segment::Literal(literal));
+    }
+    segments
+}
+
+/// Returns true if the string contains at least one secret placeholder.
+pub fn contains_placeholder(s: &str) -> bool {
+    s.contains("${")
+        && parse_segments(s)
+            .iter()
+            .any(|seg| matches!(seg, Segment::Placeholder(_)))
+}
+
+/// Substitutes every placeholder in a single string.
+///
+/// # Errors
+/// Returns an error if a placeholder cannot be resolved.
+pub async fn substitute_string(s: &str, resolver: &dyn SecretResolver) -> Result<String> {
+    let mut result = String::with_capacity(s.len());
+    for segment in parse_segments(s) {
+        match segment {
+            Segment::Literal(text) => result.push_str(&text),
+            Segment::Placeholder(name) => match resolver.resolve(&name).await? {
+                Some(val) => result.push_str(&val),
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "Missing required secret or environment variable: {}",
+                        name
+                    ));
+                }
+            },
+        }
+    }
+    Ok(result)
+}
+
 /// Recursively substitute ${ENV_VAR} or ${vault:path#key} with actual values
 #[async_recursion::async_recursion]
 #[allow(clippy::double_must_use)]
@@ -237,72 +360,60 @@ pub async fn substitute_secrets(
             futures::future::try_join_all(futures).await?;
         }
         Value::String(s) if s.contains("${") => {
-            let mut result = String::with_capacity(s.len());
-            let mut cursor = 0;
-            let mut has_placeholders = false;
-
-            while let Some(start_offset) = s[cursor..].find("${") {
-                let start = cursor + start_offset;
-                let var_start = start + 2;
-                if let Some(end_offset) = s[var_start..].find('}') {
-                    let end = var_start + end_offset;
-                    let var_name = &s[var_start..end];
-                    if !var_name.contains("${") {
-                        has_placeholders = true;
-                        result.push_str(&s[cursor..start]);
-                        if let Some(val) = resolver.resolve(var_name).await? {
-                            result.push_str(&val);
-                        } else {
-                            return Err(anyhow::anyhow!(
-                                "Missing required secret or environment variable: {}",
-                                var_name
-                            ));
-                        }
-                        cursor = end + 1;
-                        continue;
-                    }
-                }
-                result.push_str(&s[cursor..start + 2]);
-                cursor = start + 2;
-            }
-
-            if has_placeholders {
-                result.push_str(&s[cursor..]);
-                *s = result;
-            }
+            *s = substitute_string(s, resolver.as_ref()).await?;
         }
         _ => {}
     }
     Ok(())
 }
 
-/// Helper to obfuscate a single string
+/// Merges secrets into the content of a dotenv-style secrets file.
+///
+/// Existing keys are updated in place (comments and ordering are preserved) and new keys are
+/// appended. A value equal to Keycloak's `**********` mask never overwrites an existing value.
+pub fn merge_secrets_content(
+    existing: &str,
+    secrets: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let mut remaining = secrets.clone();
+    let mut out = String::with_capacity(existing.len());
+    for line in existing.lines() {
+        if let Some((k, _)) = line.split_once('=') {
+            let key = k.trim();
+            if let Some(new_val) = remaining.remove(key)
+                && new_val != "**********"
+            {
+                out.push_str(key);
+                out.push('=');
+                out.push_str(&new_val);
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    for (k, v) in remaining {
+        out.push_str(&k);
+        out.push('=');
+        out.push_str(&v);
+        out.push('\n');
+    }
+    out
+}
+
+/// Keycloak's placeholder for stored secrets it does not return (IdP secrets, LDAP credentials).
+pub const KEYCLOAK_MASK: &str = "**********";
+
+/// Replaces a secret with a short hash, so diffs show whether it changed without revealing it.
 fn obfuscate_string(s: &str) -> String {
-    if s.is_empty() {
+    use sha2::{Digest, Sha256};
+    if s.is_empty() || s == KEYCLOAK_MASK || contains_placeholder(s) {
         return s.to_string();
     }
-
-    let mut chars = s.chars();
-    // String is not empty, so next() will return Some
-    let first = chars.next().unwrap();
-
-    let mut count = 1;
-    let mut last = first;
-
-    for c in chars {
-        last = c;
-        count += 1;
-    }
-
-    if count <= 3 {
-        return "***".to_string();
-    }
-
-    let mut out = String::with_capacity(first.len_utf8() + 3 + last.len_utf8());
-    out.push(first);
-    out.push_str("***");
-    out.push(last);
-    out
+    let digest = Sha256::digest(s.as_bytes());
+    let short: String = digest[..4].iter().map(|b| format!("{:02x}", b)).collect();
+    format!("<redacted:{}>", short)
 }
 
 /// Recursively obfuscate known secret fields
@@ -327,6 +438,13 @@ fn obfuscate_secrets_internal(value: &mut Value, prefix_buf: &mut String) {
                 if let Value::String(s) = v {
                     if is_secret_key(k, prefix_buf) {
                         *s = obfuscate_string(s);
+                    }
+                } else if let (Value::Array(arr), true) = (&mut *v, is_secret_key(k, prefix_buf)) {
+                    // Component configs store values as string arrays, e.g. `bindCredential: [..]`
+                    for item in arr.iter_mut() {
+                        if let Value::String(s) = item {
+                            *s = obfuscate_string(s);
+                        }
                     }
                 } else if v.is_object() || v.is_array() {
                     let current_prefix_len = prefix_buf.len();
@@ -448,7 +566,12 @@ mod tests {
     fn test_obfuscate_secrets_nested_array() {
         let mut val = json!({"clientId": "test", "items": [{"secret": "foo"}]});
         obfuscate_secrets(&mut val, "app");
-        assert_eq!(val["items"][0]["secret"], "***");
+        assert!(
+            val["items"][0]["secret"]
+                .as_str()
+                .unwrap()
+                .starts_with("<redacted:")
+        );
     }
 
     #[test]
@@ -611,6 +734,17 @@ mod tests {
         assert!(!is_secret_key("hashedValue", ""));
         assert!(!is_secret_key("VALUE", ""));
 
+        // Keycloak configuration keys that only look like secrets
+        assert!(!is_secret_key("tokenUrl", ""));
+        assert!(!is_secret_key("userInfoUrl", ""));
+        assert!(!is_secret_key("tokenEndpoint", ""));
+        assert!(!is_secret_key("accessTokenLifespan", ""));
+        assert!(!is_secret_key("tokenIntrospectionUri", ""));
+        assert!(!is_secret_key("credentials", ""));
+        assert!(!is_secret_key("requiredCredentials", ""));
+        assert!(is_secret_key("bindCredential", ""));
+        assert!(is_secret_key("clientSecret", ""));
+
         // General non-secret
         assert!(!is_secret_key("username", ""));
         assert!(!is_secret_key("clientId", ""));
@@ -652,26 +786,59 @@ mod tests {
             },
             "array": [
                 {"token": "secret_token"}
-            ]
+            ],
+            "config": { "bindCredential": ["ldap-pw"] },
+            "masked": { "clientSecret": "**********" }
         });
 
         obfuscate_secrets(&mut val, "client");
 
-        assert_eq!(val["clientSecret"], "m***t");
+        let redacted = obfuscate_string("my_super_secret");
+        assert_eq!(val["clientSecret"], json!(redacted));
+        assert!(redacted.starts_with("<redacted:") && !redacted.contains("my_"));
         assert_eq!(val["normal"], "value");
-        assert_eq!(val["nested"]["password"], "p***s");
-        assert_eq!(val["array"][0]["token"], "s***n");
+        assert_ne!(val["nested"]["password"], "pass");
+        assert_ne!(val["array"][0]["token"], "secret_token");
+        assert_ne!(val["config"]["bindCredential"][0], "ldap-pw");
+        assert_eq!(val["masked"]["clientSecret"], "**********");
 
-        let mut val2 = json!({"secret": "secret_value"});
-        obfuscate_secrets(&mut val2, "");
-        assert_eq!(val2["secret"], "s***e");
+        // Same value, same hash; different values, different hashes (even with equal ends).
+        assert_eq!(obfuscate_string("abc123z"), obfuscate_string("abc123z"));
+        assert_ne!(obfuscate_string("a1z"), obfuscate_string("a2z"));
     }
 
     #[test]
     fn test_obfuscate_string() {
         assert_eq!(obfuscate_string(""), "");
-        assert_eq!(obfuscate_string("abc"), "***");
-        assert_eq!(obfuscate_string("abcd"), "a***d");
+        assert_eq!(obfuscate_string("**********"), "**********");
+        assert_eq!(obfuscate_string("${MY_SECRET}"), "${MY_SECRET}");
+        assert!(obfuscate_string("abcd").starts_with("<redacted:"));
+    }
+
+    #[test]
+    fn test_extract_secrets_from_string_arrays() {
+        let mut val = json!({"name": "ldap", "config": {
+            "bindCredential": ["pw"],
+            "otherCredential": ["a", "b"],
+            "maskedCredential": ["**********"],
+            "connectionUrl": ["ldap://x"]
+        }});
+        let mut secrets = BTreeMap::new();
+        extract_secrets(&mut val, "component", &mut secrets);
+        assert_eq!(
+            val["config"]["bindCredential"][0],
+            "${KEYCLOAK_COMPONENT_LDAP_CONFIG_BINDCREDENTIAL}"
+        );
+        assert_eq!(
+            secrets.get("KEYCLOAK_COMPONENT_LDAP_CONFIG_BINDCREDENTIAL"),
+            Some(&"pw".to_string())
+        );
+        assert_eq!(
+            val["config"]["otherCredential"][1],
+            "${KEYCLOAK_COMPONENT_LDAP_CONFIG_OTHERCREDENTIAL_1}"
+        );
+        assert_eq!(val["config"]["maskedCredential"][0], "**********");
+        assert_eq!(val["config"]["connectionUrl"][0], "ldap://x");
     }
 
     #[test]
@@ -733,6 +900,68 @@ mod tests {
         assert_eq!(val["key"], "prefix_${unclosed_placeholder");
     }
 
+    #[tokio::test]
+    async fn test_substitute_keeps_keycloak_localization_keys() {
+        let mut vars = HashMap::new();
+        vars.insert("SECRET".to_string(), "s3cr3t".to_string());
+        let resolver = Arc::new(EnvResolver::new(vars));
+        let mut val = json!({
+            "name": "${client_account}",
+            "description": "${role_offline-access}",
+            "attributes": { "consent.screen.text": "${profileScopeConsentText}" },
+            "mixed": "${client_x} uses ${SECRET}",
+            "escaped": "$${SECRET}",
+            "escaped_embedded": "a $${SECRET} and ${SECRET}"
+        });
+        substitute_secrets(&mut val, resolver).await.unwrap();
+        assert_eq!(val["name"], "${client_account}");
+        assert_eq!(val["description"], "${role_offline-access}");
+        assert_eq!(
+            val["attributes"]["consent.screen.text"],
+            "${profileScopeConsentText}"
+        );
+        assert_eq!(val["mixed"], "${client_x} uses s3cr3t");
+        assert_eq!(val["escaped"], "${SECRET}");
+        assert_eq!(val["escaped_embedded"], "a ${SECRET} and s3cr3t");
+    }
+
+    #[test]
+    fn test_merge_secrets_content() {
+        let existing = "# comment\nA=old\nB=keep\nM=real\n";
+        let mut new = BTreeMap::new();
+        new.insert("A".to_string(), "new".to_string());
+        new.insert("C".to_string(), "added".to_string());
+        new.insert("M".to_string(), "**********".to_string());
+        let merged = merge_secrets_content(existing, &new);
+        assert_eq!(merged, "# comment\nA=new\nB=keep\nM=real\nC=added\n");
+        // Idempotent: merging again changes nothing and never duplicates keys.
+        assert_eq!(merge_secrets_content(&merged, &new), merged);
+        assert_eq!(merge_secrets_content("", &new).lines().count(), 3);
+    }
+
+    #[test]
+    fn test_placeholder_grammar() {
+        assert!(is_placeholder_name("KEYCLOAK_CLIENT_SECRET"));
+        assert!(is_placeholder_name("_A1"));
+        assert!(is_placeholder_name("vault:secret/app#password"));
+        assert!(!is_placeholder_name("vault:"));
+        assert!(!is_placeholder_name("client_account"));
+        assert!(!is_placeholder_name("profileScopeConsentText"));
+        assert!(!is_placeholder_name("1ABC"));
+        assert!(!is_placeholder_name(""));
+        assert!(contains_placeholder("https://${HOST}/cb"));
+        assert!(!contains_placeholder("${client_account}"));
+        assert!(!contains_placeholder("$${HOST}"));
+        assert_eq!(
+            parse_segments("x${A}y"),
+            vec![
+                Segment::Literal("x".into()),
+                Segment::Placeholder("A".into()),
+                Segment::Literal("y".into())
+            ]
+        );
+    }
+
     #[test]
     fn test_obfuscate_secrets_empty_prefix_nested() {
         let mut val = json!({
@@ -741,6 +970,9 @@ mod tests {
             }
         });
         obfuscate_secrets(&mut val, "");
-        assert_eq!(val["nested"]["secret"], "t***t");
+        assert_eq!(
+            val["nested"]["secret"],
+            json!(obfuscate_string("top-secret"))
+        );
     }
 }

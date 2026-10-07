@@ -69,6 +69,10 @@ client_secret: "secret"
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let profile = load_profile(workspace, "test").await?;
@@ -99,6 +103,8 @@ async fn test_init_secrets_with_profile() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         timeout: None,
+        auth_realm: None,
+        allow_insecure_http: None,
     };
 
     let cli = Cli {
@@ -116,6 +122,10 @@ async fn test_init_secrets_with_profile() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let resolver = init_secrets(&cli, workspace, Some(&profile)).await?;
@@ -140,6 +150,8 @@ async fn test_init_secrets_with_vault() -> Result<()> {
         vault_addr: Some("http://127.0.0.1:8200".to_string()),
         vault_token: Some("root-token".to_string()),
         timeout: None,
+        auth_realm: None,
+        allow_insecure_http: None,
     };
 
     let cli = Cli {
@@ -157,6 +169,10 @@ async fn test_init_secrets_with_vault() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     let resolver = init_secrets(&cli, workspace, Some(&profile)).await?;

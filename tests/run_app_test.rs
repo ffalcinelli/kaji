@@ -27,6 +27,10 @@ async fn test_run_app_validate() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -58,6 +62,10 @@ async fn test_run_app_inspect() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -94,6 +102,10 @@ async fn test_run_app_apply() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -127,6 +139,10 @@ async fn test_run_app_plan() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -155,6 +171,10 @@ async fn test_run_app_clean() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -187,6 +207,10 @@ async fn test_run_app_drift() -> Result<()> {
         vault_addr: None,
         vault_token: None,
         config: None,
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -230,6 +254,10 @@ client_id = "toml-client-id"
         vault_addr: None,
         vault_token: None,
         config: Some(config_path),
+        concurrency: None,
+        auth_realm: None,
+        allow_insecure_http: false,
+        explicit_args: vec![],
     };
 
     run_app(cli).await?;
@@ -258,6 +286,10 @@ async fn test_run_app_init() -> Result<()> {
             vault_addr: None,
             vault_token: None,
             config: None,
+            concurrency: None,
+            auth_realm: None,
+            allow_insecure_http: false,
+            explicit_args: vec![],
         };
 
         run_app(cli).await.unwrap();
@@ -310,6 +342,10 @@ async fn test_run_app_cli_errors_non_tty() -> Result<()> {
             vault_addr: None,
             vault_token: None,
             config: None,
+            concurrency: None,
+            auth_realm: None,
+            allow_insecure_http: false,
+            explicit_args: vec![],
         };
 
         let result = run_app(cli).await;
@@ -342,6 +378,8 @@ async fn test_run_app_clean_interactive_abort() -> Result<()> {
     if std::env::var("RUN_TEST_RUN_APP_CLEAN_INTERACTIVE_ABORT").is_ok() {
         let dir = tempdir().unwrap();
         let workspace = dir.path().to_path_buf();
+        // A realm directory to clean, so the (non-interactive) confirmation prompt is reached
+        std::fs::create_dir(workspace.join("some-realm")).unwrap();
 
         let cli = Cli {
             command: Commands::Clean {
@@ -359,6 +397,10 @@ async fn test_run_app_clean_interactive_abort() -> Result<()> {
             vault_addr: None,
             vault_token: None,
             config: None,
+            concurrency: None,
+            auth_realm: None,
+            allow_insecure_http: false,
+            explicit_args: vec![],
         };
 
         let result = run_app(cli).await;

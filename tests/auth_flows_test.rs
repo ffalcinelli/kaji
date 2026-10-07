@@ -9,21 +9,42 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 #[test]
-fn test_serde_execution_alias_compatibility() {
-    let json = serde_json::json!({
-        "id": "exec-1",
-        "displayName": "shared-mfa-flow",
-        "authenticationFlow": true,
-        "requirement": "REQUIRED",
-        "priority": 10
-    });
-
+fn test_serde_execution_formats() {
+    // Export format (flow files, GET /authentication/flows): sub-flows use flowAlias.
     let exec: AuthenticationExecutionExportRepresentation =
-        serde_json::from_value(json).expect("Failed to deserialize execution");
-
+        serde_json::from_value(serde_json::json!({
+            "authenticatorFlow": true,
+            "autheticatorFlow": true,
+            "flowAlias": "shared-mfa-flow",
+            "requirement": "REQUIRED",
+            "priority": 10
+        }))
+        .expect("Failed to deserialize execution");
     assert_eq!(exec.flow_alias.as_deref(), Some("shared-mfa-flow"));
-    assert_eq!(exec.authenticator_flow, Some(true));
-    assert_eq!(exec.requirement.as_deref(), Some("REQUIRED"));
+    assert!(exec.is_subflow());
+    assert!(!exec.extra.contains_key("autheticatorFlow"));
+
+    // A displayName is not a sub-flow reference.
+    let row: AuthenticationExecutionExportRepresentation =
+        serde_json::from_value(serde_json::json!({
+            "displayName": "Cookie",
+            "requirement": "ALTERNATIVE"
+        }))
+        .unwrap();
+    assert_eq!(row.flow_alias, None);
+
+    // Execution rows (GET /flows/{alias}/executions) have their own model.
+    let info: kaji::models::AuthenticationExecutionInfoRepresentation =
+        serde_json::from_value(serde_json::json!({
+            "id": "e1",
+            "displayName": "shared-mfa-flow",
+            "authenticationFlow": true,
+            "flowId": "f2",
+            "level": 0
+        }))
+        .unwrap();
+    assert!(info.is_subflow());
+    assert_eq!(info.flow_id.as_deref(), Some("f2"));
 
     let flow = AuthenticationFlowRepresentation {
         id: Some("f1".to_string()),
@@ -52,6 +73,22 @@ fn test_serde_execution_alias_compatibility() {
     assert!(subflow.is_subflow());
 }
 
+/// Mocks the execution listing used while fetching and reconciling flows.
+async fn mock_execution_endpoints(server: &mut mockito::ServerGuard) -> mockito::Mock {
+    server
+        .mock(
+            "GET",
+            mockito::Matcher::Regex(
+                r"^/admin/realms/test-realm/authentication/flows/[^/]+/executions$".to_string(),
+            ),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body("[]")
+        .create_async()
+        .await
+}
+
 #[tokio::test]
 async fn test_apply_auth_flow_409_conflict_auto_adoption() {
     let mut server = mockito::Server::new_async().await;
@@ -59,6 +96,8 @@ async fn test_apply_auth_flow_409_conflict_auto_adoption() {
     let mut client = KeycloakClient::new(mock_url);
     client.set_target_realm("test-realm".to_string());
     client.set_token("mock-token".to_string());
+
+    let _m_executions = mock_execution_endpoints(&mut server).await;
 
     // 1. Initial get_resources for AuthenticationFlowRepresentation returns empty (not in Keycloak yet)
     let _m_initial_get = server
@@ -180,6 +219,31 @@ async fn test_apply_shared_flows_topological_staging() {
     client.set_target_realm("test-realm".to_string());
     client.set_token("mock-token".to_string());
 
+    let _m_executions = mock_execution_endpoints(&mut server).await;
+    let _m_get_flow = server
+        .mock(
+            "GET",
+            mockito::Matcher::Regex(
+                r"^/admin/realms/test-realm/authentication/flows/id-[a-z-]+$".to_string(),
+            ),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"providerId": "basic-flow", "builtIn": false}"#)
+        .create_async()
+        .await;
+    // Both parent flows link the shared sub-flow by ID (POST /authentication/executions)
+    let m_link = server
+        .mock("POST", "/admin/realms/test-realm/authentication/executions")
+        .match_body(mockito::Matcher::PartialJson(serde_json::json!({
+            "authenticatorFlow": true,
+            "flowId": "id-shared"
+        })))
+        .with_status(201)
+        .expect(2)
+        .create_async()
+        .await;
+
     // Initial get flows
     let _m_get_flows = server
         .mock("GET", "/admin/realms/test-realm/authentication/flows")
@@ -288,4 +352,5 @@ authenticationExecutions:
         "Expected apply_resources to succeed with shared flows, got: {:?}",
         result.err()
     );
+    m_link.assert_async().await;
 }

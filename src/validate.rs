@@ -143,6 +143,17 @@ async fn validate_realm_config(workspace_dir: &Path, profile: Option<&str>) -> R
     if realm.realm.is_empty() {
         anyhow::bail!("Realm name is empty in realm.yaml");
     }
+    if let Some(dir_name) = workspace_dir.file_name().and_then(|n| n.to_str())
+        && realm.realm != dir_name
+    {
+        anyhow::bail!(
+            "Realm name '{}' in realm.yaml does not match its directory '{}' \
+             (applying it would rename realm '{}')",
+            realm.realm,
+            dir_name,
+            dir_name
+        );
+    }
     eprintln!(
         "  {} {} {}",
         CHECK,
@@ -577,6 +588,21 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn test_realm_name_must_match_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let realm_dir = temp.path().join("prod");
+        tokio::fs::create_dir_all(&realm_dir).await.unwrap();
+        tokio::fs::write(realm_dir.join("realm.yaml"), "realm: staging\n")
+            .await
+            .unwrap();
+        let err = run(temp.path().to_path_buf(), &["prod".to_string()])
+            .await
+            .unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("'staging'") && msg.contains("'prod'"), "{msg}");
+    }
+
     #[test]
     fn test_validate_flow_alias_forbidden_char_parens() {
         let flows = vec![make_flow("Step Up (combined) Context Selection")];
@@ -877,7 +903,7 @@ mod tests {
         tokio::fs::create_dir_all(&clients_dir).await.unwrap();
 
         // Write realm.yaml
-        tokio::fs::write(ws.join("realm.yaml"), "realm: test-realm\n")
+        tokio::fs::write(ws.join("realm.yaml"), "realm: realm\n")
             .await
             .unwrap();
 

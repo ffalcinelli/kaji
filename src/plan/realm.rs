@@ -1,10 +1,11 @@
+use crate::models::KeycloakResource;
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::yaml::load_yaml_with_overlay;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{PlanContext, PlanSummary, print_diff};
+use super::{PlanContext, PlanSummary};
 
 pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSummary)> {
     let mut changed_files = Vec::new();
@@ -32,8 +33,7 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
     let remote_realm = match ctx.client.get_realm().await {
         Ok(r) => Some(r),
         Err(e) => {
-            // Check if it's a 404 (Not Found)
-            if e.to_string().contains("404") {
+            if crate::client::is_not_found(&e) {
                 None
             } else {
                 return Err(e).with_context(|| {
@@ -43,14 +43,23 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
         }
     };
 
+    // The server-assigned realm id is environment specific: ignore it unless declared locally.
+    let remote_realm = remote_realm.map(|mut r| {
+        if !local_realm.extra.contains_key("id") {
+            r.clear_metadata();
+        }
+        r
+    });
+
     let is_update = remote_realm.is_some();
-    if print_diff(
+    if super::print_resource_diff(
         "Realm",
         remote_realm.as_ref(),
         &local_realm,
         ctx.options.changes_only,
         ctx.options.verbose,
         "realm",
+        crate::models::RealmRepresentation::PARTIAL_UPDATES,
     )? {
         let mut include = true;
         if ctx.options.interactive {

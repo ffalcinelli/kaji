@@ -47,9 +47,40 @@ pub trait Ui: Send + Sync {
     fn print_warn(&self, msg: &str);
 }
 
+/// All progress bars are attached to one `MultiProgress` so prompts can hide them while the
+/// user answers (otherwise the bars redraw over the prompt).
+static PROGRESS: std::sync::LazyLock<indicatif::MultiProgress> =
+    std::sync::LazyLock::new(indicatif::MultiProgress::new);
+
+/// Runs `f` (typically an interactive prompt) with every progress bar hidden.
+pub fn suspend_progress<R>(f: impl FnOnce() -> R) -> R {
+    PROGRESS.suspend(f)
+}
+
+/// Prints a line above a progress bar, or to stderr when the bar is hidden (e.g. stderr is not
+/// a terminal, as in CI logs), so the message is never lost.
+pub fn report(pb: &indicatif::ProgressBar, msg: impl Into<String>) {
+    let msg = msg.into();
+    if pb.is_hidden() {
+        eprintln!("{}", msg);
+    } else {
+        pb.println(msg);
+    }
+}
+
+/// Prints a line above all progress bars (or to stderr when they are hidden).
+pub fn log_line(msg: impl Into<String>) {
+    let msg = msg.into();
+    if PROGRESS.is_hidden() {
+        eprintln!("{}", msg);
+    } else {
+        let _ = PROGRESS.println(msg);
+    }
+}
+
 /// Helper function to create an indicatif ProgressBar styled for long-running reconciliations.
 pub fn create_progress_bar(len: u64, msg: &str) -> indicatif::ProgressBar {
-    let pb = indicatif::ProgressBar::new(len);
+    let pb = PROGRESS.add(indicatif::ProgressBar::new(len));
     pb.set_style(
         indicatif::ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
@@ -114,9 +145,9 @@ impl Ui for DialoguerUi {
         };
 
         if let Some(term) = &self.term {
-            Ok(input.interact_text_on(term)?)
+            Ok(suspend_progress(|| input.interact_text_on(term))?)
         } else {
-            Ok(input.interact_text()?)
+            Ok(suspend_progress(|| input.interact_text())?)
         }
     }
 
@@ -130,9 +161,9 @@ impl Ui for DialoguerUi {
             .default(default);
 
         if let Some(term) = &self.term {
-            Ok(confirm.interact_on(term)?)
+            Ok(suspend_progress(|| confirm.interact_on(term))?)
         } else {
-            Ok(confirm.interact()?)
+            Ok(suspend_progress(|| confirm.interact())?)
         }
     }
 
@@ -149,9 +180,9 @@ impl Ui for DialoguerUi {
         };
 
         if let Some(term) = &self.term {
-            Ok(p.interact_on(term)?)
+            Ok(suspend_progress(|| p.interact_on(term))?)
         } else {
-            Ok(p.interact()?)
+            Ok(suspend_progress(|| p.interact())?)
         }
     }
 
@@ -166,9 +197,9 @@ impl Ui for DialoguerUi {
             .default(default);
 
         if let Some(term) = &self.term {
-            Ok(select.interact_on(term)?)
+            Ok(suspend_progress(|| select.interact_on(term))?)
         } else {
-            Ok(select.interact()?)
+            Ok(suspend_progress(|| select.interact())?)
         }
     }
 
@@ -283,6 +314,15 @@ impl Ui for MockUi {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_progress_helpers_never_lose_messages() {
+        assert_eq!(super::suspend_progress(|| 42), 42);
+        let pb = super::create_progress_bar(1, "x");
+        super::report(&pb, "reported line");
+        super::log_line("logged line");
+        pb.finish();
+    }
+
     use super::*;
 
     #[test]

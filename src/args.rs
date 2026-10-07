@@ -47,6 +47,18 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub timeout: Option<u64>,
 
+    /// Maximum number of concurrent HTTP requests sent to Keycloak (default 16)
+    #[arg(long, env = "KAJI_CONCURRENCY", global = true)]
+    pub concurrency: Option<usize>,
+
+    /// Realm used to obtain the admin token (default: master)
+    #[arg(long, env = "KEYCLOAK_AUTH_REALM", global = true)]
+    pub auth_realm: Option<String>,
+
+    /// Allow plain HTTP connections to non-local Keycloak servers (credentials are sent unencrypted)
+    #[arg(long, env = "KAJI_ALLOW_INSECURE_HTTP", global = true)]
+    pub allow_insecure_http: bool,
+
     /// HashiCorp Vault URL
     #[arg(long, env = "VAULT_ADDR", global = true)]
     pub vault_addr: Option<String>,
@@ -58,6 +70,56 @@ pub struct Cli {
     /// Path to a custom TOML configuration file
     #[arg(long, env = "KAJI_CONFIG", global = true)]
     pub config: Option<PathBuf>,
+
+    /// IDs of the arguments explicitly passed on the command line (as opposed to environment
+    /// variables). Explicit flags take precedence over profile values.
+    #[arg(skip)]
+    pub explicit_args: Vec<String>,
+}
+
+impl Cli {
+    /// Connection arguments whose precedence depends on where their value came from.
+    const SOURCE_TRACKED_ARGS: &'static [&'static str] = &[
+        "server",
+        "user",
+        "password",
+        "client_id",
+        "client_secret",
+        "auth_realm",
+        "vault_addr",
+        "vault_token",
+    ];
+
+    /// Parses the process arguments, recording which arguments were explicitly given as flags.
+    pub fn parse_with_sources() -> Self {
+        Self::from_matches_with_sources(&<Self as clap::CommandFactory>::command().get_matches())
+    }
+
+    /// Parses the given arguments, recording which arguments were explicitly given as flags.
+    pub fn try_parse_from_with_sources<I, T>(args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let matches = <Self as clap::CommandFactory>::command().try_get_matches_from(args)?;
+        Ok(Self::from_matches_with_sources(&matches))
+    }
+
+    fn from_matches_with_sources(matches: &clap::ArgMatches) -> Self {
+        let mut cli =
+            <Self as clap::FromArgMatches>::from_arg_matches(matches).unwrap_or_else(|e| e.exit());
+        cli.explicit_args = Self::SOURCE_TRACKED_ARGS
+            .iter()
+            .filter(|id| matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine))
+            .map(|id| id.to_string())
+            .collect();
+        cli
+    }
+
+    /// Returns true if the argument was explicitly passed as a command-line flag.
+    pub fn is_explicit(&self, id: &str) -> bool {
+        self.explicit_args.iter().any(|a| a == id)
+    }
 }
 
 impl fmt::Debug for Cli {
@@ -72,9 +134,13 @@ impl fmt::Debug for Cli {
             client_secret,
             profile,
             timeout,
+            concurrency,
+            auth_realm,
+            allow_insecure_http,
             vault_addr,
             vault_token,
             config,
+            explicit_args,
         } = self;
 
         f.debug_struct("Cli")
@@ -87,9 +153,13 @@ impl fmt::Debug for Cli {
             .field("client_secret", &client_secret.as_ref().map(|_| "********"))
             .field("profile", profile)
             .field("timeout", timeout)
+            .field("concurrency", concurrency)
+            .field("auth_realm", auth_realm)
+            .field("allow_insecure_http", allow_insecure_http)
             .field("vault_addr", vault_addr)
             .field("vault_token", &vault_token.as_ref().map(|_| "********"))
             .field("config", config)
+            .field("explicit_args", explicit_args)
             .finish()
     }
 }
@@ -207,6 +277,12 @@ pub struct Config {
     pub profile: Option<String>,
     /// Keycloak request timeout in seconds
     pub timeout: Option<u64>,
+    /// Maximum number of concurrent HTTP requests sent to Keycloak
+    pub concurrency: Option<usize>,
+    /// Realm used to obtain the admin token (default: master)
+    pub auth_realm: Option<String>,
+    /// Allow plain HTTP connections to non-local Keycloak servers
+    pub allow_insecure_http: Option<bool>,
     /// HashiCorp Vault URL
     pub vault_addr: Option<String>,
     /// HashiCorp Vault Token

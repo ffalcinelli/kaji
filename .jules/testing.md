@@ -7,7 +7,7 @@ This document provides context and guidelines for Google Jules when writing, ref
 *   **Unit & Model Tests**: Located within specific source modules or in `tests/models_coverage_test.rs`, `tests/validate_test.rs`, and `tests/ui_coverage_test.rs`.
 *   **Mocked Integration Tests**: Located in `tests/`. These tests simulate Keycloak API interactions using a local mock server.
     *   Example: [plan_test.rs](tests/plan_test.rs), [apply_test.rs](tests/apply_test.rs), [coverage_improvement_test.rs](tests/coverage_improvement_test.rs).
-*   **Real Integration Tests**: [real_integration_test.rs](tests/real_integration_test.rs) requires a live Keycloak server (configured via environment variables or profiles).
+*   **Real Integration Tests**: [real_integration_test.rs](tests/real_integration_test.rs) runs against a live Keycloak **26.8.0** (`docker-compose.yml`) when `KAJI_IT_URL` is set, and is skipped otherwise. Start Keycloak with `KAJI_IT_PORT=8180 KAJI_IT_MGMT_PORT=9180 docker compose up -d --wait`, then run `KAJI_IT_URL=http://localhost:8180 cargo test --test real_integration_test`. Each test uses its own `kaji-it-*` realm and deletes it afterwards. Confirmed-but-unfixed defects are `#[ignore = "known bug: #N ..."]` tests that reference the Known Issues in [AGENTS.md](AGENTS.md); run them with `-- --ignored`.
 *   **Benchmarks**: Located in the [benches/](benches) folder.
 
 ## Key Testing Tools & Frameworks
@@ -31,6 +31,7 @@ This document provides context and guidelines for Google Jules when writing, ref
 ## Guidelines for Writing Tests
 
 *   **Mock Behavior**: When adding support for a new resource or Keycloak API endpoint, you **must** update the Axum mock server in [tests/common/mod.rs](tests/common/mod.rs) to handle the new routes and return expected mock responses.
+*   **Match the real API**: Mock payloads must mirror what Keycloak actually returns. Check new endpoints against the live harness before encoding their shape in mocks; mocks that copy wrong assumptions hide real bugs (see Known Issue #11).
 *   **Isolate Filesystem Side Effects**: Always use `tempdir()` for testing file I/O operations (e.g. testing `plan`, `apply`, `inspect`, profile configuration parsing).
 *   **Validate Model Debug Obfuscation**: If you introduce sensitive fields to models, write a test in [coverage_improvement_test.rs](tests/coverage_improvement_test.rs) (specifically under `test_models_debug_obfuscation`) to verify that `format!("{:?}", model)` obfuscates the sensitive values with `********`.
 *   **Coverage Rules**: Every new feature or resource support should come with:

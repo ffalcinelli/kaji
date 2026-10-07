@@ -5,7 +5,6 @@ use crate::utils::ui::{SPARKLE, WARN};
 use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use console::style;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,35 +25,25 @@ pub async fn plan_components_or_keys(
         Err(e) => return Err(e.into()),
     };
 
-    let existing_components = ctx
-        .client
-        .get_components()
-        .await
-        .with_context(|| format!("Failed to get components for realm '{}'", ctx.realm_name))?;
-    let mut by_identity: HashMap<String, ComponentRepresentation> = HashMap::new();
-    type ComponentKey = (
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    );
-    let mut by_details: HashMap<ComponentKey, ComponentRepresentation> = HashMap::new();
-
-    for c in existing_components {
-        if let Some(id) = c.get_identity() {
-            by_identity.insert(id, c.clone());
+    let existing_components = match ctx.client.get_components().await {
+        Ok(components) => components,
+        // The realm does not exist yet: everything declared locally will be created.
+        Err(e) if crate::client::is_not_found(&e) => Vec::new(),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!("Failed to get components for realm '{}'", ctx.realm_name)
+            });
         }
-        let key = (
-            c.name.clone(),
-            c.sub_type.clone(),
-            c.provider_id.clone(),
-            c.parent_id.clone(),
-        );
-        by_details.insert(key, c);
-    }
-
-    let by_identity = Arc::new(by_identity);
-    let by_details = Arc::new(by_details);
+    };
+    let components = Arc::new(
+        crate::apply::components::ComponentResolver::load(
+            ctx.client,
+            ctx.workspace_dir,
+            ctx.profile.as_deref(),
+            existing_components,
+        )
+        .await?,
+    );
 
     let mut set = tokio::task::JoinSet::new();
 
@@ -67,8 +56,7 @@ pub async fn plan_components_or_keys(
             }
 
             let resolver = Arc::clone(&ctx.resolver);
-            let by_identity = by_identity.clone();
-            let by_details = by_details.clone();
+            let components = Arc::clone(&components);
             let realm_name = ctx.realm_name.to_string();
             let profile = ctx.profile.clone();
 
@@ -83,19 +71,7 @@ pub async fn plan_components_or_keys(
                         )
                     })?;
 
-                let remote = local_component
-                    .get_identity()
-                    .and_then(|id| by_identity.get(&id))
-                    .or_else(|| {
-                        let key = (
-                            local_component.name.clone(),
-                            local_component.sub_type.clone(),
-                            local_component.provider_id.clone(),
-                            local_component.parent_id.clone(),
-                        );
-                        by_details.get(&key)
-                    })
-                    .cloned();
+                let remote = components.find_remote(&local_component).cloned();
 
                 Ok::<
                     (
@@ -115,10 +91,10 @@ pub async fn plan_components_or_keys(
         let is_update = remote.is_some();
         let mut remote_clone = None;
         let changed = if let Some(r) = remote {
+            // Matched by portable key: IDs and parent IDs are environment specific.
             let mut rc = r.clone();
-            if local_component.id.is_none() {
-                rc.id = None;
-            }
+            rc.id = local_component.id.clone();
+            rc.parent_id = local_component.parent_id.clone();
             let prefix = if dir_name == "keys" {
                 "key"
             } else {

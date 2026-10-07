@@ -430,7 +430,12 @@ async fn test_apply() {
 
     // Test with .kajiplan
     let planned_files = vec![realm_dir.join("realm.yaml")];
-    fs::write(&plan_file, serde_json::to_string(&planned_files).unwrap()).unwrap();
+    kaji::plan::plan_file::PlanFile::build(&workspace_dir, None, &planned_files)
+        .await
+        .unwrap()
+        .write(&workspace_dir)
+        .await
+        .unwrap();
 
     apply::run(kaji::apply::ApplyArgs {
         client: &client,
@@ -452,7 +457,7 @@ async fn test_apply() {
     );
 
     // Test with empty plan
-    fs::write(&plan_file, "[]").unwrap();
+    fs::write(&plan_file, r#"{"version":1,"profile":null,"files":[]}"#).unwrap();
     apply::run(kaji::apply::ApplyArgs {
         client: &client,
         workspace_dir: workspace_dir.clone(),
@@ -495,6 +500,7 @@ async fn test_apply() {
         let mut confirms = ui.confirms.lock().unwrap();
         confirms.clear();
         confirms.push(true); // Yes, send everything anyway
+        confirms.push(true); // Yes, create the realm (review mode covers the realm too)
         confirms.push(false); // No, don't apply this specific role
     }
 
@@ -535,7 +541,7 @@ async fn test_apply_aborted_by_user() {
 
     // Write empty .kajiplan
     let plan_file = workspace_dir.join(".kajiplan");
-    std::fs::write(&plan_file, "[]").unwrap();
+    std::fs::write(&plan_file, r#"{"version":1,"profile":null,"files":[]}"#).unwrap();
 
     let ui = Arc::new(kaji::utils::ui::MockUi {
         inputs: std::sync::Mutex::new(Vec::new()),
@@ -804,7 +810,8 @@ async fn test_apply_enrichment() {
     // Read client-1.yaml back and verify it was updated with the enriched fields!
     let content = std::fs::read_to_string(&client_file).unwrap();
     let updated_client: ClientRepresentation = serde_yaml::from_str(&content).unwrap();
-    assert_eq!(updated_client.id, Some("1".to_string()));
+    // Server ids are environment specific and are not written back into local files.
+    assert_eq!(updated_client.id, None);
     assert_eq!(updated_client.name, Some("Enriched Client 1".to_string()));
 
     // Also verify that the newly generated secret was written to .secrets!

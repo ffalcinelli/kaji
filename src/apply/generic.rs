@@ -1,5 +1,4 @@
 #![allow(clippy::collapsible_if)]
-use crate::client::KeycloakClient;
 use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::substitute_secrets;
 pub use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE};
@@ -163,7 +162,9 @@ where
         files.push(path);
     }
 
-    if files.is_empty() {
+    // Without files there is nothing to apply, but an empty directory still means
+    // "manage this resource type", so pruning must run.
+    if files.is_empty() && !prune {
         return Ok(());
     }
 
@@ -188,6 +189,7 @@ where
                 let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
                 let local_val_before_sub = val.clone();
                 substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
+                let local_val_resolved = val.clone();
                 let mut rep: T = serde_json::from_value(val)
                     .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
 
@@ -228,7 +230,7 @@ where
                             realm_name
                         )
                     })?;
-                    pb.println(format!(
+                    crate::utils::ui::report(&pb, format!(
                         "  {} Updated {} {}",
                         SUCCESS_UPDATE,
                         T::LABEL,
@@ -240,7 +242,7 @@ where
                     let create_result = client.create_resource(&rep).await;
                     match create_result {
                         Ok(maybe_id) => {
-                            pb.println(format!(
+                            crate::utils::ui::report(&pb, format!(
                                 "  {} Created {} {}",
                                 SUCCESS_CREATE,
                                 T::LABEL,
@@ -283,7 +285,7 @@ where
                                                 .update_resource(existing_id, &update_rep)
                                                 .await
                                             {
-                                                pb.println(format!(
+                                                crate::utils::ui::report(&pb, format!(
                                                     "  {} Reconciled existing {} {} (adopted after conflict)",
                                                     SUCCESS_UPDATE,
                                                     T::LABEL,
@@ -311,12 +313,28 @@ where
                     }
                 }
 
+                if let Some(id) = &final_id {
+                    rep.post_save(&client, id).await.with_context(|| {
+                        format!(
+                            "Failed to reconcile {} '{}' in realm '{}'",
+                            T::LABEL,
+                            rep.get_name(),
+                            realm_name
+                        )
+                    })?;
+                }
+
                 if let Some(id) = final_id {
-                    if let Ok(enriched) = client.get_resource::<T>(&id).await {
+                    if let Ok(mut enriched) = client.get_resource::<T>(&id).await {
+                        // Relationships declared locally are not part of the single GET.
+                        if !T::DEFERRED_RELATIONS {
+                            enriched.load_relations(&client, Some(&rep)).await?;
+                        }
+                        rep.prepare_enriched(&mut enriched);
                         check_and_update_enrichment(
-                            &client,
                             &path,
-                            &local_val_before_sub,
+profile.as_deref(),
+LocalSource { before_sub: &local_val_before_sub, resolved: &local_val_resolved },
                             &enriched,
                             &realm_name,
                             &secrets_path,
@@ -366,7 +384,7 @@ where
         for remote in &existing_resources {
             if let (Some(identity), Some(id)) = (remote.get_identity(), remote.get_id()) {
                 if !declared.contains(&identity) {
-                    if is_protected_resource::<T>(&identity, realm_name) {
+                    if is_protected_resource(remote, &identity, realm_name) {
                         continue;
                     }
 
@@ -394,61 +412,104 @@ where
     Ok(())
 }
 
-fn is_protected_resource<T>(identity: &str, realm_name: &str) -> bool
+/// Built-in client scopes created by Keycloak for every realm.
+const PROTECTED_CLIENT_SCOPES: &[&str] = &[
+    "profile",
+    "email",
+    "address",
+    "phone",
+    "offline_access",
+    "roles",
+    "web-origins",
+    "microprofile-jwt",
+    "acr",
+    "basic",
+    "role_list",
+    "saml_organization",
+    "organization",
+    "service_account",
+    "AuthnContextClassRef",
+];
+
+/// Built-in authentication flows (fallback when the server does not report `builtIn`).
+const PROTECTED_FLOWS: &[&str] = &[
+    "browser",
+    "direct grant",
+    "registration",
+    "registration form",
+    "reset credentials",
+    "clients",
+    "first broker login",
+    "saml ecp",
+    "docker auth",
+    "http challenge",
+];
+
+/// Returns true if the client is a system client that must never be pruned.
+///
+/// Besides the per-realm system clients, the `master` realm owns one `<realm>-realm`
+/// management client for every realm on the server.
+pub fn is_protected_client(client_id: &str, realm_name: &str) -> bool {
+    const PROTECTED: &[&str] = &[
+        "admin-cli",
+        "security-admin-console",
+        "account",
+        "account-console",
+        "broker",
+        "realm-management",
+    ];
+    PROTECTED.contains(&client_id) || (realm_name == "master" && client_id.ends_with("-realm"))
+}
+
+/// Returns true if a remote resource is managed by Keycloak itself and must never be pruned.
+pub fn is_protected_resource<T>(remote: &T, identity: &str, realm_name: &str) -> bool
 where
-    T: KeycloakResource,
+    T: KeycloakResource + serde::Serialize,
 {
-    let path = T::API_PATH;
-    if path == "clients" {
-        let protected = [
-            "admin-cli",
-            "security-admin-console",
-            "account",
-            "account-console",
-            "broker",
-            "realm-management",
-        ];
-        protected.contains(&identity)
-    } else if path == "roles" {
-        let default_role = format!("default-roles-{}", realm_name);
-        let protected = ["offline_access", "uma_authorization", &default_role];
-        protected.contains(&identity)
-    } else if path == "client-scopes" {
-        let protected = [
-            "profile",
-            "email",
-            "address",
-            "phone",
-            "offline_access",
-            "roles",
-            "web-origins",
-            "microprofile-jwt",
-        ];
-        protected.contains(&identity)
-    } else if path == "authentication/flows" {
-        let protected = [
-            "browser",
-            "direct grant",
-            "registration",
-            "registration form",
-            "reset credentials",
-            "clients",
-            "first broker login",
-            "saml ecp",
-            "docker auth",
-            "http challenge",
-        ];
-        protected.contains(&identity)
-    } else {
-        false
+    let value = serde_json::to_value(remote).unwrap_or_default();
+    if value.get("builtIn").and_then(|v| v.as_bool()) == Some(true) {
+        return true;
     }
+    match T::API_PATH {
+        "clients" => is_protected_client(identity, realm_name),
+        "roles" => {
+            let default_role = format!("default-roles-{}", realm_name);
+            let mut protected = vec!["offline_access", "uma_authorization", &default_role];
+            if realm_name == "master" {
+                protected.extend(["admin", "create-realm"]);
+            }
+            protected.contains(&identity)
+        }
+        "client-scopes" => PROTECTED_CLIENT_SCOPES.contains(&identity),
+        // Sub-flows are managed through their parent's executions, never pruned on their own.
+        "authentication/flows" => {
+            PROTECTED_FLOWS.contains(&identity)
+                || value.get("topLevel").and_then(|v| v.as_bool()) == Some(false)
+        }
+        // Unregistering required actions is never what a prune should do.
+        "authentication/required-actions" => true,
+        // Service-account users belong to their client; master users include the admin login.
+        "users" => realm_name == "master" || value.get("serviceAccountClientId").is_some(),
+        _ => false,
+    }
+}
+
+/// Value Keycloak returns in place of stored secrets (IdP client secrets, LDAP bind credentials, ...).
+const KEYCLOAK_MASKED_SECRET: &str = "**********";
+
+/// Local values of the file that produced an applied resource.
+pub struct LocalSource<'a> {
+    /// Local value (base + overlay) before secret substitution.
+    pub before_sub: &'a serde_json::Value,
+    /// Local value (base + overlay) after secret substitution.
+    pub resolved: &'a serde_json::Value,
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn check_and_update_enrichment<T>(
-    _client: &KeycloakClient,
     path: &std::path::Path,
-    local_val_before_sub: &serde_json::Value,
+    profile: Option<&str>,
+    local: LocalSource<'_>,
     enriched: &T,
     realm_name: &str,
     secrets_path: &std::path::Path,
@@ -463,22 +524,81 @@ where
         + for<'de> serde::Deserialize<'de>
         + Clone,
 {
-    let mut placeholders = Vec::new();
-    let mut current_path = Vec::new();
-    find_placeholders(local_val_before_sub, &mut current_path, &mut placeholders);
+    let LocalSource {
+        before_sub: local_val_before_sub,
+        resolved: local_val_resolved,
+    } = local;
 
-    let mut enriched_val = serde_json::to_value(enriched.clone())?;
+    // The local value is base + overlay merged: writing it back would leak profile-specific
+    // values into the base file, so leave both files untouched.
+    if crate::utils::yaml::find_overlay_path(path, profile)
+        .await
+        .is_some()
+    {
+        let _lock = prompt_mutex.lock().await;
+        crate::utils::ui::log_line(format!(
+            "  {} Skipping local update of {} '{}': its file has a '{}' profile overlay",
+            crate::utils::ui::INFO,
+            T::LABEL,
+            enriched.get_name(),
+            profile.unwrap_or_default()
+        ));
+        return Ok(());
+    }
 
+    let mut enriched_raw = serde_json::to_value(enriched.clone())?;
+
+    // Server identifiers and read-only server data are environment specific: never introduce
+    // ones the user did not declare, and never replace declared ones with server values.
+    if let (Some(obj), Some(local_obj)) = (
+        enriched_raw.as_object_mut(),
+        local_val_before_sub.as_object(),
+    ) {
+        // `access` (the caller's permissions), `createdTimestamp` and `subGroupCount` are
+        // read-only server data as well.
+        for key in [
+            "id",
+            "internalId",
+            "parentId",
+            "containerId",
+            "access",
+            "createdTimestamp",
+            "subGroupCount",
+        ] {
+            match local_obj.get(key) {
+                Some(local_id) if !local_id.is_null() => {
+                    obj.insert(key.to_string(), local_id.clone());
+                }
+                _ => {
+                    obj.remove(key);
+                }
+            }
+        }
+    }
+
+    // Keycloak masks some stored secrets: keep what the user declared instead of the mask.
+    restore_masked_values(&mut enriched_raw, local_val_before_sub);
+    // Never drop what the user declared: write-only fields and references applied in a later
+    // stage (e.g. an execution's `authenticatorConfig`) are absent from the server response.
+    restore_missing_declared(&mut enriched_raw, local_val_before_sub);
+
+    let mut enriched_val = enriched_raw.clone();
     let mut new_secrets = std::collections::BTreeMap::new();
     let prefix = format!("realm_{}_{}", realm_name, T::SECRET_PREFIX);
     crate::utils::secrets::extract_secrets(&mut enriched_val, &prefix, &mut new_secrets);
 
+    let mut placeholders = Vec::new();
+    find_placeholders(local_val_before_sub, &mut Vec::new(), &mut placeholders);
     for (p, placeholder) in &placeholders {
-        set_value_at_path(
-            &mut enriched_val,
-            p,
-            serde_json::Value::String(placeholder.clone()),
-        );
+        let target =
+            locate_placeholder_target(&enriched_raw, local_val_before_sub, local_val_resolved, p);
+        if let Some(target) = target {
+            set_value_at_path(
+                &mut enriched_val,
+                &target,
+                serde_json::Value::String(placeholder.clone()),
+            );
+        }
     }
 
     let mut sorted_local_val = local_val_before_sub.clone();
@@ -487,6 +607,11 @@ where
 
     crate::utils::recursive_sort(&mut enriched_val);
     let enriched_yaml = serde_yaml::to_string(&enriched_val)?;
+
+    // Only persist extracted secrets that the written file still references.
+    new_secrets.retain(|k, v| {
+        v != KEYCLOAK_MASKED_SECRET && enriched_yaml.contains(&format!("${{{}}}", k))
+    });
 
     if local_yaml != enriched_yaml {
         let proceed = if yes {
@@ -526,7 +651,7 @@ fn find_placeholders(
 ) {
     match val {
         serde_json::Value::String(s) => {
-            if s.starts_with("${") && s.ends_with('}') {
+            if crate::utils::secrets::contains_placeholder(s) {
                 placeholders.push((current_path.clone(), s.clone()));
             }
         }
@@ -546,6 +671,139 @@ fn find_placeholders(
         }
         _ => {}
     }
+}
+
+fn get_value_at_path<'a>(
+    val: &'a serde_json::Value,
+    segments: &[PathSegment],
+) -> Option<&'a serde_json::Value> {
+    segments
+        .iter()
+        .try_fold(val, |current, segment| match segment {
+            PathSegment::Key(k) => current.get(k),
+            PathSegment::Index(i) => current.get(*i),
+        })
+}
+
+/// Finds where a local placeholder belongs in the enriched value.
+///
+/// The path is trusted when the enriched value there equals the resolved local value (or the
+/// field is a secret Keycloak does not return). Inside arrays, Keycloak may reorder elements, so
+/// the element holding the resolved value is searched for instead of trusting the index.
+fn locate_placeholder_target(
+    enriched_raw: &serde_json::Value,
+    local_before_sub: &serde_json::Value,
+    local_resolved: &serde_json::Value,
+    path: &[PathSegment],
+) -> Option<Vec<PathSegment>> {
+    let resolved = get_value_at_path(local_resolved, path);
+    let original = get_value_at_path(local_before_sub, path);
+    match get_value_at_path(enriched_raw, path) {
+        None => {
+            // Field not returned by Keycloak (e.g. write-only secret): keep the placeholder
+            // only if its parent exists so it is not lost.
+            let parent_exists = path.len() <= 1
+                || get_value_at_path(enriched_raw, &path[..path.len() - 1]).is_some();
+            parent_exists.then(|| path.to_vec())
+        }
+        Some(current) if resolved.is_none_or(|r| r == current) || original == Some(current) => {
+            Some(path.to_vec())
+        }
+        Some(serde_json::Value::String(s)) if s == KEYCLOAK_MASKED_SECRET => Some(path.to_vec()),
+        Some(_) => {
+            let resolved = resolved?;
+            let (last, parent) = path.split_last()?;
+            if !matches!(last, PathSegment::Index(_)) {
+                return None;
+            }
+            let siblings = get_value_at_path(enriched_raw, parent)?.as_array()?;
+            let idx = siblings.iter().position(|v| v == resolved)?;
+            let mut target = parent.to_vec();
+            target.push(PathSegment::Index(idx));
+            Some(target)
+        }
+    }
+}
+
+/// Re-inserts object keys declared locally but missing from the enriched value.
+///
+/// Objects are merged recursively. Array elements are paired by an identity key
+/// (`authenticator`, `flowAlias`, `clientId`, `name`, `alias`), or by position when they have
+/// none and both arrays have the same length.
+fn restore_missing_declared(enriched: &mut serde_json::Value, local: &serde_json::Value) {
+    match (enriched, local) {
+        (serde_json::Value::Object(enriched_map), serde_json::Value::Object(local_map)) => {
+            for (key, local_val) in local_map {
+                match enriched_map.get_mut(key) {
+                    Some(enriched_val) => restore_missing_declared(enriched_val, local_val),
+                    None if !local_val.is_null() => {
+                        enriched_map.insert(key.clone(), local_val.clone());
+                    }
+                    None => {}
+                }
+            }
+        }
+        (serde_json::Value::Array(enriched_arr), serde_json::Value::Array(local_arr)) => {
+            let same_len = enriched_arr.len() == local_arr.len();
+            let mut used = vec![false; enriched_arr.len()];
+            for (index, local_val) in local_arr.iter().enumerate() {
+                let target = match identity_of(local_val) {
+                    Some((key, id)) => enriched_arr
+                        .iter()
+                        .enumerate()
+                        .position(|(j, e)| !used[j] && e.get(key) == Some(id)),
+                    None if same_len => Some(index),
+                    None => None,
+                };
+                if let Some(j) = target {
+                    used[j] = true;
+                    restore_missing_declared(&mut enriched_arr[j], local_val);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Identity of an array element used to pair local and enriched elements.
+fn identity_of(val: &serde_json::Value) -> Option<(&'static str, &serde_json::Value)> {
+    const IDENTITY_KEYS: &[&str] = &["authenticator", "flowAlias", "clientId", "name", "alias"];
+    IDENTITY_KEYS
+        .iter()
+        .find_map(|key| val.get(*key).map(|v| (*key, v)))
+}
+
+/// Replaces Keycloak's `**********` masks with the value declared locally at the same path.
+fn restore_masked_values(enriched: &mut serde_json::Value, local: &serde_json::Value) {
+    fn walk(
+        enriched: &mut serde_json::Value,
+        local: &serde_json::Value,
+        path: &mut Vec<PathSegment>,
+    ) {
+        match enriched {
+            serde_json::Value::String(s) if s == KEYCLOAK_MASKED_SECRET => {
+                if let Some(local_val) = get_value_at_path(local, path) {
+                    *enriched = local_val.clone();
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (k, v) in map.iter_mut() {
+                    path.push(PathSegment::Key(k.clone()));
+                    walk(v, local, path);
+                    path.pop();
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for (i, v) in arr.iter_mut().enumerate() {
+                    path.push(PathSegment::Index(i));
+                    walk(v, local, path);
+                    path.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(enriched, local, &mut Vec::new());
 }
 
 fn set_value_at_path(
@@ -685,13 +943,19 @@ mod tests {
             passwords: std::sync::Mutex::new(Vec::new()),
         };
 
-        let client = KeycloakClient::new("http://dummy".to_string());
+        // Resolved local value: placeholders substituted with what Keycloak now reports.
+        let mut resolved = local_yaml.clone();
+        resolved["secret"] = serde_json::json!("my-new-secret");
+        resolved["redirectUris"][1] = serde_json::json!("enriched-redirect-uri");
 
         // Call check_and_update_enrichment with yes = false, confirm = true
         check_and_update_enrichment(
-            &client,
             &client_path,
-            &local_yaml,
+            None,
+            LocalSource {
+                before_sub: &local_yaml,
+                resolved: &resolved,
+            },
             &enriched_client,
             "test-realm",
             &secrets_path,
@@ -706,11 +970,8 @@ mod tests {
         let content = fs::read_to_string(&client_path)?;
         let parsed: serde_json::Value = serde_yaml::from_str(&content)?;
 
-        // - ID is updated
-        assert_eq!(
-            parsed.get("id").and_then(|v| v.as_str()),
-            Some("generated-id-123")
-        );
+        // - Server ID is not introduced into the file
+        assert!(parsed.get("id").is_none());
         // - Name is updated
         assert_eq!(
             parsed.get("name").and_then(|v| v.as_str()),
@@ -733,10 +994,8 @@ mod tests {
         // B. New secret was appended to .secrets, while preserving the existing one!
         let secrets_content = fs::read_to_string(&secrets_path)?;
         assert!(secrets_content.contains("EXISTING_KEY=old_val"));
-        assert!(
-            secrets_content
-                .contains("KEYCLOAK_REALM_TEST_REALM_CLIENT_TEST_CLIENT_SECRET=my-new-secret")
-        );
+        // The secret already has a user placeholder: no duplicate entry under a generated name.
+        assert!(!secrets_content.contains("my-new-secret"));
 
         Ok(())
     }
@@ -789,11 +1048,18 @@ mod tests {
             passwords: std::sync::Mutex::new(Vec::new()),
         };
 
-        let client = KeycloakClient::new("http://dummy".to_string());
+        let mut resolved = local_yaml.clone();
+        resolved["attributes"]["custom/url/endpoint"] =
+            serde_json::json!("placeholder-to-overwrite");
+        resolved["attributes"]["user.attribute/department"] =
+            serde_json::json!("placeholder-to-overwrite");
         check_and_update_enrichment(
-            &client,
             &client_path,
-            &local_yaml,
+            None,
+            LocalSource {
+                before_sub: &local_yaml,
+                resolved: &resolved,
+            },
             &enriched_client,
             "test-realm",
             &secrets_path,
@@ -816,74 +1082,312 @@ mod tests {
         Ok(())
     }
 
+    fn auto_ui() -> MockUi {
+        MockUi {
+            inputs: std::sync::Mutex::new(Vec::new()),
+            confirms: std::sync::Mutex::new(Vec::new()),
+            selects: std::sync::Mutex::new(Vec::new()),
+            passwords: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    async fn enrich(
+        dir: &std::path::Path,
+        profile: Option<&str>,
+        local: &serde_json::Value,
+        resolved: &serde_json::Value,
+        enriched: serde_json::Value,
+    ) -> Result<(serde_json::Value, String)> {
+        let path = dir.join("client.yaml");
+        let secrets_path = dir.join(".secrets");
+        let original = serde_yaml::to_string(local)?;
+        fs::write(&path, &original)?;
+        let enriched: ClientRepresentation = serde_json::from_value(enriched)?;
+        check_and_update_enrichment(
+            &path,
+            profile,
+            LocalSource {
+                before_sub: local,
+                resolved,
+            },
+            &enriched,
+            "r",
+            &secrets_path,
+            &auto_ui(),
+            true,
+            Arc::new(tokio::sync::Mutex::new(())),
+        )
+        .await?;
+        let parsed = serde_yaml::from_str(&fs::read_to_string(&path)?)?;
+        let secrets = fs::read_to_string(&secrets_path).unwrap_or_default();
+        Ok((parsed, secrets))
+    }
+
+    #[tokio::test]
+    async fn test_enrichment_skips_files_with_overlay() -> Result<()> {
+        let temp = tempdir()?;
+        fs::write(
+            temp.path().join("client.prod.yaml"),
+            "rootUrl: https://prod\n",
+        )?;
+        let local = serde_json::json!({"clientId": "c", "rootUrl": "https://prod"});
+        let (parsed, _) = enrich(
+            temp.path(),
+            Some("prod"),
+            &local,
+            &local,
+            serde_json::json!({"id": "x", "clientId": "c", "rootUrl": "https://prod", "enabled": true}),
+        )
+        .await?;
+        // Base file is untouched: no prod values or server defaults leaked into it.
+        assert_eq!(parsed, local);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enrichment_preserves_embedded_placeholders() -> Result<()> {
+        let temp = tempdir()?;
+        let local = serde_json::json!({"clientId": "c", "rootUrl": "https://${HOST}/app"});
+        let resolved = serde_json::json!({"clientId": "c", "rootUrl": "https://h.example/app"});
+        let (parsed, _) = enrich(
+            temp.path(),
+            None,
+            &local,
+            &resolved,
+            serde_json::json!({"clientId": "c", "rootUrl": "https://h.example/app", "enabled": true}),
+        )
+        .await?;
+        assert_eq!(parsed["rootUrl"], "https://${HOST}/app");
+        assert_eq!(parsed["enabled"], true);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enrichment_follows_reordered_arrays() -> Result<()> {
+        let temp = tempdir()?;
+        let local = serde_json::json!({"clientId": "c", "redirectUris": ["${CB}", "https://b"]});
+        let resolved =
+            serde_json::json!({"clientId": "c", "redirectUris": ["https://a", "https://b"]});
+        let (parsed, _) = enrich(
+            temp.path(),
+            None,
+            &local,
+            &resolved,
+            serde_json::json!({"clientId": "c", "redirectUris": ["https://b", "https://a"]}),
+        )
+        .await?;
+        let uris = parsed["redirectUris"].as_array().unwrap();
+        assert!(uris.contains(&serde_json::json!("${CB}")));
+        assert!(uris.contains(&serde_json::json!("https://b")));
+        assert!(!uris.contains(&serde_json::json!("https://a")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enrichment_keeps_masked_secret_placeholder() -> Result<()> {
+        let temp = tempdir()?;
+        let local =
+            serde_json::json!({"clientId": "c", "attributes": {"clientSecret": "${IDP_SECRET}"}});
+        let resolved = serde_json::json!({"clientId": "c", "attributes": {"clientSecret": "real"}});
+        let (parsed, secrets) = enrich(
+            temp.path(),
+            None,
+            &local,
+            &resolved,
+            serde_json::json!({"clientId": "c", "attributes": {"clientSecret": "**********"}, "enabled": true}),
+        )
+        .await?;
+        assert_eq!(parsed["attributes"]["clientSecret"], "${IDP_SECRET}");
+        assert!(!secrets.contains("**********"));
+        assert!(!secrets.contains("${IDP_SECRET}"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enrichment_extracts_new_generated_secret() -> Result<()> {
+        let temp = tempdir()?;
+        let local = serde_json::json!({"clientId": "c"});
+        let (parsed, secrets) = enrich(
+            temp.path(),
+            None,
+            &local,
+            &local,
+            serde_json::json!({"id": "x", "clientId": "c", "secret": "generated"}),
+        )
+        .await?;
+        let placeholder = parsed["secret"].as_str().unwrap().to_string();
+        assert!(placeholder.starts_with("${KEYCLOAK_"));
+        assert!(secrets.contains("=generated"));
+        assert!(parsed.get("id").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_restore_missing_declared() {
+        let local = serde_json::json!({
+            "alias": "f",
+            "nullable": null,
+            "executions": [
+                {"authenticator": "a", "authenticatorConfig": "cfg"},
+                {"authenticator": "b"}
+            ],
+            "nested": {"writeOnly": "x"}
+        });
+        let mut enriched = serde_json::json!({
+            "alias": "f",
+            "executions": [
+                {"authenticator": "a", "priority": 10},
+                {"authenticator": "b", "priority": 20}
+            ],
+            "nested": {}
+        });
+        restore_missing_declared(&mut enriched, &local);
+        assert_eq!(enriched["executions"][0]["authenticatorConfig"], "cfg");
+
+        assert_eq!(enriched["executions"][0]["priority"], 10);
+        assert_eq!(enriched["nested"]["writeOnly"], "x");
+        assert!(enriched.get("nullable").is_none());
+
+        // Arrays of different lengths are paired by identity key.
+        let local = serde_json::json!({"executions": [
+            {"authenticator": "b", "authenticatorConfig": "cfg-b"}
+        ]});
+        let mut enriched = serde_json::json!({"executions": [
+            {"authenticator": "a"},
+            {"authenticator": "b", "priority": 20}
+        ]});
+        restore_missing_declared(&mut enriched, &local);
+        assert!(
+            enriched["executions"][0]
+                .get("authenticatorConfig")
+                .is_none()
+        );
+        assert_eq!(enriched["executions"][1]["authenticatorConfig"], "cfg-b");
+    }
+
+    fn protected<T>(json: serde_json::Value, realm: &str) -> bool
+    where
+        T: KeycloakResource + serde::Serialize + for<'de> serde::Deserialize<'de>,
+    {
+        let rep: T = serde_json::from_value(json).unwrap();
+        let identity = rep.get_identity().unwrap();
+        is_protected_resource(&rep, &identity, realm)
+    }
+
     #[test]
     fn test_is_protected_resource_branches() {
         use crate::models::{
             AuthenticationFlowRepresentation, ClientRepresentation, ClientScopeRepresentation,
-            GroupRepresentation, RoleRepresentation,
+            GroupRepresentation, RequiredActionProviderRepresentation, RoleRepresentation,
+            UserRepresentation,
         };
+        use serde_json::json;
 
         // clients
-        assert!(is_protected_resource::<ClientRepresentation>(
+        for c in [
             "admin-cli",
-            "myrealm"
-        ));
-        assert!(is_protected_resource::<ClientRepresentation>(
             "security-admin-console",
-            "myrealm"
+            "account",
+            "realm-management",
+        ] {
+            assert!(protected::<ClientRepresentation>(
+                json!({"clientId": c}),
+                "r"
+            ));
+        }
+        assert!(!protected::<ClientRepresentation>(
+            json!({"clientId": "my-app"}),
+            "r"
         ));
-        assert!(is_protected_resource::<ClientRepresentation>(
-            "account", "myrealm"
+        assert!(protected::<ClientRepresentation>(
+            json!({"clientId": "foo-realm"}),
+            "master"
         ));
-        assert!(!is_protected_resource::<ClientRepresentation>(
-            "my-custom-client",
-            "myrealm"
+        assert!(!protected::<ClientRepresentation>(
+            json!({"clientId": "foo-realm"}),
+            "r"
         ));
 
         // roles
-        assert!(is_protected_resource::<RoleRepresentation>(
-            "offline_access",
-            "myrealm"
+        assert!(protected::<RoleRepresentation>(
+            json!({"name": "offline_access"}),
+            "r"
         ));
-        assert!(is_protected_resource::<RoleRepresentation>(
-            "default-roles-myrealm",
-            "myrealm"
+        assert!(protected::<RoleRepresentation>(
+            json!({"name": "default-roles-r"}),
+            "r"
         ));
-        assert!(!is_protected_resource::<RoleRepresentation>(
-            "my-custom-role",
-            "myrealm"
+        assert!(protected::<RoleRepresentation>(
+            json!({"name": "admin"}),
+            "master"
         ));
-
-        // client-scopes
-        assert!(is_protected_resource::<ClientScopeRepresentation>(
-            "profile", "myrealm"
-        ));
-        assert!(is_protected_resource::<ClientScopeRepresentation>(
-            "roles", "myrealm"
-        ));
-        assert!(!is_protected_resource::<ClientScopeRepresentation>(
-            "my-custom-scope",
-            "myrealm"
+        assert!(!protected::<RoleRepresentation>(
+            json!({"name": "admin"}),
+            "r"
         ));
 
-        // authentication flows
-        assert!(is_protected_resource::<AuthenticationFlowRepresentation>(
-            "browser", "myrealm"
+        // client scopes, including those added in recent Keycloak versions
+        for s in [
+            "profile",
+            "roles",
+            "acr",
+            "basic",
+            "role_list",
+            "organization",
+            "service_account",
+            "saml_organization",
+            "AuthnContextClassRef",
+        ] {
+            assert!(
+                protected::<ClientScopeRepresentation>(json!({"name": s}), "r"),
+                "{s}"
+            );
+        }
+        assert!(!protected::<ClientScopeRepresentation>(
+            json!({"name": "custom"}),
+            "r"
         ));
-        assert!(is_protected_resource::<AuthenticationFlowRepresentation>(
-            "direct grant",
-            "myrealm"
+
+        // flows: builtIn flag wins, hard-coded list as fallback
+        assert!(protected::<AuthenticationFlowRepresentation>(
+            json!({"alias": "browser"}),
+            "r"
         ));
-        assert!(!is_protected_resource::<AuthenticationFlowRepresentation>(
-            "my-custom-flow",
-            "myrealm"
+        assert!(protected::<AuthenticationFlowRepresentation>(
+            json!({"alias": "new-builtin", "builtIn": true}),
+            "r"
+        ));
+        assert!(!protected::<AuthenticationFlowRepresentation>(
+            json!({"alias": "custom", "builtIn": false}),
+            "r"
+        ));
+        assert!(protected::<AuthenticationFlowRepresentation>(
+            json!({"alias": "custom-sub", "topLevel": false}),
+            "r"
+        ));
+
+        // required actions are never pruned
+        assert!(protected::<RequiredActionProviderRepresentation>(
+            json!({"alias": "CONFIGURE_TOTP"}),
+            "r"
+        ));
+
+        // users: service accounts and master users are protected
+        assert!(protected::<UserRepresentation>(
+            json!({"username": "service-account-x", "serviceAccountClientId": "id"}),
+            "r"
+        ));
+        assert!(protected::<UserRepresentation>(
+            json!({"username": "admin"}),
+            "master"
+        ));
+        assert!(!protected::<UserRepresentation>(
+            json!({"username": "bob"}),
+            "r"
         ));
 
         // other (e.g. groups)
-        assert!(!is_protected_resource::<GroupRepresentation>(
-            "my-custom-group",
-            "myrealm"
-        ));
+        assert!(!protected::<GroupRepresentation>(json!({"name": "g"}), "r"));
     }
 
     #[tokio::test]

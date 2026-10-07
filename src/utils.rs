@@ -107,7 +107,40 @@ async fn write_secure_windows(path: &Path, content: &str) -> anyhow::Result<()> 
     }
 }
 
+/// Writes `content` to `path` with owner-only permissions, atomically.
+///
+/// The content is written to a temporary file in the same directory and renamed over the
+/// target, so an interrupted run never leaves a truncated configuration or secrets file.
 pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .with_context(|| format!("Invalid file path {:?}", path))?;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let tmp_path = path.with_file_name(format!(
+        ".{}.kaji-tmp-{}-{}",
+        file_name,
+        std::process::id(),
+        unique
+    ));
+
+    let result = async {
+        write_secure_in_place(&tmp_path, content).await?;
+        fs::rename(&tmp_path, path)
+            .await
+            .with_context(|| format!("Failed to replace {:?}", path))
+    }
+    .await;
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path).await;
+    }
+    result
+}
+
+async fn write_secure_in_place(path: &Path, content: &str) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use tokio::io::AsyncWriteExt;
@@ -136,6 +169,9 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
         file.flush()
             .await
             .with_context(|| format!("Failed to flush {:?}", path))?;
+        file.sync_all()
+            .await
+            .with_context(|| format!("Failed to sync {:?}", path))?;
     }
     #[cfg(windows)]
     {
@@ -150,39 +186,71 @@ pub async fn write_secure(path: &Path, content: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Keys whose arrays are order-sensitive and must never be reordered.
+const ORDERED_ARRAY_KEYS: &[&str] = &["authenticationExecutions"];
+
+/// Sorts object keys (via `serde_json`'s sorted map) and arrays for stable, diffable output.
+///
+/// Arrays of primitives are sorted (numbers numerically); arrays of objects are sorted by the
+/// first identity key shared by all elements (`id`, `clientId`, `username`, `alias`, `name`).
+/// Arrays under order-sensitive keys (e.g. `authenticationExecutions`) keep their order.
 pub fn recursive_sort(value: &mut serde_json::Value) {
+    sort_value(value, true);
+}
+
+fn sort_value(value: &mut serde_json::Value, sort_arrays: bool) {
     match value {
         serde_json::Value::Object(map) => {
-            for (_, v) in map.iter_mut() {
-                recursive_sort(v);
+            for (k, v) in map.iter_mut() {
+                sort_value(v, !ORDERED_ARRAY_KEYS.contains(&k.as_str()));
             }
         }
         serde_json::Value::Array(arr) => {
             for v in arr.iter_mut() {
-                recursive_sort(v);
+                sort_value(v, true);
             }
-            if !arr.is_empty() {
-                // Sort arrays of simple values (Strings, Numbers, Bools)
-                if arr
-                    .iter()
-                    .all(|v| v.is_string() || v.is_number() || v.is_boolean())
-                {
-                    arr.sort_by_cached_key(|a| a.to_string());
-                } else if arr.iter().all(|v| v.is_object()) {
-                    // Try to find a common sorting key: id, clientId, username, alias, or name
-                    let keys = ["id", "clientId", "username", "alias", "name"];
-                    for key in keys {
-                        if arr.iter().all(|v| v.get(key).is_some()) {
-                            arr.sort_by_cached_key(|a| {
-                                a.get(key).map_or(String::new(), |v| v.to_string())
-                            });
-                            break;
-                        }
-                    }
-                }
+            if sort_arrays && !arr.is_empty() {
+                sort_array(arr);
             }
         }
         _ => {}
+    }
+}
+
+fn sort_array(arr: &mut [serde_json::Value]) {
+    if arr.iter().all(|v| v.is_number()) {
+        arr.sort_by(|a, b| {
+            let (a, b) = (
+                a.as_f64().unwrap_or_default(),
+                b.as_f64().unwrap_or_default(),
+            );
+            a.total_cmp(&b)
+        });
+    } else if arr
+        .iter()
+        .all(|v| v.is_string() || v.is_number() || v.is_boolean())
+    {
+        arr.sort_by_cached_key(|a| a.to_string());
+    } else if arr.iter().all(|v| v.is_object()) {
+        // Try to find a common sorting key: id, clientId, username, alias, or name
+        let keys = ["id", "clientId", "username", "alias", "name"];
+        for key in keys {
+            if arr.iter().all(|v| v.get(key).is_some()) {
+                if arr
+                    .iter()
+                    .all(|v| v.get(key).is_some_and(|k| k.is_number()))
+                {
+                    arr.sort_by(|a, b| {
+                        let a = a.get(key).and_then(|v| v.as_f64()).unwrap_or_default();
+                        let b = b.get(key).and_then(|v| v.as_f64()).unwrap_or_default();
+                        a.total_cmp(&b)
+                    });
+                } else {
+                    arr.sort_by_cached_key(|a| a.get(key).map_or(String::new(), |v| v.to_string()));
+                }
+                break;
+            }
+        }
     }
 }
 
@@ -205,19 +273,53 @@ pub fn to_sorted_yaml<T: Serialize>(value: &T) -> anyhow::Result<String> {
     serde_yaml::to_string(&json_value).context("Failed to serialize to sorted YAML")
 }
 
+/// Waits for every task of the set and returns their results.
+///
+/// All tasks are always awaited, even after a failure: aborting siblings could interrupt
+/// a resource between its API call and the local file update. When several tasks fail, the
+/// returned error lists every failure.
 pub async fn join_all_tasks<T: 'static>(
     mut set: tokio::task::JoinSet<anyhow::Result<T>>,
     context_msg: Option<&str>,
 ) -> anyhow::Result<Vec<T>> {
     let mut results = Vec::new();
+    let mut errors: Vec<anyhow::Error> = Vec::new();
     while let Some(res) = set.join_next().await {
-        if let Some(msg) = context_msg {
-            results.push(res.context(msg.to_string())??);
-        } else {
-            results.push(res??);
+        let outcome = match res {
+            Ok(result) => result,
+            Err(join_err) => Err(anyhow::Error::new(join_err)
+                .context(context_msg.unwrap_or("Task panicked").to_string())),
+        };
+        match outcome {
+            Ok(value) => results.push(value),
+            Err(e) => errors.push(e),
         }
     }
-    Ok(results)
+    match errors.len() {
+        0 => Ok(results),
+        1 => Err(errors.remove(0)),
+        n => {
+            let details: Vec<String> = errors.iter().map(|e| format!("- {:#}", e)).collect();
+            Err(anyhow::anyhow!("{}", details.join("\n")))
+                .with_context(|| format!("{} tasks failed", n))
+        }
+    }
+}
+
+/// Validates that a realm name is safe to use as a workspace directory name.
+///
+/// # Errors
+/// Returns an error for empty names, names starting with `.`, or names containing path
+/// separators (which would escape the workspace directory).
+pub fn validate_realm_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) || name.contains('\0')
+    {
+        anyhow::bail!(
+            "Invalid realm name '{}': realm names used as directories must not be empty, start with '.', or contain path separators",
+            name
+        );
+    }
+    Ok(())
 }
 
 /// Discovers valid realm directories in the given workspace.
@@ -318,6 +420,22 @@ mod tests {
         assert_eq!(lines[11], "- name: c");
         assert_eq!(lines[12], "  v: 3");
         Ok(())
+    }
+
+    #[test]
+    fn test_recursive_sort_keeps_ordered_arrays_and_sorts_numbers() {
+        let mut val = serde_json::json!({
+            "authenticationExecutions": [
+                {"authenticator": "z", "requirement": "REQUIRED"},
+                {"authenticator": "a", "requirement": "ALTERNATIVE"}
+            ],
+            "numbers": [10, 2, 1],
+            "other": [{"name": "z"}, {"name": "a"}]
+        });
+        recursive_sort(&mut val);
+        assert_eq!(val["authenticationExecutions"][0]["authenticator"], "z");
+        assert_eq!(val["numbers"], serde_json::json!([1, 2, 10]));
+        assert_eq!(val["other"][0]["name"], "a");
     }
 
     #[test]
@@ -584,6 +702,25 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_write_secure_is_atomic_and_leaves_no_temp_files() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let path = temp_dir.path().join("realm.yaml");
+        std::fs::write(&path, "old")?;
+        write_secure(&path, "new").await?;
+        assert_eq!(std::fs::read_to_string(&path)?, "new");
+        let leftovers: Vec<_> = std::fs::read_dir(temp_dir.path())?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("kaji-tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+
+        // A failed write leaves the original file untouched.
+        let missing_dir = temp_dir.path().join("missing").join("file.yaml");
+        assert!(write_secure(&missing_dir, "x").await.is_err());
+        Ok(())
+    }
+
     #[test]
     fn test_recursive_sort_keycloak_identifiers() {
         // Test clientId sorting
@@ -670,13 +807,13 @@ mod tests {
             { "id": 10, "val": "c" }
         ]);
         recursive_sort(&mut val_int_keys);
-        // Sorted by exact string representation of the numbers: "1", "10", "2"
+        // Numeric keys sort numerically
         assert_eq!(
             val_int_keys,
             serde_json::json!([
                 { "id": 1, "val": "a" },
-                { "id": 10, "val": "c" },
-                { "id": 2, "val": "b" }
+                { "id": 2, "val": "b" },
+                { "id": 10, "val": "c" }
             ])
         );
 
@@ -694,6 +831,56 @@ mod tests {
                 { "id": null, "val": "b" }
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn test_join_all_tasks_reports_panics() {
+        let mut set = tokio::task::JoinSet::new();
+        set.spawn(async {
+            if std::hint::black_box(true) {
+                panic!("boom");
+            }
+            Ok::<(), anyhow::Error>(())
+        });
+        let err = join_all_tasks(set, Some("Realm task panicked"))
+            .await
+            .unwrap_err();
+        assert!(format!("{:#}", err).contains("Realm task panicked"));
+    }
+
+    #[tokio::test]
+    async fn test_join_all_tasks_waits_for_all_and_aggregates_errors() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let finished = Arc::new(AtomicUsize::new(0));
+        let mut set = tokio::task::JoinSet::new();
+        set.spawn(async { Err::<(), _>(anyhow::anyhow!("first failure")) });
+        set.spawn(async { Err::<(), _>(anyhow::anyhow!("second failure")) });
+        let counter = Arc::clone(&finished);
+        set.spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        let err = join_all_tasks(set, None).await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("2 tasks failed"), "{msg}");
+        assert!(msg.contains("first failure") && msg.contains("second failure"));
+        // The slow sibling was not aborted.
+        assert_eq!(finished.load(Ordering::SeqCst), 1);
+
+        let mut ok_set = tokio::task::JoinSet::new();
+        ok_set.spawn(async { Ok::<_, anyhow::Error>(1) });
+        assert_eq!(join_all_tasks(ok_set, None).await.unwrap(), vec![1]);
+    }
+
+    #[test]
+    fn test_validate_realm_name() {
+        assert!(validate_realm_name("my-realm").is_ok());
+        assert!(validate_realm_name("Realm With Spaces").is_ok());
+        for bad in ["", ".", "..", "../etc", "a/b", "a\\b", ".hidden"] {
+            assert!(validate_realm_name(bad).is_err(), "{bad}");
+        }
     }
 
     #[tokio::test]

@@ -47,13 +47,30 @@ pub async fn run_with_ui_and_secrets(
         .await
         .context("Failed to create output directory")?;
 
-    let realms = if realms_to_inspect.is_empty() {
+    let realms: Vec<String> = if realms_to_inspect.is_empty() {
         let all_realms = client
             .get_realms()
             .await
             .context("Failed to fetch realms")?;
-        all_realms.into_iter().map(|r| r.realm).collect()
+        all_realms
+            .into_iter()
+            .map(|r| r.realm)
+            .filter(|name| match crate::utils::validate_realm_name(name) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!(
+                        "{} {}",
+                        WARN,
+                        style(format!("Skipping realm: {}", e)).yellow()
+                    );
+                    false
+                }
+            })
+            .collect()
     } else {
+        for name in realms_to_inspect {
+            crate::utils::validate_realm_name(name)?;
+        }
         realms_to_inspect.to_vec()
     };
 
@@ -101,21 +118,13 @@ pub async fn run_with_ui_and_secrets(
     if !secrets_lock.is_empty() {
         let secrets_filename = secrets_file.unwrap_or(".secrets");
         let env_path = workspace_dir.join(secrets_filename);
-        let mut env_content = String::new();
-        for (key, value) in secrets_lock.iter() {
-            env_content.push_str(&format!("{}={}\n", key, value));
-        }
-
-        let mut existing_env = match fs::read_to_string(&env_path).await {
+        let existing_env = match fs::read_to_string(&env_path).await {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(e.into()),
         };
-        if !existing_env.ends_with('\n') && !existing_env.is_empty() {
-            existing_env.push('\n');
-        }
-
-        let new_content = format!("{}{}", existing_env, env_content);
+        let new_content =
+            crate::utils::secrets::merge_secrets_content(&existing_env, &secrets_lock);
         write_if_changed_with_mutex(
             &env_path,
             &new_content,
@@ -225,8 +234,22 @@ where
         let realm_name = realm_name.to_string();
         let prompt_mutex = Arc::clone(&prompt_mutex);
         let ui = Arc::clone(&ui);
+        let client = client.clone();
         set.spawn(async move {
+            let mut res = res;
+            res.load_relations(&client, None).await.with_context(|| {
+                format!(
+                    "Failed to load relationships of {} {}",
+                    T::LABEL,
+                    res.get_name()
+                )
+            })?;
             let filename = format!("{}.yaml", sanitize(res.get_filename()));
+            // Server IDs are environment specific. Components keep theirs: child components
+            // (e.g. LDAP mappers) reference their parent by ID in `parentId`.
+            if T::API_PATH != crate::models::ComponentRepresentation::API_PATH {
+                res.clear_metadata();
+            }
             let path = target_dir.join(filename);
             let mut local_secrets = BTreeMap::new();
             let prefix = format!("realm_{}_{}", realm_name, T::SECRET_PREFIX);
@@ -283,7 +306,8 @@ async fn inspect_realm(
         let prompt_mutex = Arc::clone(&prompt_mutex);
         let ui_realm = Arc::clone(&ui);
         set.spawn(async move {
-            let realm = client.get_realm().await.context("Failed to fetch realm")?;
+            let mut realm = client.get_realm().await.context("Failed to fetch realm")?;
+            realm.clear_metadata();
             let mut local_secrets = BTreeMap::new();
             let realm_prefix = format!("realm_{}", realm_name);
             let realm_yaml = to_sorted_yaml_with_secrets(&realm, &realm_prefix, &mut local_secrets)
@@ -333,8 +357,96 @@ async fn inspect_realm(
     spawn_inspect::<ComponentRepresentation>(&mut set, &ctx);
     spawn_inspect::<AuthenticatorConfigRepresentation>(&mut set, &ctx);
 
+    {
+        let client = client.clone();
+        let realm_name = realm_name.to_string();
+        let workspace_dir = Arc::clone(&workspace_dir);
+        let all_secrets = Arc::clone(&all_secrets);
+        let prompt_mutex = Arc::clone(&prompt_mutex);
+        let ui = Arc::clone(&ui);
+        set.spawn(async move {
+            inspect_client_roles(
+                &client,
+                &realm_name,
+                &workspace_dir,
+                all_secrets,
+                yes,
+                prompt_mutex,
+                ui,
+            )
+            .await
+        });
+    }
+
     crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
 
+    Ok(())
+}
+
+/// Exports client roles to `clients/<clientId>/roles/<role>.yaml`.
+async fn inspect_client_roles(
+    client: &KeycloakClient,
+    realm_name: &str,
+    workspace_dir: &Path,
+    all_secrets: Arc<Mutex<BTreeMap<String, String>>>,
+    yes: bool,
+    prompt_mutex: Arc<Mutex<()>>,
+    ui: Arc<dyn Ui>,
+) -> Result<()> {
+    use crate::client::KeycloakResourceMapping;
+    let mut exported = 0usize;
+    for remote_client in client.get_clients().await? {
+        let (Some(internal_id), Some(client_id)) = (remote_client.id, remote_client.client_id)
+        else {
+            continue;
+        };
+        let roles = match client.get_client_roles(&internal_id).await {
+            Ok(roles) => roles,
+            // The client was deleted while inspecting (e.g. a realm removed concurrently).
+            Err(e) if crate::client::is_not_found(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        if roles.is_empty() {
+            continue;
+        }
+        let dir = workspace_dir
+            .join(ClientRepresentation::DIR_NAME)
+            .join(sanitize(&client_id))
+            .join("roles");
+        fs::create_dir_all(&dir)
+            .await
+            .with_context(|| format!("Failed to create {:?}", dir))?;
+        for mut role in roles {
+            role.load_relations(client, None).await?;
+            role.clear_metadata();
+            let mut local_secrets = BTreeMap::new();
+            let prefix = format!("realm_{}_client_{}_role", realm_name, client_id);
+            let yaml = to_sorted_yaml_with_secrets(&role, &prefix, &mut local_secrets)?;
+            all_secrets.lock().await.extend(local_secrets);
+            let path = dir.join(format!("{}.yaml", sanitize(&role.name)));
+            write_if_changed_with_mutex(
+                &path,
+                &yaml,
+                yes,
+                Arc::clone(&prompt_mutex),
+                Arc::clone(&ui),
+            )
+            .await?;
+            exported += 1;
+        }
+    }
+    if exported > 0 {
+        let _lock = prompt_mutex.lock().await;
+        eprintln!(
+            "  {} {}",
+            SUCCESS,
+            style(format!(
+                "Exported {} client roles to clients/*/roles/",
+                exported
+            ))
+            .green()
+        );
+    }
     Ok(())
 }
 

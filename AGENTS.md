@@ -19,19 +19,21 @@ Welcome! This document serves as the canonical developer guide and instructions 
 
 All business logic is located in the [`src/`](src/) directory:
 
-*   [`src/client.rs`](src/client.rs): Wrapper around the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for resources. Automatically extracts generated resource IDs from HTTP 201 `Location` response headers to prevent post-creation query storms.
+*   [`src/client.rs`](src/client.rs): Wrapper around the Keycloak Admin REST API. Handles authentication and provides a **generic CRUD interface** for resources. All requests go through `execute`: a `Session` shared by every clone refreshes the access token before it expires (refresh-token grant, falling back to a new login) and once more on HTTP 401; HTTP 429/502/503/504 are retried with backoff (connection errors only for GET); a semaphore bounds in-flight requests (`with_concurrency`, `--concurrency`, default `DEFAULT_CONCURRENCY`). Paginated list endpoints (users, groups) are read with `get_paginated`. HTTPS is required except for local servers or with `with_allow_insecure_http`; admin tokens come from `with_auth_realm` (default `master`). Automatically extracts generated resource IDs from HTTP 201 `Location` response headers to prevent post-creation query storms. Creation goes through the `KeycloakResourceMapping::create` hook, which resource types can override (required actions are registered via `register-required-action` and then configured with PUT). `is_not_found` detects HTTP 404 errors (used to create missing realms).
 *   [`src/models.rs`](src/models.rs): Strongly-typed Serde representations of Keycloak resources. Implements the `KeycloakResource` and `ResourceMeta` traits for generic resource management. Normalizes group identities (trimming leading slashes) to cleanly align local and remote representations.
-*   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline. Routes file overwrite prompts through the `Ui` trait abstraction (`run_with_ui_and_secrets`), exporting discovered secrets to profile-configured secrets files. Supported CLI aliases: `sync`, `pull`, `export`.
-*   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Uses the generic planning engine in `generic.rs`. Pre-validates the workspace via `validate::run_with_profile` before initiating remote Keycloak queries. Receives `verbose: bool` directly in `PlanArgs` without static mutable state. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation. Also runs a **sub-flow check** for authentication flows: identifies shared sub-flows and explains topological staging and auto-adoption.
-*   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules. Leverages generated IDs from `Location` headers during creation to eliminate unnecessary full-list queries. Employs **topological dependency ordering** (e.g. leaf/shared sub-flows applied in Tier 0 before dependent parent flows in Tier 1+) and **graceful 409 Conflict auto-adoption** to eliminate Keycloak flow race conditions. Serializes interactive user confirmations and `.secrets` file updates across concurrent tasks using a shared prompt mutex, and handles JSON placeholder restoration via segmented path navigation (`PathSegment`). Supports optional pruning/deletion of orphaned remote resources via the `--prune` flag. **`apply` runs `validate` automatically** before any Keycloak API calls are made.
-*   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints. Supports environment profiles (`run_with_profile`), skipping partial standalone overlays (`*.{profile}.yaml`) and deep-merging them when a profile is specified. Checks include forbidden characters, duplicate aliases, valid execution requirement enums, subflow reference integrity, and **cycle detection (DFS)** in authentication sub-flow dependency graphs.
-*   [`src/clean.rs`](src/clean.rs): Removes unreferenced or invalid configuration files from the workspace asynchronously.
+*   [`src/inspect.rs`](src/inspect.rs): Scans the remote Keycloak instance and serializes resources into local workspace files using a parallelized pipeline. Server IDs are stripped (`clear_metadata`) except for components, whose IDs local child components reference in `parentId`. Routes file overwrite prompts through the `Ui` trait abstraction (`run_with_ui_and_secrets`), exporting discovered secrets to profile-configured secrets files. Supported CLI aliases: `sync`, `pull`, `export`.
+*   [`src/plan/`](src/plan/): Calculates diffs and writes the plan. Server IDs (`id`, `containerId`, ...) are ignored in diffs because they are environment specific and never applied. For types whose update endpoint keeps omitted fields (`KeycloakResource::PARTIAL_UPDATES`: realm, clients, client scopes, users — verified on 26.8.0) only keys declared locally are compared (`print_resource_diff`); roles, groups and identity providers reset omitted fields, so omissions there are shown as removals. Empty objects/arrays are treated like absent fields, and array elements are paired by identity (`id`, `name`, ...) when projecting partial files. Uses the generic planning engine in `generic.rs`. Pre-validates the workspace via `validate::run_with_profile` before initiating remote Keycloak queries. Receives `verbose: bool` directly in `PlanArgs` without static mutable state. Supports collapsed unified diff formatting (3 context lines) by default, `--verbose` full diff view, and interactive expansion choices during confirmation. Also runs a **sub-flow check** for authentication flows: identifies shared sub-flows and explains topological staging and auto-adoption. Lists remote resources not declared locally (`PlanSummary::orphaned`, deleted only by `apply --prune`). [`plan_file.rs`](src/plan/plan_file.rs) defines the versioned `.kajiplan` format: workspace-relative paths, the profile, and a sha256 of each base file plus overlay. `run_with_outcome(args, write_plan)` lets `drift` plan without touching `.kajiplan`; `drift` returns `DriftDetected`, which the binary maps to exit code 2.
+*   [`src/apply/`](src/apply/): Reconciles resources. Uses the generic reconciliation engine in `generic.rs` and stage-specific modules. Leverages generated IDs from `Location` headers during creation to eliminate unnecessary full-list queries. Employs **topological dependency ordering** (e.g. leaf/shared sub-flows applied in Tier 0 before dependent parent flows in Tier 1+) and **graceful 409 Conflict auto-adoption** to eliminate Keycloak flow race conditions. Serializes interactive user confirmations and `.secrets` file updates across concurrent tasks using a shared prompt mutex, and handles JSON placeholder restoration via segmented path navigation (`PathSegment`). Supports optional pruning/deletion of orphaned remote resources via the `--prune` flag; `is_protected_resource` uses server flags (`builtIn`, `serviceAccountClientId`) plus lists of default clients, scopes and roles, never unregisters required actions, and never prunes `master` users. Prune runs even when a resource directory is empty. Realms that do not exist are created (POST) instead of updated. Components ([`src/apply/components.rs`](src/apply/components.rs)) are matched by the portable key `(providerType, subType, name, parent)` via `ComponentResolver` (shared with plan); local `parentId`s are resolved through local component files, rewritten to the target realm or parent component ID on write, and realm-level components are applied before child components (e.g. LDAP mappers). `apply` verifies `.kajiplan` (profile and content hashes) before using it. **`apply` runs `validate` automatically** before any Keycloak API calls are made.
+*   [`src/apply/relations.rs`](src/apply/relations.rs): Relationships Keycloak's main endpoints ignore (verified on 26.8.0), reconciled through `KeycloakResourceMapping::post_save` and loaded for plan/inspect through `load_relations` (plan only loads what the local file declares): client default/optional scope links, user `groups`/`realmRoles`/`clientRoles`, group role mappings and nested `subGroups`, role `composites` (`{realm: [...], client: {clientId: [...]}}`). A relationship key that is absent from a file is not managed.
+*   [`src/apply/client_roles.rs`](src/apply/client_roles.rs) / [`src/plan/client_roles.rs`](src/plan/client_roles.rs): Client roles stored as `clients/<sanitized clientId>/roles/<role>.yaml` (inspect, plan, apply, prune; roles of system clients are never pruned) and the role composites pass. Role composites are stripped from role create/update bodies (`pre_save`) and reconciled once all roles exist (`DEFERRED_RELATIONS`).
+*   [`src/validate.rs`](src/validate.rs): Validates local configurations against expected structures and constraints. Supports environment profiles (`run_with_profile`), skipping partial standalone overlays (`*.{profile}.yaml`) and deep-merging them when a profile is specified. Checks include `realm.yaml`'s `realm` matching its directory name (otherwise apply would rename the realm), forbidden characters, duplicate aliases, valid execution requirement enums, subflow reference integrity, and **cycle detection (DFS)** in authentication sub-flow dependency graphs.
+*   [`src/clean.rs`](src/clean.rs): Removes realm directories (all discovered realms, or `--realms`) and `.kajiplan`; profiles, secrets files and anything else in the workspace are never deleted. Realm names are validated with `utils::validate_realm_name` (also applied to `--realms` globally and to realm names discovered by `inspect`).
 *   [`src/init.rs`](src/init.rs): Scaffolds the initial `kaji.toml` / `.kaji.toml` configuration files.
 *   [`src/cli/`](src/cli/): Interactive CLI scaffolding menu. Styled with `dialoguer`'s `ColorfulTheme` and uses `FuzzySelect` for real-time query filtering. Auto-discovers existing realms in the workspace directory. Supports key rotation in both `keys/` and `components/` directories.
-*   [`src/utils/secrets/`](src/utils/secrets/): Manages secret resolution (Env, HashiCorp Vault with cached lookup). Resolves any non-vault environment variable from `.secrets` or process environment and enforces error reporting on missing placeholders. Supports compound and embedded placeholders (`"${HOST}:${PORT}"`).
-*   [`src/utils.rs`](src/utils.rs): Common utilities, including `discover_realms` for unified workspace realm discovery filtering out `.*`, `profiles`, and `target`.
-*   [`src/utils/yaml.rs`](src/utils/yaml.rs): Handles YAML serialization, sorting, and profile-specific deep-merging using `serde_yaml_ng`. Unifies `.yaml` and `.yml` extension support across all resource loaders, overlays, and pruning.
-*   [`src/utils/ui.rs`](src/utils/ui.rs): CLI visual formatting, progress bars (`indicatif`), emojis, and styling (`DialoguerUi`).
+*   [`src/utils/secrets/`](src/utils/secrets/): Manages secret resolution (Env, HashiCorp Vault with cached lookup). Resolves any non-vault environment variable from `.secrets` or process environment and enforces error reporting on missing placeholders. Supports compound and embedded placeholders (`"${HOST}:${PORT}"`). Only `${UPPER_SNAKE_CASE}` and `${vault:...}` are placeholders (`parse_segments`, `is_placeholder_name`); Keycloak localization keys such as `${client_account}` stay literal and `$${X}` escapes a placeholder. `merge_secrets_content` merges secrets files by key. Diffs show secrets as `<redacted:sha256-prefix>` (changes stay visible, nothing leaks); remote `**********` masks are excluded from comparisons; string arrays under secret keys (component configs) are masked and extracted too.
+*   [`src/utils.rs`](src/utils.rs): Common utilities, including `discover_realms` for unified workspace realm discovery filtering out `.*`, `profiles`, and `target`. `write_secure` writes atomically (0600 temp file + rename). `join_all_tasks` always awaits every task and aggregates all failures (never aborts in-flight siblings).
+*   [`src/utils/yaml.rs`](src/utils/yaml.rs): Handles YAML serialization, sorting, and profile-specific deep-merging using `serde_yaml_ng`. Unifies `.yaml` and `.yml` extension support across all resource loaders, overlays, and pruning. `is_overlay_file` only treats `<stem>.<profile>.yaml` as an overlay when the base `<stem>.yaml|yml` exists; `find_overlay_path` locates the active overlay.
+*   [`src/utils/ui.rs`](src/utils/ui.rs): CLI visual formatting, progress bars (`indicatif`), emojis, and styling (`DialoguerUi`). All progress bars share one `MultiProgress`; `DialoguerUi` prompts run inside `suspend_progress` so bars never draw over them, and `report`/`log_line` fall back to stderr when bars are hidden (non-terminal output such as CI logs).
 
 ---
 
@@ -41,26 +43,35 @@ To prevent race conditions, resources are reconciled sequentially across stages:
 
 | Stage | Resources Applied | Category |
 | :--- | :--- | :--- |
-| **Stage 0** | Realms | Foundation |
-| **Stage 1** | Identity Providers, Roles | Infrastructure |
-| **Stage 2** | Clients, Client Scopes, Authentication Flows, Required Actions, Groups | Structure |
-| **Stage 3** | Users, Authenticator Configs, Components, Keys | Data & Final Config |
+| **Stage 0** | Realm (created if missing; flow bindings to flows not yet on the server are deferred) | Foundation |
+| **Stage 1** | Roles, Client Scopes, Required Actions | Infrastructure |
+| **Stage 2** | Authentication Flows | Structure |
+| **Stage 3** | Identity Providers (reference flows), Clients (reference client scopes and flows; scope links reconciled) | Integration |
+| **Stage 4** | Client roles (`clients/<clientId>/roles/`), role composites, then Groups (sub-groups and role mappings) | Authorization |
+| **Stage 5** | Users (groups and role mappings), Authenticator Configs, Components, Keys | Data & Final Config |
+| **Stage 6** | Realm deferred flow bindings (`browserFlow`, ...) and realm enrichment sync | Finalization |
+
+Keycloak rejects (HTTP 500) realms and identity providers that reference a flow that does not exist, and resolves `defaultClientScopes` only against existing scopes; the order above guarantees references exist before they are used. See `realm::apply_realm`/`realm::finish_realm` in [`src/apply/realm.rs`](src/apply/realm.rs).
 
 ### 🔐 Authentication Flows & Shared Sub-flows
 Authentication flows in Keycloak frequently contain sub-flows, some of which may be shared across multiple top-level flows (e.g. MFA sub-flows). `kaji` handles these seamlessly:
 1. **Validation & Cycle Detection**: `validate` validates requirement enums (`REQUIRED`, `ALTERNATIVE`, `OPTIONAL`, `CONDITIONAL`, `DISABLED`), verifies that sub-flow executions declare `flowAlias`, and runs depth-first search (DFS) cycle detection to prevent circular references before API calls.
 2. **Topological Dependency Tiers**: During `apply`, flow files are automatically partitioned into dependency tiers (Tier 0: leaf/shared sub-flows without dependencies; Tier 1+: dependent parent flows). Each tier is applied in order, while resources within a tier are processed concurrently.
 3. **Graceful 409 Conflict Auto-Adoption**: If Keycloak auto-creates a sub-flow container during parent flow import or due to shared references, `kaji` catches the HTTP 409 Conflict, invalidates the cache, queries Keycloak for the generated flow ID, adopts it, and reconciles the flow via PUT update without error.
+4. **Remote representation**: `GET /authentication/flows` only lists top-level flows, already in Keycloak's export format (`authenticator`, `authenticatorConfig` alias, `flowAlias`, `requirement`, `priority`), the same format as flow files. Sub-flows are discovered through the `/flows/{alias}/executions` rows (`AuthenticationExecutionInfoRepresentation`: `providerId`, `authenticationConfig` ID, `flowId`, `level`) and fetched by ID, so `inspect` exports them as separate `topLevel: false` files. Keycloak's misspelled `autheticatorFlow` duplicate is dropped on deserialization.
+5. **Execution reconciliation** ([`src/apply/flow_executions.rs`](src/apply/flow_executions.rs)): `POST`/`PUT /authentication/flows` ignore executions, so after a flow is created/updated the `KeycloakResourceMapping::post_save` hook matches declared executions to the flow's direct children (by provider or sub-flow alias, in order), deletes undeclared ones, adds missing ones (`POST /authentication/executions`; sub-flows applied in an earlier tier are linked by ID via `flowId`, others are created inline), and updates requirement/priority (`PUT /flows/{alias}/executions`). Executions without `priority` get 10, 20, 30, ... Built-in flows only accept requirement/priority changes. A flow file without `authenticationExecutions` leaves remote executions untouched. Standalone sub-flows are invisible to Keycloak's flow list until linked, so `KeycloakClient::remember_flow_id` records the IDs of flows applied in the run.
+6. **Authenticator configs** (Stage 4) are created for the execution that references them (`POST /executions/{id}/config`, ID returned in the `Location` header). Keycloak ties a config to exactly one execution.
 
 ---
 
 ## 🔄 Keycloak Resource Enrichment
 
 During the reconciliation (`apply`) process, Keycloak may enrich resources with default values, read-only system attributes, or server-assigned identifiers (IDs). When `kaji` detects differences between the local representation and the enriched one returned by Keycloak:
-1. It recursively maps any user-defined secret placeholders (e.g. `${VAR_NAME}`) from the original local file to the enriched representation to prevent them from being lost or overwritten by redacted/actual secret values.
-2. It prompts the user (defaulting to Yes) to update the local representation to match the enriched Keycloak representation.
-3. If the `--yes` (`-y`) option flag is passed, the update is accepted automatically without prompting.
-4. Any newly generated secrets (such as client secrets) are extracted and appended to the secrets file.
+1. If the file has an active profile overlay, write-back is skipped: the local value is base + overlay merged, and writing it would leak profile values into the base file.
+2. It recursively maps user-defined secret placeholders (including embedded ones such as `https://${HOST}/cb`) from the local file to the enriched representation. A placeholder is restored only if the enriched value at that path equals the resolved local value. Inside arrays that Keycloak reordered, the matching element is located instead. Keycloak's `**********` masks are replaced with the local value, and server identifiers (`id`, `internalId`, `parentId`, `containerId`) are never added when the local file did not declare them, nor replaced when it did (they are environment specific). Keys declared locally but missing from the server response (write-only fields, references applied in a later stage such as an execution's `authenticatorConfig`) are kept; array elements are paired by identity key (`authenticator`, `flowAlias`, `clientId`, `name`, `alias`).
+3. It prompts the user (defaulting to Yes) to update the local representation to match the enriched Keycloak representation.
+4. If the `--yes` (`-y`) option flag is passed, the update is accepted automatically without prompting.
+5. Newly generated secrets (such as client secrets) are extracted and appended to the secrets file. Only secrets the written file actually references are added.
 
 ---
 
@@ -82,7 +93,9 @@ For a resource `name.yaml`, `kaji` searches for `name.{profile}.yaml` and deep-m
 - Base: `workspace/my-realm/clients/my-app.yaml` (`redirectUris: ["http://localhost:3000/*"]`)
 - Overlay: `workspace/my-realm/clients/my-app.prod.yaml` (`redirectUris: ["https://app.example.com/*"]`)
 
-When running with `--profile prod`, `kaji` deep-merges the overlay onto the base configuration.
+When running with `--profile prod`, `kaji` deep-merges the overlay onto the base configuration. A file is only an overlay when its base file exists (see [README](README.md#2-use-overlays)).
+
+Placeholders in profile connection fields are resolved by `resolve_profile_placeholders` in [`src/lib.rs`](src/lib.rs), using the environment and the profile's `secrets_file`.
 
 ---
 
@@ -98,7 +111,7 @@ Project connection defaults, request timeouts, and workspace parameters can be d
    * `.kaji.toml` in the current working directory.
 3. **Merging Logic**: In `run_app` in [`src/lib.rs`](src/lib.rs), the loaded `Config` is merged into the parsed CLI `Cli` struct.
 
-Settings are resolved in the following precedence order:
+Settings are resolved in the following precedence order (implemented by `pick`/`ConnectionSettings` in [`src/lib.rs`](src/lib.rs); `Cli::explicit_args` records, via clap's `value_source`, which values came from real command-line flags rather than environment variables):
 1. **CLI Flags** (highest)
 2. **Profile Configuration**
 3. **Environment Variables**
@@ -196,7 +209,7 @@ cargo bench
 ### Testing Strategy & Layout
 *   **Unit Tests**: Located inline in modules (e.g., `src/utils/secrets.rs`).
 *   **Integration Tests**: Located in [`tests/`](tests/). Uses local Axum mock servers (in `tests/common/mod.rs`) and mockito.
-*   **Real Integration**: Run against a live Keycloak instance. See [`tests/real_integration_test.rs`](tests/real_integration_test.rs).
+*   **Real Integration**: Runs against a live Keycloak **26.8.0** when `KAJI_IT_URL` is set (skipped otherwise). See [`tests/real_integration_test.rs`](tests/real_integration_test.rs), the [README](README.md#live-keycloak-tests) for commands, and the `Live Keycloak` workflow for CI. Confirmed-but-unfixed defects are `#[ignore = "known bug: ..."]` tests that reference the Known Issues below. Keep `tests/common/mod.rs` mock payloads consistent with what the live server returns.
 *   **Ultimate & Models Coverage**: [`tests/ultimate_coverage_test.rs`](tests/ultimate_coverage_test.rs) and [`tests/models_coverage_test.rs`](tests/models_coverage_test.rs) provide comprehensive checks for resource handling.
 *   **Benchmarks**: Located in [`benches/`](benches/). Used to monitor performance for large workspaces with thousands of files.
 
@@ -222,6 +235,18 @@ Detailed technical deep-dives for specialized topics are located under the [`.ju
 -   [ ] Support for custom SPIs and provider configurations.
 -   [x] Support for multiple environment profiles (e.g., `prod.yaml`, `staging.yaml`).
 -   [x] Generic refactor for `plan.rs` and `apply.rs` (similar to `inspect.rs`).
+
+---
+
+## 🐞 Known Issues
+
+Confirmed defects that are not fixed yet. The numbers are referenced by `#[ignore = "known bug: ..."]` tests in [`tests/real_integration_test.rs`](tests/real_integration_test.rs). Items marked "verified" were reproduced against Keycloak 26.8.0.
+
+**Keycloak API correctness**
+
+**Robustness / UX**
+*   **#20** Prune is not supported for components, keys and authenticator configs (deleting key providers or user storage is too risky to automate).
+*   **#27** `main.rs` loads `.env` and `.secrets` from the current directory into the process environment, and environment variables also satisfy workspace placeholders: values from another environment's `.secrets` in the CWD can silently fill missing placeholders of a profile.
 
 ---
 

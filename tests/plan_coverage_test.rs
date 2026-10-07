@@ -836,8 +836,9 @@ async fn test_plan_resources_with_id_no_clear() {
     .await;
     assert!(res.is_ok());
 
+    // Server IDs are environment specific: a different local `id` alone is not a change.
     let plan_file = workspace_dir.join(".kajiplan");
-    assert!(plan_file.exists());
+    assert!(!plan_file.exists());
 }
 
 #[tokio::test]
@@ -961,7 +962,12 @@ async fn test_plan_resources_interactive() {
     let plan_file = workspace_dir.join(".kajiplan");
     assert!(plan_file.exists());
     let content = fs::read_to_string(&plan_file).unwrap();
-    let planned: Vec<PathBuf> = serde_json::from_str(&content).unwrap();
+    let planned: Vec<PathBuf> = serde_json::from_str::<kaji::plan::plan_file::PlanFile>(&content)
+        .unwrap()
+        .files
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
     assert_eq!(planned.len(), 1);
 }
 
@@ -1046,9 +1052,14 @@ async fn test_plan_resources_filter_skips() {
     // The .kajiplan should still exist and contain only role-1
     assert!(plan_file.exists());
     let content = fs::read_to_string(&plan_file).unwrap();
-    let planned: Vec<PathBuf> = serde_json::from_str(&content).unwrap();
+    let planned: Vec<PathBuf> = serde_json::from_str::<kaji::plan::plan_file::PlanFile>(&content)
+        .unwrap()
+        .files
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
     assert_eq!(planned.len(), 1);
-    assert_eq!(planned[0], role1_path);
+    assert_eq!(workspace_dir.join(&planned[0]), role1_path);
 }
 
 #[test]

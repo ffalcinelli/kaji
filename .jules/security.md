@@ -16,6 +16,7 @@ To avoid leaking secrets into source control or diagnostic logs, `kaji` employs 
 
 ### A. Secret Resolvers
 *   All sensitive values in desired YAML states are represented by placeholders (e.g., `${MY_SECRET}` or `${vault:mount/path#field}`).
+*   Only `${UPPER_SNAKE_CASE}` and `${vault:...}` are placeholders (`is_placeholder_name` in `src/utils/secrets/mod.rs`). Other `${...}` text, such as Keycloak localization keys (`${client_account}`), is passed through literally, and `$${NAME}` escapes a placeholder. Enrichment write-back keeps placeholders (including embedded ones) and never stores Keycloak's `**********` masks as secret values.
 *   `kaji` uses the `SecretResolver` trait (implementations in [src/utils/secrets/](src/utils/secrets)) to interpolate secrets at runtime:
     *   `EnvResolver`: Resolves environment variables or reads from a local `.secrets` file (which is in `.gitignore` and must **never** be committed).
     *   `VaultResolver`: Resolves secrets directly from a HashiCorp Vault server.
