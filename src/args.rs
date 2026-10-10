@@ -189,6 +189,7 @@ pub enum Commands {
         workspace: Option<PathBuf>,
     },
     /// Apply the local Keycloak configuration to the server
+    #[command(visible_alias = "push", visible_alias = "deploy")]
     Apply {
         /// Workspace directory containing configuration files
         #[arg(long, short = 'w')]
