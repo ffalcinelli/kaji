@@ -1119,7 +1119,11 @@ mod tests {
         )
         .await?;
         let parsed = serde_yaml::from_str(&fs::read_to_string(&path)?)?;
-        let secrets = fs::read_to_string(&secrets_path).unwrap_or_default();
+        let secrets = match fs::read_to_string(&secrets_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        };
         Ok((parsed, secrets))
     }
 
