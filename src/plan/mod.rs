@@ -591,16 +591,18 @@ pub fn print_resource_diff<T: Serialize>(
                 let old_len = old_end - old_start;
                 let new_len = new_end - new_start;
 
-                let mut header = String::from("@@");
+                use std::fmt::Write;
+                let mut header = String::with_capacity(32);
+                header.push_str("@@");
                 if old_len == 1 {
-                    header.push_str(&format!(" -{}", old_start + 1));
+                    let _ = write!(header, " -{}", old_start + 1);
                 } else {
-                    header.push_str(&format!(" -{},{}", old_start + 1, old_len));
+                    let _ = write!(header, " -{},{}", old_start + 1, old_len);
                 }
                 if new_len == 1 {
-                    header.push_str(&format!(" +{}", new_start + 1));
+                    let _ = write!(header, " +{}", new_start + 1);
                 } else {
-                    header.push_str(&format!(" +{},{}", new_start + 1, new_len));
+                    let _ = write!(header, " +{},{}", new_start + 1, new_len);
                 }
                 header.push_str(" @@");
                 println!("{}", style(header).cyan());
