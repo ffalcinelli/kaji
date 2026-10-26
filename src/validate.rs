@@ -50,9 +50,8 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
             }
         }
 
-        while let Some(res) = join_set.join_next().await {
-            results.push(res??);
-        }
+        results = crate::utils::join_all_tasks(join_set, None).await?;
+        results.sort_by(|a, b| a.0.cmp(&b.0));
     }
     Ok(results)
 }
@@ -128,28 +127,33 @@ pub async fn run_with_profile(
 }
 
 async fn validate_realm_config(workspace_dir: &Path, profile: Option<&str>) -> Result<()> {
-    let realm_path = workspace_dir.join("realm.yaml");
+    let realm_path = crate::utils::yaml::find_realm_file(workspace_dir).await;
+    let realm_file_name = realm_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("realm.yaml");
     let val = crate::utils::yaml::load_yaml_with_overlay(&realm_path, profile)
         .await
         .with_context(|| {
             format!(
-                "realm.yaml not found or failed to read in {:?}",
-                workspace_dir
+                "{} not found or failed to read in {:?}",
+                realm_file_name, workspace_dir
             )
         })?;
-    let realm: RealmRepresentation =
-        serde_json::from_value(val).context("Failed to parse realm.yaml")?;
+    let realm: RealmRepresentation = serde_json::from_value(val)
+        .with_context(|| format!("Failed to parse {}", realm_file_name))?;
 
     if realm.realm.is_empty() {
-        anyhow::bail!("Realm name is empty in realm.yaml");
+        anyhow::bail!("Realm name is empty in {}", realm_file_name);
     }
     if let Some(dir_name) = workspace_dir.file_name().and_then(|n| n.to_str())
         && realm.realm != dir_name
     {
         anyhow::bail!(
-            "Realm name '{}' in realm.yaml does not match its directory '{}' \
+            "Realm name '{}' in {} does not match its directory '{}' \
              (applying it would rename realm '{}')",
             realm.realm,
+            realm_file_name,
             dir_name,
             dir_name
         );
@@ -183,10 +187,38 @@ fn validate_roles(roles: &[(PathBuf, RoleRepresentation)]) -> Result<()> {
     Ok(())
 }
 
+async fn validate_client_roles(workspace_dir: &Path, profile: Option<&str>) -> Result<()> {
+    let dirs = crate::apply::client_roles::client_role_dirs(workspace_dir).await?;
+    for dir in dirs {
+        let roles =
+            read_yaml_files::<RoleRepresentation>(&dir.roles_dir, "client-role", profile).await?;
+        let mut role_names = HashSet::new();
+        for (path, role) in &roles {
+            if role.name.is_empty() {
+                anyhow::bail!("Role name is empty in {:?}", path);
+            }
+            if !role_names.insert(role.name.clone()) {
+                anyhow::bail!(
+                    "Duplicate role name: {} (client '{}' in {:?})",
+                    role.name,
+                    dir.dir_name,
+                    path
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_clients(clients: &[(PathBuf, ClientRepresentation)]) -> Result<()> {
+    let mut seen_ids = HashSet::new();
     for (path, client) in clients {
-        if client.client_id.as_deref().unwrap_or_default().is_empty() {
+        let client_id = client.client_id.as_deref().unwrap_or_default();
+        if client_id.is_empty() {
             anyhow::bail!("Client ID is missing or empty in {:?}", path);
+        }
+        if !seen_ids.insert(client_id.to_string()) {
+            anyhow::bail!("Duplicate clientId '{}' found in {:?}", client_id, path);
         }
     }
     eprintln!(
@@ -199,13 +231,22 @@ fn validate_clients(clients: &[(PathBuf, ClientRepresentation)]) -> Result<()> {
 }
 
 fn validate_idps(idps: &[(PathBuf, IdentityProviderRepresentation)]) -> Result<()> {
+    let mut seen_aliases = HashSet::new();
     for (path, idp) in idps {
-        if idp.alias.as_deref().unwrap_or_default().is_empty() {
+        let alias = idp.alias.as_deref().unwrap_or_default();
+        if alias.is_empty() {
             anyhow::bail!("Identity Provider alias is missing or empty in {:?}", path);
         }
         if idp.provider_id.as_deref().unwrap_or_default().is_empty() {
             anyhow::bail!(
                 "Identity Provider providerId is missing or empty in {:?}",
+                path
+            );
+        }
+        if !seen_aliases.insert(alias.to_string()) {
+            anyhow::bail!(
+                "Duplicate Identity Provider alias '{}' found in {:?}",
+                alias,
                 path
             );
         }
@@ -220,9 +261,14 @@ fn validate_idps(idps: &[(PathBuf, IdentityProviderRepresentation)]) -> Result<(
 }
 
 fn validate_client_scopes(scopes: &[(PathBuf, ClientScopeRepresentation)]) -> Result<()> {
+    let mut seen_names = HashSet::new();
     for (path, scope) in scopes {
-        if scope.name.as_deref().unwrap_or_default().is_empty() {
+        let name = scope.name.as_deref().unwrap_or_default();
+        if name.is_empty() {
             anyhow::bail!("Client Scope name is missing or empty in {:?}", path);
+        }
+        if !seen_names.insert(name.to_string()) {
+            anyhow::bail!("Duplicate Client Scope name '{}' found in {:?}", name, path);
         }
     }
     eprintln!(
@@ -234,10 +280,43 @@ fn validate_client_scopes(scopes: &[(PathBuf, ClientScopeRepresentation)]) -> Re
     Ok(())
 }
 
+fn validate_group_tree(group: &GroupRepresentation, path: &Path) -> Result<()> {
+    let name = group.name.as_deref().unwrap_or_default();
+    if name.is_empty() {
+        anyhow::bail!("Group name is missing or empty in {:?}", path);
+    }
+    if let Some(sub_groups) = &group.sub_groups {
+        let mut seen_sub = HashSet::new();
+        for sub in sub_groups {
+            validate_group_tree(sub, path)?;
+            if let Some(sub_name) = sub.name.as_deref()
+                && !seen_sub.insert(sub_name.to_string())
+            {
+                anyhow::bail!(
+                    "Duplicate subGroup name '{}' under group '{}' in {:?}",
+                    sub_name,
+                    name,
+                    path
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_groups(groups: &[(PathBuf, GroupRepresentation)]) -> Result<()> {
+    let mut seen_groups = HashSet::new();
     for (path, group) in groups {
-        if group.name.as_deref().unwrap_or_default().is_empty() {
-            anyhow::bail!("Group name is missing or empty in {:?}", path);
+        validate_group_tree(group, path)?;
+        let identity = group
+            .path
+            .as_deref()
+            .map(|p| p.trim_start_matches('/').to_string())
+            .filter(|p| !p.is_empty())
+            .or_else(|| group.name.clone())
+            .unwrap_or_default();
+        if !seen_groups.insert(identity.clone()) {
+            anyhow::bail!("Duplicate Group '{}' found in {:?}", identity, path);
         }
     }
     eprintln!(
@@ -250,9 +329,14 @@ fn validate_groups(groups: &[(PathBuf, GroupRepresentation)]) -> Result<()> {
 }
 
 fn validate_users(users: &[(PathBuf, UserRepresentation)]) -> Result<()> {
+    let mut seen_usernames = HashSet::new();
     for (path, user) in users {
-        if user.username.as_deref().unwrap_or_default().is_empty() {
+        let username = user.username.as_deref().unwrap_or_default();
+        if username.is_empty() {
             anyhow::bail!("User username is missing or empty in {:?}", path);
+        }
+        if !seen_usernames.insert(username.to_string()) {
+            anyhow::bail!("Duplicate User username '{}' found in {:?}", username, path);
         }
     }
     eprintln!(
@@ -430,13 +514,22 @@ fn validate_authentication_flows(
 fn validate_required_actions(
     actions: &[(PathBuf, RequiredActionProviderRepresentation)],
 ) -> Result<()> {
+    let mut seen_aliases = HashSet::new();
     for (path, action) in actions {
-        if action.alias.as_deref().unwrap_or_default().is_empty() {
+        let alias = action.alias.as_deref().unwrap_or_default();
+        if alias.is_empty() {
             anyhow::bail!("Required Action alias is missing or empty in {:?}", path);
         }
         if action.provider_id.as_deref().unwrap_or_default().is_empty() {
             anyhow::bail!(
                 "Required Action providerId is missing or empty in {:?}",
+                path
+            );
+        }
+        if !seen_aliases.insert(alias.to_string()) {
+            anyhow::bail!(
+                "Duplicate Required Action alias '{}' found in {:?}",
+                alias,
                 path
             );
         }
@@ -453,10 +546,19 @@ fn validate_required_actions(
 fn validate_authenticator_configs(
     configs: &[(PathBuf, AuthenticatorConfigRepresentation)],
 ) -> Result<()> {
+    let mut seen_aliases = HashSet::new();
     for (path, config) in configs {
-        if config.alias.as_deref().unwrap_or_default().is_empty() {
+        let alias = config.alias.as_deref().unwrap_or_default();
+        if alias.is_empty() {
             anyhow::bail!(
                 "Authenticator Config alias is missing or empty in {:?}",
+                path
+            );
+        }
+        if !seen_aliases.insert(alias.to_string()) {
+            anyhow::bail!(
+                "Duplicate Authenticator Config alias '{}' found in {:?}",
+                alias,
                 path
             );
         }
@@ -512,6 +614,7 @@ async fn validate_realm(workspace_dir: PathBuf, profile: Option<&str>) -> Result
     // Validate resources
     validate_roles(&roles)?;
     validate_clients(&clients)?;
+    validate_client_roles(&workspace_dir, profile).await?;
     validate_idps(&idps)?;
     validate_client_scopes(&scopes)?;
     validate_groups(&groups)?;

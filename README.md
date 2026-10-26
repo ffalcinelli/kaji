@@ -167,7 +167,7 @@ When `apply` notices that Keycloak enriched a resource, it offers to update the 
 
 ## ⚙️ Configuration
 
-`kaji` uses environment variables for connection and authentication. You can export these in your shell or use a `.secrets` file.
+`kaji` uses environment variables for connection and authentication. You can export these in your shell or use a `.env` file (workspace secret placeholders are resolved from `workspace/.secrets` or the active profile's `secrets_file`).
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -267,9 +267,9 @@ kaji sync --workspace my-workspace --yes
 
 ### `validate`
 Ensures your local YAML files are syntactically correct and follow the Keycloak model. Supports environment profiles (skips partial overlays like `*.prod.yaml` when validating base configs, or deep-merges them when `--profile` is specified). Checks include:
-- Required fields are present and non-empty (realm name, client ID, role name, flow alias, etc.)
+- Required fields are present and non-empty (realm name, client ID, realm and client role names, group and nested sub-group names, flow alias, etc.)
+- **No duplicate resource identities** across YAML files in the same directory (roles, client roles, clients, identity providers, client scopes, groups and sibling sub-groups, users, authentication flows, required actions, and authenticator configs)
 - **Authentication flow aliases do not contain characters forbidden by Keycloak** (`(`, `)`, `[`, `]`, `{`, `}`, `/`, `\`)
-- **No duplicate authentication flow aliases** within the same workspace
 - **Cycle detection (DFS)** and reference validation for authentication flows and sub-flows
 ```bash
 kaji validate

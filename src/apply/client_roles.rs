@@ -192,6 +192,10 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
 
             if let Ok(mut enriched) = client.get_resource::<RoleRepresentation>(&role_id).await {
                 rep.prepare_enriched(&mut enriched);
+                if before_sub.get("clientRole").is_none() {
+                    enriched.client_role = false;
+                }
+                let client_realm_prefix = format!("{}_client_{}", realm_name, client_id);
                 crate::apply::generic::check_and_update_enrichment(
                     &path,
                     profile.as_deref(),
@@ -200,7 +204,7 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
                         resolved: &resolved,
                     },
                     &enriched,
-                    realm_name,
+                    &client_realm_prefix,
                     &secrets_path,
                     &*ui,
                     yes,

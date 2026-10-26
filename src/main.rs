@@ -6,7 +6,6 @@ use kaji::utils::ui::{ERROR, INFO, WARN};
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     dotenvy::dotenv().ok();
-    dotenvy::from_filename(".secrets").ok();
     env_logger::init();
 
     let cli = Cli::parse_with_sources();

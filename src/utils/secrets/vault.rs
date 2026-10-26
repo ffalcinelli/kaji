@@ -23,13 +23,14 @@ impl VaultResolver {
         let url = reqwest::Url::parse(address)?;
         let host = url.host_str().unwrap_or("");
 
-        let is_localhost = host == "localhost" || host == "127.0.0.1";
+        let is_localhost = matches!(host, "localhost" | "127.0.0.1" | "[::1]");
         if url.scheme() == "http" && !is_localhost {
             anyhow::bail!("Insecure HTTP connection to Vault is only allowed for localhost");
         }
 
         let client = reqwest::Client::builder()
             .https_only(!is_localhost)
+            .timeout(std::time::Duration::from_secs(10))
             .build()?;
 
         Ok(Self {
@@ -530,5 +531,14 @@ mod tests {
         assert_eq!(res, Some("tok123".to_string()));
 
         mock.assert_async().await;
+    }
+
+    #[test]
+    fn test_vault_resolver_ipv6_localhost_and_insecure_http() {
+        assert!(VaultResolver::new("http://[::1]:8200", "tok").is_ok());
+        assert!(VaultResolver::new("http://127.0.0.1:8200", "tok").is_ok());
+        assert!(VaultResolver::new("http://localhost:8200", "tok").is_ok());
+        assert!(VaultResolver::new("http://vault.example.com:8200", "tok").is_err());
+        assert!(VaultResolver::new("https://vault.example.com:8200", "tok").is_ok());
     }
 }

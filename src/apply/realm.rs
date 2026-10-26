@@ -64,7 +64,7 @@ pub async fn apply_realm(ctx: crate::apply::ApplyContext<'_>) -> Result<Option<P
         ..
     } = ctx;
 
-    let realm_path = workspace_dir.join("realm.yaml");
+    let realm_path = crate::utils::yaml::find_realm_file(&workspace_dir).await;
     if let Some(plan) = &*planned_files
         && !plan.contains(&realm_path)
     {
@@ -217,8 +217,9 @@ pub async fn finish_realm(
     }
 
     if let Ok(enriched) = client.get_realm().await {
+        let realm_path = crate::utils::yaml::find_realm_file(&workspace_dir).await;
         crate::apply::generic::check_and_update_enrichment(
-            &workspace_dir.join("realm.yaml"),
+            &realm_path,
             profile.as_deref(),
             crate::apply::generic::LocalSource {
                 before_sub: &pending.before_sub,

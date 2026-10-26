@@ -10,7 +10,7 @@ use super::{PlanContext, PlanSummary};
 pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSummary)> {
     let mut changed_files = Vec::new();
     let mut summary = PlanSummary::default();
-    let realm_path = ctx.workspace_dir.join("realm.yaml");
+    let realm_path = crate::utils::yaml::find_realm_file(ctx.workspace_dir).await;
     let mut val = match load_yaml_with_overlay(&realm_path, ctx.profile.as_deref()).await {
         Ok(v) => v,
         Err(e) => {
@@ -63,12 +63,13 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
     )? {
         let mut include = true;
         if ctx.options.interactive {
-            include = super::prompt_interactive_change(
+            include = super::prompt_interactive_resource_change(
                 ctx.ui,
                 "Realm",
                 remote_realm.as_ref(),
                 &local_realm,
                 "realm",
+                crate::models::RealmRepresentation::PARTIAL_UPDATES,
             )?;
         }
         if include {

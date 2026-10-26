@@ -21,6 +21,20 @@ pub fn is_yaml_file(path: &Path) -> bool {
         .is_some_and(|ext| ext == "yaml" || ext == "yml")
 }
 
+/// Returns the path to `realm.yaml` in `realm_dir`, falling back to `realm.yml` when `realm.yaml`
+/// does not exist and `realm.yml` does.
+pub async fn find_realm_file(realm_dir: &Path) -> PathBuf {
+    let yaml = realm_dir.join("realm.yaml");
+    if async_fs::try_exists(&yaml).await.unwrap_or(false) {
+        return yaml;
+    }
+    let yml = realm_dir.join("realm.yml");
+    if async_fs::try_exists(&yml).await.unwrap_or(false) {
+        return yml;
+    }
+    yaml
+}
+
 /// Returns the profile overlay file (`name.{profile}.yaml|yml`) for a base file, if it exists.
 pub async fn find_overlay_path(base_path: &Path, profile: Option<&str>) -> Option<PathBuf> {
     let profile_name = profile?;
