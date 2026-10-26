@@ -82,21 +82,20 @@ where
 
     let mut declared = std::collections::HashSet::new();
     for res in crate::utils::join_all_tasks(set, None).await? {
-        let (local, path, remote) = res;
+        let (mut local, path, remote) = res;
         if let Some(identity) = local.get_identity() {
             declared.insert(identity);
         }
 
         let is_update = remote.is_some();
         let mut remote_clone = None;
+        local.clear_metadata();
         let changed = if let Some(r) = remote {
             // Server identifiers are environment specific and never applied: ignore them.
             let mut rc = r.clone();
             rc.clear_metadata();
-            let mut lc = local.clone();
-            lc.clear_metadata();
             let diff_name = format!("{} {}", T::LABEL, local.get_name());
-            let ch = super::print_resource_diff(&diff_name, Some(&rc), &lc, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX, T::PARTIAL_UPDATES)?;
+            let ch = super::print_resource_diff(&diff_name, Some(&rc), &local, ctx.options.changes_only, ctx.options.verbose, T::SECRET_PREFIX, T::PARTIAL_UPDATES)?;
             remote_clone = Some(rc);
             ch
         } else {
@@ -107,7 +106,7 @@ where
         if changed {
             let mut include = true;
             if ctx.options.interactive {
-                include = super::prompt_interactive_change(ctx.ui, &format!("{} {}", T::LABEL, local.get_name()), remote_clone.as_ref(), &local, T::SECRET_PREFIX)?;
+                include = super::prompt_interactive_resource_change(ctx.ui, &format!("{} {}", T::LABEL, local.get_name()), remote_clone.as_ref(), &local, T::SECRET_PREFIX, T::PARTIAL_UPDATES)?;
             }
             if include {
                 changed_files.push(path);

@@ -113,18 +113,20 @@ async fn handle_rotate_keys(workspace_dir: &std::path::Path, ui: &dyn Ui) {
 /// Dynamic UX prompt for selecting/creating target realm
 pub async fn prompt_realm(workspace_dir: &std::path::Path, ui: &dyn Ui) -> Result<String> {
     let realms = get_realms(workspace_dir).await?;
-    if realms.is_empty() {
-        Ok(ui.input("Target Realm (e.g. master)", None, false)?)
+    let realm = if realms.is_empty() {
+        ui.input("Target Realm (e.g. master)", None, false)?
     } else {
         let mut selections = realms.iter().map(|s| s.as_str()).collect::<Vec<_>>();
         selections.push("<Create New Realm...>");
         let idx = ui.select("Target Realm", &selections, 0)?;
         if idx == selections.len() - 1 {
-            Ok(ui.input("Enter name for the new Realm", None, false)?)
+            ui.input("Enter name for the new Realm", None, false)?
         } else {
-            Ok(realms[idx].clone())
+            realms[idx].clone()
         }
-    }
+    };
+    crate::utils::validate_realm_name(&realm)?;
+    Ok(realm)
 }
 
 /// Helper to scan workspace for directories (representing realms)

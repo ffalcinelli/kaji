@@ -931,3 +931,188 @@ async fn test_validate_missing_components_dir() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_ok());
 }
+
+#[tokio::test]
+async fn test_validate_client_roles_empty_and_duplicate() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    let client_roles_dir = realm_dir.join("clients").join("my-client").join("roles");
+    std::fs::create_dir_all(&client_roles_dir).unwrap();
+
+    fs::write(realm_dir.join("realm.yaml"), "realm: test-realm\n").unwrap();
+
+    // 1. Empty role name inside clients/<clientId>/roles/
+    fs::write(client_roles_dir.join("bad.yaml"), "name: \"\"\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("Role name is empty"),
+        "Expected empty role name error, got: {err}"
+    );
+
+    // 2. Duplicate role names inside clients/<clientId>/roles/
+    fs::write(client_roles_dir.join("bad.yaml"), "name: reader\n").unwrap();
+    fs::write(client_roles_dir.join("dup.yaml"), "name: reader\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("Duplicate role name: reader"),
+        "Expected duplicate client role error, got: {err}"
+    );
+
+    // 3. Valid distinct client roles
+    fs::write(client_roles_dir.join("dup.yaml"), "name: writer\n").unwrap();
+    assert!(
+        validate::run(workspace_dir, &["test-realm".to_string()])
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn test_validate_duplicate_resource_identities_and_subgroups() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    std::fs::create_dir_all(&realm_dir).unwrap();
+    // Also verify realm.yml fallback
+    fs::write(realm_dir.join("realm.yml"), "realm: test-realm\n").unwrap();
+
+    // Duplicate clientId
+    let clients_dir = realm_dir.join("clients");
+    fs::create_dir_all(&clients_dir).unwrap();
+    fs::write(clients_dir.join("c1.yaml"), "clientId: app\n").unwrap();
+    fs::write(clients_dir.join("c2.yaml"), "clientId: app\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Duplicate clientId 'app'"));
+    fs::remove_file(clients_dir.join("c2.yaml")).unwrap();
+
+    // Duplicate IDP alias
+    let idps_dir = realm_dir.join("identity-providers");
+    fs::create_dir_all(&idps_dir).unwrap();
+    fs::write(
+        idps_dir.join("i1.yaml"),
+        "alias: google\nproviderId: google\n",
+    )
+    .unwrap();
+    fs::write(
+        idps_dir.join("i2.yaml"),
+        "alias: google\nproviderId: oidc\n",
+    )
+    .unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Duplicate Identity Provider alias 'google'")
+    );
+    fs::remove_file(idps_dir.join("i2.yaml")).unwrap();
+
+    // Duplicate Client Scope name
+    let scopes_dir = realm_dir.join("client-scopes");
+    fs::create_dir_all(&scopes_dir).unwrap();
+    fs::write(scopes_dir.join("s1.yaml"), "name: custom-scope\n").unwrap();
+    fs::write(scopes_dir.join("s2.yaml"), "name: custom-scope\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Duplicate Client Scope name 'custom-scope'")
+    );
+    fs::remove_file(scopes_dir.join("s2.yaml")).unwrap();
+
+    // Duplicate Group and invalid/duplicate subGroups
+    let groups_dir = realm_dir.join("groups");
+    fs::create_dir_all(&groups_dir).unwrap();
+    fs::write(
+        groups_dir.join("g1.yaml"),
+        "name: eng\nsubGroups:\n  - name: \"\"\n",
+    )
+    .unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Group name is missing or empty"));
+
+    fs::write(
+        groups_dir.join("g1.yaml"),
+        "name: eng\nsubGroups:\n  - name: team\n  - name: team\n",
+    )
+    .unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Duplicate subGroup name 'team' under group 'eng'")
+    );
+
+    fs::write(groups_dir.join("g1.yaml"), "name: eng\n").unwrap();
+    fs::write(groups_dir.join("g2.yaml"), "name: eng\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Duplicate Group 'eng'"));
+    fs::remove_file(groups_dir.join("g2.yaml")).unwrap();
+
+    // Duplicate User username
+    let users_dir = realm_dir.join("users");
+    fs::create_dir_all(&users_dir).unwrap();
+    fs::write(users_dir.join("u1.yaml"), "username: alice\n").unwrap();
+    fs::write(users_dir.join("u2.yaml"), "username: alice\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Duplicate User username 'alice'"));
+    fs::remove_file(users_dir.join("u2.yaml")).unwrap();
+
+    // Duplicate Required Action alias
+    let actions_dir = realm_dir.join("required-actions");
+    fs::create_dir_all(&actions_dir).unwrap();
+    fs::write(
+        actions_dir.join("a1.yaml"),
+        "alias: terms\nproviderId: terms\n",
+    )
+    .unwrap();
+    fs::write(
+        actions_dir.join("a2.yaml"),
+        "alias: terms\nproviderId: terms\n",
+    )
+    .unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Duplicate Required Action alias 'terms'")
+    );
+    fs::remove_file(actions_dir.join("a2.yaml")).unwrap();
+
+    // Duplicate Authenticator Config alias
+    let configs_dir = realm_dir.join("authenticator-configs");
+    fs::create_dir_all(&configs_dir).unwrap();
+    fs::write(configs_dir.join("ac1.yaml"), "alias: otp-cfg\n").unwrap();
+    fs::write(configs_dir.join("ac2.yaml"), "alias: otp-cfg\n").unwrap();
+    let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Duplicate Authenticator Config alias 'otp-cfg'")
+    );
+    fs::remove_file(configs_dir.join("ac2.yaml")).unwrap();
+
+    // Once duplicates are removed, validation succeeds
+    assert!(
+        validate::run(workspace_dir, &["test-realm".to_string()])
+            .await
+            .is_ok()
+    );
+}

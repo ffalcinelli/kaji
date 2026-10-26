@@ -412,6 +412,17 @@ pub fn prompt_interactive_change<T: Serialize>(
     new: &T,
     prefix: &str,
 ) -> Result<bool> {
+    prompt_interactive_resource_change(ui, name, old, new, prefix, false)
+}
+
+pub fn prompt_interactive_resource_change<T: Serialize>(
+    ui: &dyn Ui,
+    name: &str,
+    old: Option<&T>,
+    new: &T,
+    prefix: &str,
+    partial_updates: bool,
+) -> Result<bool> {
     let selections = &["Yes", "No", "Show Full Diff"];
     loop {
         let selection = ui.select("Include this change in the plan?", selections, 0)?;
@@ -419,7 +430,7 @@ pub fn prompt_interactive_change<T: Serialize>(
             0 => return Ok(true),
             1 => return Ok(false),
             2 => {
-                print_diff(name, old, new, false, true, prefix)?;
+                print_resource_diff(name, old, new, false, true, prefix, partial_updates)?;
             }
             _ => {}
         }
@@ -768,5 +779,36 @@ mod tests {
         // Verbose diff printing
         let result = print_diff("Dummy", Some(&old), &new, false, true, "").unwrap();
         assert!(result);
+    }
+
+    #[test]
+    fn test_prompt_interactive_resource_change_show_full_diff_partial_updates() {
+        let ui = crate::utils::ui::MockUi {
+            inputs: std::sync::Mutex::new(Vec::new()),
+            confirms: std::sync::Mutex::new(Vec::new()),
+            // Select "Show Full Diff" (2), then "Yes" (0)
+            selects: std::sync::Mutex::new(vec![2, 0]),
+            passwords: std::sync::Mutex::new(Vec::new()),
+        };
+        let remote = serde_json::json!({
+            "clientId": "app",
+            "enabled": true,
+            "alwaysDisplayInConsole": false
+        });
+        let local = serde_json::json!({
+            "clientId": "app",
+            "enabled": false
+        });
+        let include = prompt_interactive_resource_change(
+            &ui,
+            "client app",
+            Some(&remote),
+            &local,
+            "client",
+            true,
+        )
+        .unwrap();
+        assert!(include);
+        assert!(ui.selects.lock().unwrap().is_empty());
     }
 }

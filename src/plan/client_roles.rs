@@ -55,6 +55,7 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
             declared.insert(local.name.clone());
             let name = format!("role {} of client {}", local.name, client_label);
 
+            let mut remote_clone = None;
             let changed = match existing.get(&local.name) {
                 Some(remote) => {
                     let mut rc = remote.clone();
@@ -71,12 +72,14 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
                         ctx.options.verbose,
                         RoleRepresentation::SECRET_PREFIX,
                     )?;
+                    remote_clone = Some(rc);
                     if changed {
                         summary.updated += 1;
                     }
                     changed
                 }
                 None => {
+                    local.clear_metadata();
                     eprintln!("\n{} Will create {}", SPARKLE, name);
                     print_diff(
                         &name,
@@ -95,7 +98,7 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
                     || super::prompt_interactive_change(
                         ctx.ui,
                         &name,
-                        existing.get(&local.name),
+                        remote_clone.as_ref(),
                         &local,
                         RoleRepresentation::SECRET_PREFIX,
                     )?;
