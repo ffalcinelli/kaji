@@ -30,11 +30,16 @@ pub async fn list_yaml_files(dir: &Path, profile: Option<&str>) -> Result<Option
     let Some(entries) = crate::utils::read_dir_entries(dir).await? else {
         return Ok(None);
     };
-    let mut files: Vec<PathBuf> = entries
-        .into_iter()
-        .map(|entry| entry.path())
-        .filter(|path| is_yaml_file(path) && !is_overlay_file(path, profile))
-        .collect();
+    let mut files = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        if is_yaml_file(&path)
+            && !is_overlay_file(&path, profile)
+            && !crate::utils::is_dir_entry(&entry).await?
+        {
+            files.push(path);
+        }
+    }
     files.sort();
     Ok(Some(files))
 }

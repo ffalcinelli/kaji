@@ -107,13 +107,22 @@ impl PlanFile {
             Err(e) => return Err(e).with_context(|| format!("Failed to read {:?}", path)),
         };
         let plan: Self = serde_json::from_str(&content)
-            .map_err(|_| anyhow::anyhow!("Hint: Run `kaji plan` again to regenerate it."))
-            .with_context(|| format!("Unsupported or corrupt plan file {:?}", path))?;
+            .map_err(|e| {
+                anyhow::Error::new(e).context("Hint: Run `kaji plan` again to regenerate it.")
+            })
+            .with_context(|| format!("Unsupported or corrupt plan file {}", path.display()))?;
         if plan.version != PLAN_VERSION {
             return Err(anyhow::anyhow!(
                 "Hint: Run `kaji plan` again to regenerate it."
             ))
-            .with_context(|| format!("Unsupported plan version {}", plan.version));
+            .with_context(|| {
+                format!(
+                    "Plan file {} has version {}, this kaji reads version {}",
+                    path.display(),
+                    plan.version,
+                    PLAN_VERSION
+                )
+            });
         }
         Ok(Some(plan))
     }
@@ -128,11 +137,17 @@ impl PlanFile {
         profile: Option<&str>,
     ) -> Result<HashSet<PathBuf>> {
         if self.profile.as_deref() != profile {
-            return Err(anyhow::anyhow!(
-                "Hint: Run `kaji plan` with the same profile, or apply with `--profile {}`.",
-                self.profile.as_deref().unwrap_or("<none>")
-            ))
-            .with_context(|| {
+            let hint = match self.profile.as_deref() {
+                Some(planned) => format!(
+                    "Hint: Run `kaji plan` with the same profile, or apply with `--profile {}`.",
+                    planned
+                ),
+                None => {
+                    "Hint: Run `kaji plan` with the same profile, or apply without `--profile`."
+                        .to_string()
+                }
+            };
+            return Err(anyhow::anyhow!(hint)).with_context(|| {
                 format!(
                     "Plan was created for profile '{}' but apply runs with profile '{}'",
                     self.profile.as_deref().unwrap_or("<none>"),
@@ -145,9 +160,14 @@ impl PlanFile {
         let mut stale = Vec::new();
         for file in &self.files {
             let absolute = workspace_dir.join(&file.path);
+            let display = file.path.display();
             match content_hash(&absolute, profile).await {
                 Ok(hash) if hash == file.sha256 => {}
-                _ => stale.push(file.path.display().to_string()),
+                Ok(_) => stale.push(format!("{} (changed)", display)),
+                Err(_) if !async_fs::try_exists(&absolute).await.unwrap_or(true) => {
+                    stale.push(format!("{} (deleted)", display))
+                }
+                Err(e) => stale.push(format!("{} (unreadable: {:#})", display, e)),
             }
             planned.insert(absolute);
         }
@@ -227,7 +247,7 @@ mod tests {
             r#"{"version": 99, "profile": null, "files": []}"#,
         )?;
         let err = PlanFile::read(dir.path()).await.unwrap_err();
-        assert!(format!("{:#}", err).contains("Unsupported plan version 99"));
+        assert!(format!("{:#}", err).contains("has version 99"));
         // A planned file outside the workspace cannot be recorded
         let outside = tempdir()?;
         let file = outside.path().join("x.yaml");

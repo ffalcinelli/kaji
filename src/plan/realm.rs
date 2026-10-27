@@ -1,6 +1,6 @@
 use crate::models::KeycloakResource;
 use crate::utils::secrets::substitute_secrets;
-use crate::utils::yaml::load_yaml_with_overlay;
+use crate::utils::yaml::{from_value_at, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,9 +24,10 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
         }
     };
 
-    substitute_secrets(&mut val, Arc::clone(&ctx.resolver)).await?;
-    let local_realm: crate::models::RealmRepresentation = serde_json::from_value(val)
-        .with_context(|| format!("Failed to deserialize YAML file: {:?}", realm_path))?;
+    substitute_secrets(&mut val, Arc::clone(&ctx.resolver))
+        .await
+        .with_context(|| realm_path.display().to_string())?;
+    let local_realm: crate::models::RealmRepresentation = from_value_at(val, &realm_path)?;
 
     // We handle the case where remote realm fetch might fail (e.g. if we are creating it)
     // by treating it as None (creation). However, usually plan is run against existing realm.
@@ -36,9 +37,7 @@ pub async fn plan_realm(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, PlanSumm
             if crate::client::is_not_found(&e) {
                 None
             } else {
-                return Err(e).with_context(|| {
-                    format!("Failed to get realm '{}' from Keycloak", ctx.realm_name)
-                });
+                return Err(e).context("Failed to get the realm settings from Keycloak");
             }
         }
     };

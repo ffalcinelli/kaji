@@ -1,12 +1,11 @@
 use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::{SPARKLE, WARN};
-use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
+use crate::utils::yaml::{deserialize_value, list_yaml_files, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs as async_fs;
 
 use super::{PlanContext, PlanSummary, print_diff};
 
@@ -23,22 +22,19 @@ where
         + Clone
         + 'static,
 {
-    let dir_name = T::DIR_NAME;
-    let resources_dir = ctx.workspace_dir.join(dir_name);
+    let resources_dir = ctx.workspace_dir.join(T::DIR_NAME);
     let mut changed_files = Vec::new();
     let mut summary = PlanSummary::default();
-    let mut entries = match async_fs::read_dir(&resources_dir).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((changed_files, summary)),
-        Err(e) => return Err(e.into()),
+    let Some(files) = list_yaml_files(&resources_dir, ctx.profile.as_deref()).await? else {
+        return Ok((changed_files, summary));
     };
 
-    let existing_resources = match ctx.client.get_resources::<T>().await {
-        Ok(resources) => resources,
-        // The realm does not exist yet: everything declared locally will be created.
-        Err(e) if crate::client::is_not_found(&e) => Vec::new(),
-        Err(e) => return Err(e).with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, ctx.realm_name)),
-    };
+    let existing_resources = super::remote_or_empty_for_new_realm(
+        ctx.client,
+        ctx.client.get_resources::<T>().await,
+        || format!("Failed to get {} from Keycloak", T::LABEL),
+    )
+    .await?;
 
     let existing_map: HashMap<String, T> = existing_resources
         .into_iter()
@@ -48,36 +44,31 @@ where
 
     let mut set = tokio::task::JoinSet::new();
 
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        let is_file = entry.file_type().await.is_ok_and(|ft| ft.is_file());
-        if is_file && is_yaml_file(&path) {
-            // Skip overlay files themselves
-            if is_overlay_file(&path, ctx.profile.as_deref()) {
-                continue;
-            }
+    for path in files {
+        let resolver = Arc::clone(&ctx.resolver);
+        let existing_map = Arc::clone(&existing_map);
+        let profile = ctx.profile.clone();
+        let client = ctx.client.clone();
 
-            let resolver = Arc::clone(&ctx.resolver);
-            let existing_map = Arc::clone(&existing_map);
-            let realm_name = ctx.realm_name.to_string();
-            let profile = ctx.profile.clone();
-            let client = ctx.client.clone();
-
-            set.spawn(async move {
+        set.spawn(async move {
+            let file_context = path.display().to_string();
+            async move {
                 let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
                 substitute_secrets(&mut val, resolver).await?;
-                let local: T = serde_json::from_value(val).with_context(|| format!("Failed to deserialize YAML file {:?} in realm '{}'", path, realm_name))?;
+                let local: T = deserialize_value(val)?;
 
-                let identity = local.get_identity().with_context(|| format!("Failed to get identity for {} in {:?} in realm '{}'", T::LABEL, path, realm_name))?;
+                let identity = local.get_identity().with_context(|| format!("The {} has no identity (name, alias, ...)", T::LABEL))?;
                 let mut remote = existing_map.get(&identity).cloned();
                 // Relationships (e.g. a user's groups) are only loaded when the file declares them.
                 if let Some(remote) = remote.as_mut() {
-                    remote.load_relations(&client, Some(&local)).await.with_context(|| format!("Failed to load relationships of {} '{}' in realm '{}'", T::LABEL, local.get_name(), realm_name))?;
+                    remote.load_relations(&client, Some(&local)).await.with_context(|| format!("Failed to load the relationships of {} '{}' from Keycloak", T::LABEL, local.get_name()))?;
                 }
 
                 Ok::<(T, PathBuf, Option<T>), anyhow::Error>((local, path, remote))
-            });
-        }
+            }
+            .await
+            .with_context(|| file_context)
+        });
     }
 
     let mut declared = std::collections::HashSet::new();

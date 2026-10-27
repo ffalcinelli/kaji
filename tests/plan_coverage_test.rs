@@ -603,7 +603,8 @@ async fn test_plan_error_paths() {
     })
     .await;
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("Failed to get realm"));
+    let msg = format!("{:#}", res.unwrap_err());
+    assert!(msg.contains("Failed to get the realm settings"), "{msg}");
 
     // 2. Resource fetch error
     // Remove realm.yaml to avoid realm fetch error, but add roles directory
@@ -625,7 +626,8 @@ async fn test_plan_error_paths() {
     })
     .await;
     assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("Failed to get roles"));
+    let msg = format!("{:#}", res.unwrap_err());
+    assert!(msg.contains("Failed to get roles"), "{msg}");
 
     // 3. Components fetch error
     fs::remove_dir_all(&roles_dir).unwrap();
@@ -646,11 +648,8 @@ async fn test_plan_error_paths() {
     })
     .await;
     assert!(res.is_err());
-    assert!(
-        res.unwrap_err()
-            .to_string()
-            .contains("Failed to get components")
-    );
+    let msg = format!("{:#}", res.unwrap_err());
+    assert!(msg.contains("Failed to get components"), "{msg}");
 }
 
 #[tokio::test]
@@ -879,11 +878,8 @@ description: ${KEYCLOAK_ROLE_MISSING_SECRET}
     .await;
 
     assert!(res.is_err());
-    assert!(
-        res.unwrap_err()
-            .to_string()
-            .contains("Missing required secret or environment variable")
-    );
+    let msg = format!("{:#}", res.unwrap_err());
+    assert!(msg.contains("Missing secret"), "{msg}");
 }
 
 #[tokio::test]

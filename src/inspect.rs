@@ -43,15 +43,18 @@ pub async fn run_with_ui_and_secrets(
     ui: Arc<dyn Ui>,
     secrets_file: Option<&str>,
 ) -> Result<()> {
-    fs::create_dir_all(&workspace_dir)
-        .await
-        .context("Failed to create output directory")?;
+    fs::create_dir_all(&workspace_dir).await.with_context(|| {
+        format!(
+            "Failed to create the workspace directory {}",
+            workspace_dir.display()
+        )
+    })?;
 
     let realms: Vec<String> = if realms_to_inspect.is_empty() {
         let all_realms = client
             .get_realms()
             .await
-            .context("Failed to fetch realms")?;
+            .context("Failed to list the realms of the server")?;
         all_realms
             .into_iter()
             .map(|r| r.realm)
@@ -109,10 +112,12 @@ pub async fn run_with_ui_and_secrets(
                 ui,
             )
             .await
+            .with_context(|| format!("Failed to inspect realm '{}'", realm_name_owned))
         });
     }
 
-    crate::utils::join_all_tasks(set, "realms").await?;
+    // Exported files reference the secrets found so far: save them even if a realm failed.
+    let inspected = crate::utils::join_all_tasks(set, "realms").await;
 
     let secrets_lock = all_secrets.lock().await;
     if !secrets_lock.is_empty() {
@@ -121,7 +126,11 @@ pub async fn run_with_ui_and_secrets(
         let existing_env = match fs::read_to_string(&env_path).await {
             Ok(c) => c,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("Failed to read secrets file {}", env_path.display())
+                });
+            }
         };
         let new_content =
             crate::utils::secrets::merge_secrets_content(&existing_env, &secrets_lock);
@@ -140,7 +149,7 @@ pub async fn run_with_ui_and_secrets(
         );
     }
 
-    Ok(())
+    inspected.map(|_| ())
 }
 
 /// Exports/inspects remote Keycloak server configuration into local workspace files.
@@ -221,11 +230,11 @@ where
     let resources = client
         .get_resources::<T>()
         .await
-        .with_context(|| format!("Failed to fetch {} for realm '{}'", T::LABEL, realm_name))?;
+        .with_context(|| format!("Failed to fetch {}", T::LABEL))?;
 
     fs::create_dir_all(&*target_dir)
         .await
-        .with_context(|| format!("Failed to create {} directory", T::LABEL))?;
+        .with_context(|| format!("Failed to create directory {}", target_dir.display()))?;
 
     let mut set = tokio::task::JoinSet::new();
     for res in resources {
@@ -292,7 +301,7 @@ async fn inspect_realm(
 ) -> Result<()> {
     fs::create_dir_all(&workspace_dir)
         .await
-        .context("Failed to create output directory")?;
+        .with_context(|| format!("Failed to create directory {}", workspace_dir.display()))?;
 
     let mut set = tokio::task::JoinSet::new();
     let workspace_dir = Arc::new(workspace_dir);
@@ -306,12 +315,15 @@ async fn inspect_realm(
         let prompt_mutex = Arc::clone(&prompt_mutex);
         let ui_realm = Arc::clone(&ui);
         set.spawn(async move {
-            let mut realm = client.get_realm().await.context("Failed to fetch realm")?;
+            let mut realm = client
+                .get_realm()
+                .await
+                .context("Failed to fetch the realm settings")?;
             realm.clear_metadata();
             let mut local_secrets = BTreeMap::new();
             let realm_prefix = format!("realm_{}", realm_name);
             let realm_yaml = to_sorted_yaml_with_secrets(&realm, &realm_prefix, &mut local_secrets)
-                .context("Failed to serialize realm")?;
+                .context("Failed to serialize the realm settings")?;
             all_secrets.lock().await.extend(local_secrets);
 
             let realm_path = workspace_dir.join("realm.yaml");
@@ -395,7 +407,11 @@ async fn inspect_client_roles(
 ) -> Result<()> {
     use crate::client::KeycloakResourceMapping;
     let mut exported = 0usize;
-    for remote_client in client.get_clients().await? {
+    let clients = client
+        .get_clients()
+        .await
+        .context("Failed to list clients (to export their roles)")?;
+    for remote_client in clients {
         let (Some(internal_id), Some(client_id)) = (remote_client.id, remote_client.client_id)
         else {
             continue;
@@ -404,7 +420,11 @@ async fn inspect_client_roles(
             Ok(roles) => roles,
             // The client was deleted while inspecting (e.g. a realm removed concurrently).
             Err(e) if crate::client::is_not_found(&e) => continue,
-            Err(e) => return Err(e),
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("Failed to fetch the roles of client '{}'", client_id)
+                });
+            }
         };
         if roles.is_empty() {
             continue;
@@ -415,13 +435,17 @@ async fn inspect_client_roles(
             .join("roles");
         fs::create_dir_all(&dir)
             .await
-            .with_context(|| format!("Failed to create {:?}", dir))?;
+            .with_context(|| format!("Failed to create directory {}", dir.display()))?;
         for mut role in roles {
-            role.load_relations(client, None).await?;
+            let label = format!("role '{}' of client '{}'", role.name, client_id);
+            role.load_relations(client, None)
+                .await
+                .with_context(|| format!("Failed to load the relationships of {}", label))?;
             role.clear_metadata();
             let mut local_secrets = BTreeMap::new();
             let prefix = format!("realm_{}_client_{}_role", realm_name, client_id);
-            let yaml = to_sorted_yaml_with_secrets(&role, &prefix, &mut local_secrets)?;
+            let yaml = to_sorted_yaml_with_secrets(&role, &prefix, &mut local_secrets)
+                .with_context(|| format!("Failed to serialize {}", label))?;
             all_secrets.lock().await.extend(local_secrets);
             let path = dir.join(format!("{}.yaml", sanitize(&role.name)));
             write_if_changed_with_mutex(

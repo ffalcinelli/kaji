@@ -184,6 +184,15 @@ impl KeycloakClient {
         self.get_resource(&self.target_realm).await
     }
 
+    /// Returns whether the target realm exists on the server.
+    pub async fn realm_exists(&self) -> Result<bool> {
+        match self.get_realm().await {
+            Ok(_) => Ok(true),
+            Err(e) if is_not_found(&e) => Ok(false),
+            Err(e) => Err(e).context("Failed to check whether the realm exists"),
+        }
+    }
+
     /// Creates a new realm (`POST /admin/realms`).
     pub async fn create_realm(&self, realm_rep: &RealmRepresentation) -> Result<()> {
         self.create_resource(realm_rep).await?;

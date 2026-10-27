@@ -5,7 +5,7 @@ use crate::client::KeycloakResourceMapping;
 use crate::models::{KeycloakResource, ResourceMeta, RoleRepresentation};
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::{SPARKLE, WARN};
-use crate::utils::yaml::load_yaml_with_overlay;
+use crate::utils::yaml::{deserialize_value, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -26,7 +26,9 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
     }
     let clients = match clients_by_dir_name(ctx.client).await {
         Ok(clients) => clients,
-        Err(e) if crate::client::is_not_found(&e) => HashMap::new(),
+        Err(e) if crate::client::is_not_found(&e) && !ctx.client.realm_exists().await? => {
+            HashMap::new()
+        }
         Err(e) => return Err(e),
     };
 
@@ -39,7 +41,8 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
             Some((internal_id, _)) => ctx
                 .client
                 .get_client_roles(internal_id)
-                .await?
+                .await
+                .with_context(|| format!("Failed to list the roles of client '{}'", client_label))?
                 .into_iter()
                 .map(|r| (r.name.clone(), r))
                 .collect(),
@@ -48,10 +51,13 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
 
         let mut declared = HashSet::new();
         for path in role_files(&dir.roles_dir, ctx.profile.as_deref()).await? {
-            let mut val = load_yaml_with_overlay(&path, ctx.profile.as_deref()).await?;
-            substitute_secrets(&mut val, Arc::clone(&ctx.resolver)).await?;
-            let mut local: RoleRepresentation = serde_json::from_value(val)
-                .with_context(|| format!("Failed to deserialize YAML file {:?}", path))?;
+            let mut local: RoleRepresentation = async {
+                let mut val = load_yaml_with_overlay(&path, ctx.profile.as_deref()).await?;
+                substitute_secrets(&mut val, Arc::clone(&ctx.resolver)).await?;
+                deserialize_value(val)
+            }
+            .await
+            .with_context(|| path.display().to_string())?;
             declared.insert(local.name.clone());
             let name = format!("role {} of client {}", local.name, client_label);
 
@@ -59,7 +65,11 @@ pub async fn plan_client_roles(ctx: &PlanContext<'_>) -> Result<(Vec<PathBuf>, P
             let changed = match existing.get(&local.name) {
                 Some(remote) => {
                     let mut rc = remote.clone();
-                    rc.load_relations(ctx.client, Some(&local)).await?;
+                    rc.load_relations(ctx.client, Some(&local))
+                        .await
+                        .with_context(|| {
+                            format!("Failed to load the relationships of {} from Keycloak", name)
+                        })?;
                     rc.clear_metadata();
                     // Client role flag and container are implied by the directory.
                     rc.client_role = local.client_role;
