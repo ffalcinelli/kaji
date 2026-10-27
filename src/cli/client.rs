@@ -45,14 +45,14 @@ pub async fn create_client_yaml(
     let realm_dir = workspace_dir.join(sanitize(realm)).join("clients");
     fs::create_dir_all(&realm_dir)
         .await
-        .context("Failed to create clients directory")?;
+        .with_context(|| format!("Failed to create directory {}", realm_dir.display()))?;
 
     let file_path = realm_dir.join(format!("{}.yaml", sanitize(client_id)));
     let yaml = serde_yaml::to_string(&client).context("Failed to serialize client to YAML")?;
 
     crate::utils::write_secure(&file_path, &yaml)
         .await
-        .context("Failed to write client YAML file")?;
+        .with_context(|| format!("Failed to write client file {}", file_path.display()))?;
 
     Ok(())
 }
@@ -89,14 +89,14 @@ pub async fn create_client_scope_yaml(
     let scopes_dir = workspace_dir.join(sanitize(realm)).join("client-scopes");
     fs::create_dir_all(&scopes_dir)
         .await
-        .context("Failed to create client-scopes directory")?;
+        .with_context(|| format!("Failed to create directory {}", scopes_dir.display()))?;
 
     let file_path = scopes_dir.join(format!("{}.yaml", sanitize(name)));
     let yaml = serde_yaml::to_string(&scope).context("Failed to serialize client scope to YAML")?;
 
     crate::utils::write_secure(&file_path, &yaml)
         .await
-        .context("Failed to write client scope YAML file")?;
+        .with_context(|| format!("Failed to write client scope file {}", file_path.display()))?;
 
     Ok(())
 }

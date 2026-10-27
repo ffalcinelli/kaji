@@ -53,14 +53,14 @@ pub async fn create_idp_yaml(
         .join("identity-providers");
     fs::create_dir_all(&realm_dir)
         .await
-        .context("Failed to create identity-providers directory")?;
+        .with_context(|| format!("Failed to create directory {}", realm_dir.display()))?;
 
     let file_path = realm_dir.join(format!("{}.yaml", sanitize(alias)));
     let yaml = serde_yaml::to_string(&idp).context("Failed to serialize IDP to YAML")?;
 
     crate::utils::write_secure(&file_path, &yaml)
         .await
-        .context("Failed to write IDP YAML file")?;
+        .with_context(|| format!("Failed to write IDP file {}", file_path.display()))?;
 
     Ok(())
 }
