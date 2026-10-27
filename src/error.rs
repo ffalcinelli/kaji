@@ -93,13 +93,20 @@ fn extract_detail(body: &str) -> String {
 #[derive(Debug)]
 pub struct MultiError {
     errors: Vec<anyhow::Error>,
+    /// What the errors are, after their count (e.g. `operations failed`).
+    noun: &'static str,
 }
 
 impl MultiError {
     /// Collects `errors`, sorted by message so the output does not depend on task timing.
-    pub fn new(mut errors: Vec<anyhow::Error>) -> Self {
+    pub fn new(errors: Vec<anyhow::Error>) -> Self {
+        Self::with_noun(errors, "operations failed")
+    }
+
+    /// Like [`MultiError::new`], summarized as `{count} {noun}` (e.g. `3 problems found`).
+    pub fn with_noun(mut errors: Vec<anyhow::Error>, noun: &'static str) -> Self {
         errors.sort_by_cached_key(|e| format!("{:#}", e));
-        Self { errors }
+        Self { errors, noun }
     }
 
     /// The collected failures.
@@ -107,19 +114,49 @@ impl MultiError {
         &self.errors
     }
 
+    /// The collected failures, by value.
+    pub fn into_errors(self) -> Vec<anyhow::Error> {
+        self.errors
+    }
+
+    /// The summary line, e.g. `2 operations failed:`.
+    pub fn summary(&self) -> String {
+        format!("{} {}:", self.errors.len(), self.noun)
+    }
+
     /// Returns `Ok(())` for no errors, the error itself for one, and a `MultiError` otherwise.
-    pub fn into_result(mut errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
+    pub fn into_result(errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
+        Self::into_result_with_noun(errors, "operations failed")
+    }
+
+    /// [`MultiError::into_result`] with the summary noun of [`MultiError::with_noun`].
+    pub fn into_result_with_noun(
+        mut errors: Vec<anyhow::Error>,
+        noun: &'static str,
+    ) -> anyhow::Result<()> {
         match errors.len() {
             0 => Ok(()),
             1 => Err(errors.remove(0)),
-            _ => Err(Self::new(errors).into()),
+            _ => Err(Self::with_noun(errors, noun).into()),
         }
+    }
+
+    /// Flattens nested `MultiError`s so the failures are listed at one level.
+    pub fn flatten(errors: Vec<anyhow::Error>) -> Vec<anyhow::Error> {
+        let mut flat = Vec::new();
+        for error in errors {
+            match error.downcast::<MultiError>() {
+                Ok(multi) => flat.extend(Self::flatten(multi.into_errors())),
+                Err(error) => flat.push(error),
+            }
+        }
+        flat
     }
 }
 
 impl fmt::Display for MultiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} operations failed:", self.errors.len())?;
+        write!(f, "{}", self.summary())?;
         for (i, err) in self.errors.iter().enumerate() {
             write!(f, "\n  {}. {:#}", i + 1, err)?;
         }

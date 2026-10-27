@@ -1,3 +1,4 @@
+use crate::error::MultiError;
 use crate::models::{
     AuthenticationFlowRepresentation, AuthenticatorConfigRepresentation, ClientRepresentation,
     ClientScopeRepresentation, ComponentRepresentation, GroupRepresentation,
@@ -9,51 +10,87 @@ use anyhow::{Context, Result};
 use console::style;
 use serde::de::DeserializeOwned;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::task::JoinSet;
 
+/// Summary noun of the problems found in a realm.
+const PROBLEMS: &str = "problems found";
+
+/// A validation problem in the file at `path`.
+fn problem(path: &Path, message: impl Display) -> anyhow::Error {
+    anyhow::anyhow!("{}: {}", path.display(), message)
+}
+
+/// Records `key` as declared in `path`, returning a problem if another file declared it first.
+fn check_unique(
+    seen: &mut HashMap<String, PathBuf>,
+    key: &str,
+    path: &Path,
+    what: &str,
+) -> Option<anyhow::Error> {
+    match seen.get(key) {
+        Some(first) => Some(problem(
+            path,
+            format!(
+                "Duplicate {} '{}' (also declared in {})",
+                what,
+                key,
+                first.display()
+            ),
+        )),
+        None => {
+            seen.insert(key.to_string(), path.to_path_buf());
+            None
+        }
+    }
+}
+
+/// Prints the count of validated resources when there are no problems, or returns them.
+fn report(label: &str, count: impl Display, problems: Vec<anyhow::Error>) -> Result<()> {
+    if problems.is_empty() {
+        eprintln!(
+            "  {} {} {}",
+            CHECK,
+            style(format!("Validated {}:", label)).dim(),
+            style(count).green()
+        );
+    }
+    MultiError::into_result_with_noun(problems, PROBLEMS)
+}
+
+/// Reads every YAML file of `dir`: the parsed resources, plus one problem per file that cannot
+/// be read or parsed.
 async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
     dir: &Path,
-    file_type: &str,
     profile: Option<&str>,
-) -> Result<Vec<(PathBuf, T)>> {
-    let mut results = Vec::new();
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(results),
-        Err(e) => return Err(e.into()),
+) -> Result<(Vec<(PathBuf, T)>, Vec<anyhow::Error>)> {
+    let Some(files) = crate::utils::yaml::list_yaml_files(dir, profile).await? else {
+        return Ok((Vec::new(), Vec::new()));
     };
-    {
-        let mut join_set = JoinSet::new();
-        let file_type_str = file_type.to_string();
-        let profile_owned = profile.map(|s| s.to_string());
-
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext == "yaml" || ext == "yml")
-            {
-                if crate::utils::yaml::is_overlay_file(&path, profile_owned.as_deref()) {
-                    continue;
-                }
-                let ft = file_type_str.clone();
-                let prof = profile_owned.clone();
-                join_set.spawn(async move {
-                    let val =
-                        crate::utils::yaml::load_yaml_with_overlay(&path, prof.as_deref()).await?;
-                    let item: T = serde_json::from_value(val)
-                        .with_context(|| format!("Failed to parse {} file {:?}", ft, path))?;
-                    Ok::<(PathBuf, T), anyhow::Error>((path, item))
-                });
-            }
-        }
-
-        results = crate::utils::join_all_tasks(join_set, &dir.display().to_string()).await?;
-        results.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut join_set = JoinSet::new();
+    for path in files {
+        let profile = profile.map(str::to_string);
+        join_set.spawn(async move {
+            let val = crate::utils::yaml::load_yaml_with_overlay(&path, profile.as_deref()).await?;
+            let item: T = crate::utils::yaml::from_value_at(val, &path)?;
+            Ok::<(PathBuf, T), anyhow::Error>((path, item))
+        });
     }
-    Ok(results)
+    let mut items = Vec::new();
+    let mut problems = Vec::new();
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Ok(item)) => items.push(item),
+            Ok(Err(e)) => problems.push(e),
+            Err(e) => problems.push(
+                anyhow::Error::new(e).context(format!("Task reading {} failed", dir.display())),
+            ),
+        }
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok((items, problems))
 }
 
 /// Validates the structure and syntax of local YAML configuration files.
@@ -66,8 +103,11 @@ pub async fn run(workspace_dir: PathBuf, realms_to_validate: &[String]) -> Resul
 
 /// Validates the structure and syntax of local YAML configuration files with an active profile.
 ///
+/// Every realm is validated and every problem is reported (each with its file), not only the
+/// first one.
+///
 /// # Errors
-/// Returns an error if validation fails or a file cannot be parsed.
+/// Returns an error listing the problems found, per realm.
 pub async fn run_with_profile(
     workspace_dir: PathBuf,
     realms_to_validate: &[String],
@@ -83,7 +123,7 @@ pub async fn run_with_profile(
                 workspace_dir
             )));
         }
-        return Err(e.into());
+        return Err(e).with_context(|| format!("Failed to read {}", workspace_dir.display()));
     }
 
     let realms = if realms_to_validate.is_empty() {
@@ -105,6 +145,7 @@ pub async fn run_with_profile(
         return Ok(());
     }
 
+    let mut invalid = Vec::new();
     for realm_name in &realms {
         eprintln!(
             "\n{} {}",
@@ -114,49 +155,45 @@ pub async fn run_with_profile(
                 .bold()
         );
         let realm_dir = workspace_dir.join(realm_name);
-        validate_realm(realm_dir, profile).await?;
-        eprintln!(
-            "  {} {}",
-            SUCCESS,
-            style(format!("Successfully validated realm: {}", realm_name))
-                .green()
-                .bold()
-        );
+        match validate_realm(realm_dir, profile).await {
+            Ok(()) => eprintln!(
+                "  {} {}",
+                SUCCESS,
+                style(format!("Successfully validated realm: {}", realm_name))
+                    .green()
+                    .bold()
+            ),
+            Err(e) => invalid.push(e.context(format!("Realm '{}' is invalid", realm_name))),
+        }
     }
-    Ok(())
+    MultiError::into_result_with_noun(invalid, "realms are invalid")
 }
 
 async fn validate_realm_config(workspace_dir: &Path, profile: Option<&str>) -> Result<()> {
     let realm_path = crate::utils::yaml::find_realm_file(workspace_dir).await;
-    let realm_file_name = realm_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("realm.yaml");
-    let val = crate::utils::yaml::load_yaml_with_overlay(&realm_path, profile)
+    let exists = fs::try_exists(&realm_path)
         .await
-        .with_context(|| {
-            format!(
-                "{} not found or failed to read in {:?}",
-                realm_file_name, workspace_dir
-            )
-        })?;
-    let realm: RealmRepresentation = serde_json::from_value(val)
-        .with_context(|| format!("Failed to parse {}", realm_file_name))?;
+        .with_context(|| format!("Failed to check {}", realm_path.display()))?;
+    if !exists {
+        return Err(problem(workspace_dir, "realm.yaml not found"));
+    }
+    let val = crate::utils::yaml::load_yaml_with_overlay(&realm_path, profile).await?;
+    let realm: RealmRepresentation = crate::utils::yaml::from_value_at(val, &realm_path)?;
 
     if realm.realm.is_empty() {
-        anyhow::bail!("Realm name is empty in {}", realm_file_name);
+        return Err(problem(&realm_path, "Realm name is empty"));
     }
     if let Some(dir_name) = workspace_dir.file_name().and_then(|n| n.to_str())
         && realm.realm != dir_name
     {
-        anyhow::bail!(
-            "Realm name '{}' in {} does not match its directory '{}' \
-             (applying it would rename realm '{}')",
-            realm.realm,
-            realm_file_name,
-            dir_name,
-            dir_name
-        );
+        return Err(problem(
+            &realm_path,
+            format!(
+                "Realm name '{}' does not match its directory '{}' \
+                 (applying it would rename realm '{}')",
+                realm.realm, dir_name, dir_name
+            ),
+        ));
     }
     eprintln!(
         "  {} {} {}",
@@ -168,146 +205,133 @@ async fn validate_realm_config(workspace_dir: &Path, profile: Option<&str>) -> R
 }
 
 fn validate_roles(roles: &[(PathBuf, RoleRepresentation)]) -> Result<()> {
-    let mut role_names = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, role) in roles {
         if role.name.is_empty() {
-            anyhow::bail!("Role name is empty in {:?}", path);
+            problems.push(problem(path, "Role name is empty"));
+            continue;
         }
-        if role_names.contains(&role.name) {
-            anyhow::bail!("Duplicate role name: {}", role.name);
-        }
-        role_names.insert(role.name.clone());
+        problems.extend(check_unique(&mut seen, &role.name, path, "role name"));
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated roles:").dim(),
-        style(roles.len()).green()
-    );
-    Ok(())
+    report("roles", roles.len(), problems)
 }
 
 async fn validate_client_roles(workspace_dir: &Path, profile: Option<&str>) -> Result<()> {
     let dirs = crate::apply::client_roles::client_role_dirs(workspace_dir).await?;
+    let mut problems = Vec::new();
     for dir in dirs {
-        let roles =
-            read_yaml_files::<RoleRepresentation>(&dir.roles_dir, "client-role", profile).await?;
-        let mut role_names = HashSet::new();
+        let (roles, read_problems) =
+            read_yaml_files::<RoleRepresentation>(&dir.roles_dir, profile).await?;
+        problems.extend(read_problems);
+        let mut seen = HashMap::new();
         for (path, role) in &roles {
             if role.name.is_empty() {
-                anyhow::bail!("Role name is empty in {:?}", path);
+                problems.push(problem(path, "Role name is empty"));
+                continue;
             }
-            if !role_names.insert(role.name.clone()) {
-                anyhow::bail!(
-                    "Duplicate role name: {} (client '{}' in {:?})",
-                    role.name,
-                    dir.dir_name,
-                    path
-                );
-            }
+            problems.extend(check_unique(
+                &mut seen,
+                &role.name,
+                path,
+                "client role name",
+            ));
         }
     }
-    Ok(())
+    MultiError::into_result_with_noun(problems, PROBLEMS)
 }
 
 fn validate_clients(clients: &[(PathBuf, ClientRepresentation)]) -> Result<()> {
-    let mut seen_ids = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, client) in clients {
         let client_id = client.client_id.as_deref().unwrap_or_default();
         if client_id.is_empty() {
-            anyhow::bail!("Client ID is missing or empty in {:?}", path);
+            problems.push(problem(path, "Client ID is missing or empty"));
+            continue;
         }
-        if !seen_ids.insert(client_id.to_string()) {
-            anyhow::bail!("Duplicate clientId '{}' found in {:?}", client_id, path);
-        }
+        problems.extend(check_unique(&mut seen, client_id, path, "clientId"));
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated clients:").dim(),
-        style(clients.len()).green()
-    );
-    Ok(())
+    report("clients", clients.len(), problems)
 }
 
 fn validate_idps(idps: &[(PathBuf, IdentityProviderRepresentation)]) -> Result<()> {
-    let mut seen_aliases = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, idp) in idps {
         let alias = idp.alias.as_deref().unwrap_or_default();
         if alias.is_empty() {
-            anyhow::bail!("Identity Provider alias is missing or empty in {:?}", path);
+            problems.push(problem(path, "Identity Provider alias is missing or empty"));
         }
         if idp.provider_id.as_deref().unwrap_or_default().is_empty() {
-            anyhow::bail!(
-                "Identity Provider providerId is missing or empty in {:?}",
-                path
-            );
+            problems.push(problem(
+                path,
+                "Identity Provider providerId is missing or empty",
+            ));
         }
-        if !seen_aliases.insert(alias.to_string()) {
-            anyhow::bail!(
-                "Duplicate Identity Provider alias '{}' found in {:?}",
+        if !alias.is_empty() {
+            problems.extend(check_unique(
+                &mut seen,
                 alias,
-                path
-            );
+                path,
+                "Identity Provider alias",
+            ));
         }
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated Identity Providers:").dim(),
-        style(idps.len()).green()
-    );
-    Ok(())
+    report("Identity Providers", idps.len(), problems)
 }
 
 fn validate_client_scopes(scopes: &[(PathBuf, ClientScopeRepresentation)]) -> Result<()> {
-    let mut seen_names = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, scope) in scopes {
         let name = scope.name.as_deref().unwrap_or_default();
         if name.is_empty() {
-            anyhow::bail!("Client Scope name is missing or empty in {:?}", path);
+            problems.push(problem(path, "Client Scope name is missing or empty"));
+            continue;
         }
-        if !seen_names.insert(name.to_string()) {
-            anyhow::bail!("Duplicate Client Scope name '{}' found in {:?}", name, path);
-        }
+        problems.extend(check_unique(&mut seen, name, path, "Client Scope name"));
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated client scopes:").dim(),
-        style(scopes.len()).green()
-    );
-    Ok(())
+    report("client scopes", scopes.len(), problems)
 }
 
-fn validate_group_tree(group: &GroupRepresentation, path: &Path) -> Result<()> {
+/// Checks a group and its sub-groups (`group_path` is e.g. `/parent/child`).
+fn validate_group_tree(
+    group: &GroupRepresentation,
+    group_path: &str,
+    path: &Path,
+    problems: &mut Vec<anyhow::Error>,
+) {
     let name = group.name.as_deref().unwrap_or_default();
     if name.is_empty() {
-        anyhow::bail!("Group name is missing or empty in {:?}", path);
+        problems.push(problem(
+            path,
+            format!("Group name is missing or empty (at '{}')", group_path),
+        ));
     }
     if let Some(sub_groups) = &group.sub_groups {
         let mut seen_sub = HashSet::new();
         for sub in sub_groups {
-            validate_group_tree(sub, path)?;
-            if let Some(sub_name) = sub.name.as_deref()
-                && !seen_sub.insert(sub_name.to_string())
-            {
-                anyhow::bail!(
-                    "Duplicate subGroup name '{}' under group '{}' in {:?}",
-                    sub_name,
-                    name,
-                    path
-                );
+            let sub_name = sub.name.as_deref().unwrap_or_default();
+            let sub_path = format!("{}/{}", group_path.trim_end_matches('/'), sub_name);
+            validate_group_tree(sub, &sub_path, path, problems);
+            if !sub_name.is_empty() && !seen_sub.insert(sub_name.to_string()) {
+                problems.push(problem(
+                    path,
+                    format!(
+                        "Duplicate subGroup name '{}' under group '{}'",
+                        sub_name, group_path
+                    ),
+                ));
             }
         }
     }
-    Ok(())
 }
 
 fn validate_groups(groups: &[(PathBuf, GroupRepresentation)]) -> Result<()> {
-    let mut seen_groups = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, group) in groups {
-        validate_group_tree(group, path)?;
         let identity = group
             .path
             .as_deref()
@@ -315,37 +339,26 @@ fn validate_groups(groups: &[(PathBuf, GroupRepresentation)]) -> Result<()> {
             .filter(|p| !p.is_empty())
             .or_else(|| group.name.clone())
             .unwrap_or_default();
-        if !seen_groups.insert(identity.clone()) {
-            anyhow::bail!("Duplicate Group '{}' found in {:?}", identity, path);
+        validate_group_tree(group, &format!("/{}", identity), path, &mut problems);
+        if !identity.is_empty() {
+            problems.extend(check_unique(&mut seen, &identity, path, "Group"));
         }
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated groups:").dim(),
-        style(groups.len()).green()
-    );
-    Ok(())
+    report("groups", groups.len(), problems)
 }
 
 fn validate_users(users: &[(PathBuf, UserRepresentation)]) -> Result<()> {
-    let mut seen_usernames = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, user) in users {
         let username = user.username.as_deref().unwrap_or_default();
         if username.is_empty() {
-            anyhow::bail!("User username is missing or empty in {:?}", path);
+            problems.push(problem(path, "User username is missing or empty"));
+            continue;
         }
-        if !seen_usernames.insert(username.to_string()) {
-            anyhow::bail!("Duplicate User username '{}' found in {:?}", username, path);
-        }
+        problems.extend(check_unique(&mut seen, username, path, "User username"));
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated users:").dim(),
-        style(users.len()).green()
-    );
-    Ok(())
+    report("users", users.len(), problems)
 }
 
 /// Characters forbidden by Keycloak in authentication flow alias names.
@@ -360,7 +373,8 @@ const VALID_FLOW_REQUIREMENTS: &[&str] = &[
     "DISABLED",
 ];
 
-fn detect_flow_cycles(adj: &HashMap<String, Vec<String>>) -> Result<()> {
+/// Finds every cycle of the sub-flow dependency graph, as alias paths (`a -> b -> a`).
+fn find_flow_cycles(adj: &HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum State {
         Visiting,
@@ -372,7 +386,8 @@ fn detect_flow_cycles(adj: &HashMap<String, Vec<String>>) -> Result<()> {
         adj: &HashMap<String, Vec<String>>,
         visited: &mut HashMap<String, State>,
         path: &mut Vec<String>,
-    ) -> Result<()> {
+        cycles: &mut Vec<Vec<String>>,
+    ) {
         visited.insert(node.to_string(), State::Visiting);
         path.push(node.to_string());
 
@@ -380,99 +395,110 @@ fn detect_flow_cycles(adj: &HashMap<String, Vec<String>>) -> Result<()> {
             for neighbor in neighbors {
                 match visited.get(neighbor) {
                     Some(State::Visiting) => {
-                        path.push(neighbor.clone());
                         let cycle_start = path.iter().position(|n| n == neighbor).unwrap_or(0);
-                        let cycle_str = path[cycle_start..].join(" -> ");
-                        anyhow::bail!(
-                            "Circular subflow dependency detected in authentication flows: {}",
-                            cycle_str
-                        );
+                        let mut cycle = path[cycle_start..].to_vec();
+                        cycle.push(neighbor.clone());
+                        cycles.push(cycle);
                     }
                     Some(State::Visited) => {}
-                    None => {
-                        dfs(neighbor, adj, visited, path)?;
-                    }
+                    None => dfs(neighbor, adj, visited, path, cycles),
                 }
             }
         }
 
         path.pop();
         visited.insert(node.to_string(), State::Visited);
-        Ok(())
     }
 
     let mut visited = HashMap::new();
     let mut path = Vec::new();
+    let mut cycles = Vec::new();
 
     let mut nodes: Vec<&String> = adj.keys().collect();
     nodes.sort();
     for node in nodes {
         if !visited.contains_key(node) {
-            dfs(node, adj, &mut visited, &mut path)?;
+            dfs(node, adj, &mut visited, &mut path, &mut cycles);
         }
     }
-
-    Ok(())
+    cycles
 }
 
 fn validate_authentication_flows(
     flows: &[(PathBuf, AuthenticationFlowRepresentation)],
 ) -> Result<()> {
-    let mut seen_aliases = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     let mut subflow_referrers: HashMap<String, Vec<String>> = HashMap::new();
 
     for (path, flow) in flows {
         let alias = flow.alias.as_deref().unwrap_or_default();
         if alias.is_empty() {
-            anyhow::bail!(
-                "Authentication Flow alias is missing or empty in {:?}",
-                path
-            );
+            problems.push(problem(
+                path,
+                "Authentication Flow alias is missing or empty",
+            ));
         }
         if let Some(bad_char) = alias
             .chars()
             .find(|c| FLOW_ALIAS_FORBIDDEN_CHARS.contains(c))
         {
-            anyhow::bail!(
-                "Authentication Flow alias '{}' contains forbidden character '{}' \
-                 (not allowed by Keycloak) in {:?}",
-                alias,
-                bad_char,
-                path
-            );
+            problems.push(problem(
+                path,
+                format!(
+                    "Authentication Flow alias '{}' contains forbidden character '{}' \
+                     (not allowed by Keycloak)",
+                    alias, bad_char
+                ),
+            ));
         }
-        if seen_aliases.contains(alias) {
-            anyhow::bail!(
-                "Duplicate Authentication Flow alias '{}' found in {:?}",
+        if !alias.is_empty() {
+            problems.extend(check_unique(
+                &mut seen,
                 alias,
-                path
-            );
+                path,
+                "Authentication Flow alias",
+            ));
         }
-        seen_aliases.insert(alias.to_string());
 
         // Validate child executions
         if let Some(execs) = &flow.authentication_executions {
-            for exec in execs {
+            for (index, exec) in execs.iter().enumerate() {
+                let execution = format!(
+                    "execution #{} ({}) of flow '{}'",
+                    index + 1,
+                    exec.authenticator
+                        .as_deref()
+                        .or(exec.flow_alias.as_deref())
+                        .unwrap_or("no authenticator or flowAlias"),
+                    alias
+                );
                 if let Some(req) = &exec.requirement {
                     let req_upper = req.to_uppercase();
                     if !VALID_FLOW_REQUIREMENTS.contains(&req_upper.as_str()) {
-                        anyhow::bail!(
-                            "Invalid requirement '{}' in authentication flow execution in {:?}. Expected one of: {:?}",
-                            req,
+                        problems.push(problem(
                             path,
-                            VALID_FLOW_REQUIREMENTS
-                        );
+                            format!(
+                                "Invalid requirement '{}' in {}. Expected one of: {}",
+                                req,
+                                execution,
+                                VALID_FLOW_REQUIREMENTS.join(", ")
+                            ),
+                        ));
                     }
                 }
 
                 if exec.authenticator_flow == Some(true)
                     && exec.flow_alias.as_deref().unwrap_or_default().is_empty()
                 {
-                    anyhow::bail!(
-                        "Authentication flow execution marked as sub-flow ('authenticatorFlow: true') is missing 'flowAlias' in {:?}",
-                        path
-                    );
+                    problems.push(problem(
+                        path,
+                        format!(
+                            "{} is marked as sub-flow ('authenticatorFlow: true') but is missing 'flowAlias'",
+                            execution
+                        ),
+                    ));
                 }
 
                 if let Some(sub_alias) = &exec.flow_alias {
@@ -489,7 +515,20 @@ fn validate_authentication_flows(
     }
 
     // Cycle detection across flow and sub-flow dependencies
-    detect_flow_cycles(&adj)?;
+    for cycle in find_flow_cycles(&adj) {
+        let files: Vec<String> = cycle[..cycle.len() - 1]
+            .iter()
+            .map(|alias| match seen.get(alias) {
+                Some(file) => format!("'{}' in {}", alias, file.display()),
+                None => format!("'{}'", alias),
+            })
+            .collect();
+        problems.push(anyhow::anyhow!(
+            "Circular subflow dependency detected in authentication flows: {} ({})",
+            cycle.join(" -> "),
+            files.join(", ")
+        ));
+    }
 
     let shared_count = subflow_referrers
         .values()
@@ -501,80 +540,71 @@ fn validate_authentication_flows(
     } else {
         flows.len().to_string()
     };
-
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated authentication flows:").dim(),
-        style(count_label).green()
-    );
-    Ok(())
+    report("authentication flows", count_label, problems)
 }
 
 fn validate_required_actions(
     actions: &[(PathBuf, RequiredActionProviderRepresentation)],
 ) -> Result<()> {
-    let mut seen_aliases = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, action) in actions {
         let alias = action.alias.as_deref().unwrap_or_default();
         if alias.is_empty() {
-            anyhow::bail!("Required Action alias is missing or empty in {:?}", path);
+            problems.push(problem(path, "Required Action alias is missing or empty"));
         }
         if action.provider_id.as_deref().unwrap_or_default().is_empty() {
-            anyhow::bail!(
-                "Required Action providerId is missing or empty in {:?}",
-                path
-            );
+            problems.push(problem(
+                path,
+                "Required Action providerId is missing or empty",
+            ));
         }
-        if !seen_aliases.insert(alias.to_string()) {
-            anyhow::bail!(
-                "Duplicate Required Action alias '{}' found in {:?}",
+        if !alias.is_empty() {
+            problems.extend(check_unique(
+                &mut seen,
                 alias,
-                path
-            );
+                path,
+                "Required Action alias",
+            ));
         }
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated required actions:").dim(),
-        style(actions.len()).green()
-    );
-    Ok(())
+    report("required actions", actions.len(), problems)
 }
 
 fn validate_authenticator_configs(
     configs: &[(PathBuf, AuthenticatorConfigRepresentation)],
 ) -> Result<()> {
-    let mut seen_aliases = HashSet::new();
+    let mut problems = Vec::new();
+    let mut seen = HashMap::new();
     for (path, config) in configs {
         let alias = config.alias.as_deref().unwrap_or_default();
         if alias.is_empty() {
-            anyhow::bail!(
-                "Authenticator Config alias is missing or empty in {:?}",
-                path
-            );
+            problems.push(problem(
+                path,
+                "Authenticator Config alias is missing or empty",
+            ));
+            continue;
         }
-        if !seen_aliases.insert(alias.to_string()) {
-            anyhow::bail!(
-                "Duplicate Authenticator Config alias '{}' found in {:?}",
-                alias,
-                path
-            );
-        }
+        problems.extend(check_unique(
+            &mut seen,
+            alias,
+            path,
+            "Authenticator Config alias",
+        ));
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style("Validated authenticator configs:").dim(),
-        style(configs.len()).green()
-    );
-    Ok(())
+    report("authenticator configs", configs.len(), problems)
 }
 
 async fn validate_realm(workspace_dir: PathBuf, profile: Option<&str>) -> Result<()> {
+    let mut problems = Vec::new();
+    let mut collect = |result: Result<()>| {
+        if let Err(e) = result {
+            problems.extend(MultiError::flatten(vec![e]));
+        }
+    };
+
     // 1. Validate Realm
-    validate_realm_config(&workspace_dir, profile).await?;
+    collect(validate_realm_config(&workspace_dir, profile).await);
 
     // Read all resource directories concurrently
     let roles_dir = workspace_dir.join("roles");
@@ -588,48 +618,45 @@ async fn validate_realm(workspace_dir: PathBuf, profile: Option<&str>) -> Result
     let configs_dir = workspace_dir.join("authenticator-configs");
 
     let (roles, clients, idps, scopes, groups, users, flows, actions, configs) = tokio::try_join!(
-        read_yaml_files::<RoleRepresentation>(&roles_dir, "role", profile),
-        read_yaml_files::<ClientRepresentation>(&clients_dir, "client", profile),
-        read_yaml_files::<IdentityProviderRepresentation>(&idps_dir, "idp", profile),
-        read_yaml_files::<ClientScopeRepresentation>(&scopes_dir, "client-scope", profile),
-        read_yaml_files::<GroupRepresentation>(&groups_dir, "group", profile),
-        read_yaml_files::<UserRepresentation>(&users_dir, "user", profile),
-        read_yaml_files::<AuthenticationFlowRepresentation>(
-            &flows_dir,
-            "authentication-flow",
-            profile
-        ),
-        read_yaml_files::<RequiredActionProviderRepresentation>(
-            &actions_dir,
-            "required-action",
-            profile
-        ),
-        read_yaml_files::<AuthenticatorConfigRepresentation>(
-            &configs_dir,
-            "authenticator-config",
-            profile
-        ),
+        read_yaml_files::<RoleRepresentation>(&roles_dir, profile),
+        read_yaml_files::<ClientRepresentation>(&clients_dir, profile),
+        read_yaml_files::<IdentityProviderRepresentation>(&idps_dir, profile),
+        read_yaml_files::<ClientScopeRepresentation>(&scopes_dir, profile),
+        read_yaml_files::<GroupRepresentation>(&groups_dir, profile),
+        read_yaml_files::<UserRepresentation>(&users_dir, profile),
+        read_yaml_files::<AuthenticationFlowRepresentation>(&flows_dir, profile),
+        read_yaml_files::<RequiredActionProviderRepresentation>(&actions_dir, profile),
+        read_yaml_files::<AuthenticatorConfigRepresentation>(&configs_dir, profile),
     )?;
 
-    // Validate resources
-    validate_roles(&roles)?;
-    validate_clients(&clients)?;
-    validate_client_roles(&workspace_dir, profile).await?;
-    validate_idps(&idps)?;
-    validate_client_scopes(&scopes)?;
-    validate_groups(&groups)?;
-    validate_users(&users)?;
-    validate_authentication_flows(&flows)?;
-    validate_required_actions(&actions)?;
-    validate_authenticator_configs(&configs)?;
+    // Validate resources (files that could not be parsed are reported once, not checked)
+    collect(validate_parsed(roles, validate_roles));
+    collect(validate_parsed(clients, validate_clients));
+    collect(validate_client_roles(&workspace_dir, profile).await);
+    collect(validate_parsed(idps, validate_idps));
+    collect(validate_parsed(scopes, validate_client_scopes));
+    collect(validate_parsed(groups, validate_groups));
+    collect(validate_parsed(users, validate_users));
+    collect(validate_parsed(flows, validate_authentication_flows));
+    collect(validate_parsed(actions, validate_required_actions));
+    collect(validate_parsed(configs, validate_authenticator_configs));
 
     // Validate Components and Keys
-    tokio::try_join!(
-        validate_components_in_dir(&workspace_dir, "components", profile),
-        validate_components_in_dir(&workspace_dir, "keys", profile)
-    )?;
+    collect(validate_components_in_dir(&workspace_dir, "components", profile).await);
+    collect(validate_components_in_dir(&workspace_dir, "keys", profile).await);
 
-    Ok(())
+    MultiError::into_result_with_noun(problems, PROBLEMS)
+}
+
+/// Runs `check` on the parsed resources and adds the files that could not be parsed.
+fn validate_parsed<T>(
+    (items, mut problems): (Vec<(PathBuf, T)>, Vec<anyhow::Error>),
+    check: fn(&[(PathBuf, T)]) -> Result<()>,
+) -> Result<()> {
+    if let Err(e) = check(&items) {
+        problems.extend(MultiError::flatten(vec![e]));
+    }
+    MultiError::into_result_with_noun(problems, PROBLEMS)
 }
 
 async fn validate_components_in_dir(
@@ -638,9 +665,9 @@ async fn validate_components_in_dir(
     profile: Option<&str>,
 ) -> Result<()> {
     let dir = workspace_dir.join(dir_name);
-    let components: Vec<(PathBuf, ComponentRepresentation)> =
-        read_yaml_files(&dir, dir_name, profile).await?;
-    if components.is_empty() {
+    let (components, mut problems) =
+        read_yaml_files::<ComponentRepresentation>(&dir, profile).await?;
+    if components.is_empty() && problems.is_empty() {
         return Ok(());
     }
     for (path, component) in &components {
@@ -649,7 +676,7 @@ async fn validate_components_in_dir(
             .as_deref()
             .is_some_and(|name| name.is_empty())
         {
-            anyhow::bail!("Component name is empty in {:?}", path);
+            problems.push(problem(path, "Component name is empty"));
         }
         if component
             .provider_id
@@ -657,16 +684,10 @@ async fn validate_components_in_dir(
             .unwrap_or_default()
             .is_empty()
         {
-            anyhow::bail!("Component providerId is missing or empty in {:?}", path);
+            problems.push(problem(path, "Component providerId is missing or empty"));
         }
     }
-    eprintln!(
-        "  {} {} {}",
-        CHECK,
-        style(format!("Validated {}:", dir_name)).dim(),
-        style(components.len()).green()
-    );
-    Ok(())
+    report(dir_name, components.len(), problems)
 }
 
 #[cfg(test)]

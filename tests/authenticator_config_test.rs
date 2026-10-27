@@ -203,7 +203,7 @@ async fn test_authenticator_config_validation_failures() {
     // Validation should fail
     let res = validate::run(workspace_dir, &["test-realm".to_string()]).await;
     assert!(res.is_err());
-    let err_msg = res.unwrap_err().to_string();
+    let err_msg = format!("{:#}", res.unwrap_err());
     assert!(err_msg.contains("alias is missing or empty"));
 }
 

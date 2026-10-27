@@ -75,7 +75,7 @@ impl ErrorReport {
         for cause in chain {
             let multi = cause.downcast_ref::<crate::error::MultiError>();
             let message = match multi {
-                Some(m) => format!("{} operations failed:", m.errors().len()),
+                Some(m) => m.summary(),
                 None => cause.to_string(),
             };
             if message.starts_with("Hint:") {
