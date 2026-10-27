@@ -1154,7 +1154,10 @@ impl KeycloakClient {
             return Ok(tree.clone());
         }
 
-        let top_level = self.get_authentication_flows_raw().await?;
+        let top_level = self
+            .get_authentication_flows_raw()
+            .await
+            .context("Failed to list authentication flows")?;
         let aliases: Vec<String> = top_level.iter().filter_map(|f| f.alias.clone()).collect();
         let rows: Vec<Result<Vec<AuthenticationExecutionInfoRepresentation>>> =
             futures::stream::iter(
@@ -1167,38 +1170,146 @@ impl KeycloakClient {
             .await;
 
         let mut executions = Vec::new();
-        for result in rows {
-            executions.extend(result?);
+        let mut errors = Vec::new();
+        let mut installed_providers = None;
+        let flows_with_alias = top_level.iter().filter(|f| f.alias.is_some());
+        for (flow, result) in flows_with_alias.zip(rows) {
+            match result {
+                Ok(rows) => executions.extend(rows),
+                Err(e) => errors.push(
+                    self.explain_flow_executions_error(flow, e, &mut installed_providers)
+                        .await,
+                ),
+            }
         }
+        crate::error::MultiError::into_result(errors)?;
 
         // Sub-flows are not listed by `GET /authentication/flows`: discover them through the
         // execution rows (which span all nesting levels) and fetch each one by ID.
         let mut known: HashSet<String> = top_level.iter().filter_map(|f| f.id.clone()).collect();
-        let subflow_ids: Vec<String> = executions
+        let subflow_ids: Vec<(String, String)> = executions
             .iter()
             .filter(|row| row.is_subflow())
-            .filter_map(|row| row.flow_id.clone())
-            .filter(|id| known.insert(id.clone()))
+            .filter_map(|row| {
+                let id = row.flow_id.clone()?;
+                Some((id, row.display_name.clone().unwrap_or_default()))
+            })
+            .filter(|(id, _)| known.insert(id.clone()))
             .collect();
-        let subflows: Vec<Result<AuthenticationFlowRepresentation>> = futures::stream::iter(
-            subflow_ids
-                .into_iter()
-                .map(|id| async move { self.get_flow(&id).await }),
-        )
-        .buffered(10)
-        .collect()
-        .await;
+        let subflows: Vec<Result<AuthenticationFlowRepresentation>> =
+            futures::stream::iter(subflow_ids.into_iter().map(|(id, name)| async move {
+                self.get_flow(&id)
+                    .await
+                    .with_context(|| format!("Failed to fetch sub-flow '{}' ({})", name, id))
+            }))
+            .buffered(10)
+            .collect()
+            .await;
 
         let mut flows = top_level;
+        let mut errors = Vec::new();
         for subflow in subflows {
-            flows.push(subflow?);
+            match subflow {
+                Ok(subflow) => flows.push(subflow),
+                Err(e) => errors.push(e),
+            }
         }
+        crate::error::MultiError::into_result(errors)?;
 
         let tree = RawAuthenticationFlows { flows, executions };
         if let Ok(mut cache) = self.resource_cache.write() {
             cache.insert(type_id, Box::new(tree.clone()));
         }
         Ok(tree)
+    }
+
+    /// Explains why the executions of a top-level flow could not be listed. Keycloak answers
+    /// `404 Could not find authenticator provider` (naming the provider only in its own log) when
+    /// an execution uses a provider that is not installed: the flow's authenticators are compared
+    /// with the installed providers (fetched once, into `installed`) to name it.
+    async fn explain_flow_executions_error(
+        &self,
+        flow: &AuthenticationFlowRepresentation,
+        err: anyhow::Error,
+        installed: &mut Option<Option<HashSet<String>>>,
+    ) -> anyhow::Error {
+        let alias = flow.alias.as_deref().unwrap_or_default();
+        if !is_not_found(&err) {
+            return err.context(format!(
+                "Failed to list the executions of authentication flow '{}'",
+                alias
+            ));
+        }
+        if installed.is_none() {
+            *installed = Some(match self.get_authenticator_provider_ids().await {
+                Ok(ids) => Some(ids),
+                Err(e) => {
+                    debug!("Could not list installed authenticator providers: {:#}", e);
+                    None
+                }
+            });
+        }
+        let mut missing: Vec<&str> = Vec::new();
+        if let Some(Some(ids)) = installed.as_ref() {
+            for exec in flow.authentication_executions.iter().flatten() {
+                if let Some(provider) = exec.authenticator.as_deref()
+                    && !exec.is_subflow()
+                    && !ids.contains(provider)
+                    && !missing.contains(&provider)
+                {
+                    missing.push(provider);
+                }
+            }
+        }
+        if !missing.is_empty() {
+            return err
+                .context(
+                    "Hint: install the provider jar on the Keycloak server, or remove these executions from the flow",
+                )
+                .context(format!(
+                    "Authentication flow '{}' uses authenticator providers not installed on the server: {}",
+                    alias,
+                    missing.join(", ")
+                ));
+        }
+        let subflows = flow.subflow_aliases();
+        let reason = if subflows.is_empty() {
+            "one of its executions may use an authenticator provider that is not installed on the server".to_string()
+        } else {
+            format!(
+                "an execution in it or in its sub-flows ({}) may use an authenticator provider that is not installed on the server",
+                subflows.join(", ")
+            )
+        };
+        err.context(format!(
+            "Failed to list the executions of authentication flow '{}': {}",
+            alias, reason
+        ))
+    }
+
+    /// IDs of the authenticator providers installed on the server (authenticators, client
+    /// authenticators, form authenticators and form actions).
+    pub async fn get_authenticator_provider_ids(&self) -> Result<HashSet<String>> {
+        #[derive(Deserialize)]
+        struct Provider {
+            id: Option<String>,
+        }
+        let kinds = [
+            "authenticator-providers",
+            "client-authenticator-providers",
+            "form-providers",
+            "form-action-providers",
+        ];
+        let lists = futures::future::try_join_all(kinds.iter().map(|kind| async move {
+            let url = self.realm_url(&["authentication", kind])?;
+            self.get::<Vec<Provider>>(&url).await
+        }))
+        .await?;
+        Ok(lists
+            .into_iter()
+            .flatten()
+            .filter_map(|provider| provider.id)
+            .collect())
     }
 
     /// Returns every authentication flow (top-level and sub-flows) in export format.
@@ -1213,12 +1324,27 @@ impl KeycloakClient {
     ) -> Result<Vec<AuthenticatorConfigRepresentation>> {
         let tree = self.get_flow_tree().await?;
         let mut seen = HashSet::new();
-        let futures: Vec<_> = tree
+        let configs: Vec<(String, String)> = tree
             .executions
             .iter()
-            .filter_map(|row| row.authentication_config.clone())
-            .filter(|id| seen.insert(id.clone()))
-            .map(|id| async move { self.get_authenticator_config_raw(&id).await })
+            .filter_map(|row| {
+                let id = row.authentication_config.clone()?;
+                Some((id, row.display_name.clone().unwrap_or_default()))
+            })
+            .filter(|(id, _)| seen.insert(id.clone()))
+            .collect();
+        let futures: Vec<_> = configs
+            .into_iter()
+            .map(|(id, execution)| async move {
+                self.get_authenticator_config_raw(&id)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to fetch authenticator config {} (of execution '{}')",
+                            id, execution
+                        )
+                    })
+            })
             .collect();
         futures::future::join_all(futures)
             .await
