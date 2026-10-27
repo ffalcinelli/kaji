@@ -1,7 +1,7 @@
 use crate::models::RealmRepresentation;
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::{INFO, SUCCESS_CREATE, SUCCESS_UPDATE};
-use crate::utils::yaml::load_yaml_with_overlay;
+use crate::utils::yaml::{deserialize_value, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use console::style;
 use serde_json::{Map, Value};
@@ -70,105 +70,107 @@ pub async fn apply_realm(ctx: crate::apply::ApplyContext<'_>) -> Result<Option<P
     {
         return Ok(None);
     }
-    if !async_fs::try_exists(&realm_path).await? {
+    let exists_locally = async_fs::try_exists(&realm_path)
+        .await
+        .with_context(|| format!("Failed to check {}", realm_path.display()))?;
+    if !exists_locally {
         return Ok(None);
     }
+    let file_context = realm_path.display().to_string();
+    async move {
+        let mut val = load_yaml_with_overlay(&realm_path, profile.as_deref()).await?;
+        let before_sub = val.clone();
+        substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
+        let resolved = val.clone();
 
-    let mut val = load_yaml_with_overlay(&realm_path, profile.as_deref()).await?;
-    let before_sub = val.clone();
-    substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
-    let resolved = val.clone();
-
-    let exists = match client.get_realm().await {
-        Ok(_) => true,
-        Err(e) if crate::client::is_not_found(&e) => false,
-        Err(e) => return Err(e).with_context(|| format!("Failed to get realm '{}'", realm_name)),
-    };
-
-    if review {
-        let action = if exists { "update" } else { "create" };
-        let proceed = {
-            let _lock = prompt_mutex.lock().await;
-            ui.confirm(
-                &format!("Do you want to {} realm '{}'?", action, realm_name),
-                true,
-            )?
+        let exists = match client.get_realm().await {
+            Ok(_) => true,
+            Err(e) if crate::client::is_not_found(&e) => false,
+            Err(e) => return Err(e).context("Failed to check whether the realm exists"),
         };
-        if !proceed {
-            return Ok(None);
-        }
-    }
 
-    if !exists {
-        // Built-in flows only exist once the realm does: create it without any binding first.
-        let create_rep: RealmRepresentation =
-            serde_json::from_value(without_keys(&resolved, REALM_FLOW_BINDINGS))?;
-        client
-            .create_realm(&create_rep)
-            .await
-            .with_context(|| format!("Failed to create realm '{}'", realm_name))?;
-        eprintln!(
-            "  {} {}",
-            SUCCESS_CREATE,
-            style(format!("Created realm {}", realm_name)).green()
-        );
-    }
-
-    let remote_flows: HashSet<String> = client
-        .get_authentication_flows_raw()
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to get authentication flows of realm '{}'",
-                realm_name
-            )
-        })?
-        .into_iter()
-        .filter_map(|f| f.alias)
-        .collect();
-
-    let mut deferred_bindings = Map::new();
-    if let Some(obj) = resolved.as_object() {
-        for key in REALM_FLOW_BINDINGS {
-            if let Some(Value::String(alias)) = obj.get(*key)
-                && !remote_flows.contains(alias)
-            {
-                deferred_bindings.insert(key.to_string(), Value::String(alias.clone()));
+        if review {
+            let action = if exists { "update" } else { "create" };
+            let proceed = {
+                let _lock = prompt_mutex.lock().await;
+                ui.confirm(
+                    &format!("Do you want to {} realm '{}'?", action, realm_name),
+                    true,
+                )?
+            };
+            if !proceed {
+                return Ok(None);
             }
         }
-    }
-    let deferred_keys: Vec<&str> = deferred_bindings.keys().map(String::as_str).collect();
 
-    let update_rep: RealmRepresentation =
-        serde_json::from_value(without_keys(&resolved, &deferred_keys))?;
-    client
-        .update_realm(&update_rep)
-        .await
-        .with_context(|| format!("Failed to update realm '{}'", realm_name))?;
-    if exists {
-        eprintln!(
-            "  {} {}",
-            SUCCESS_UPDATE,
-            style("Updated realm configuration").cyan()
-        );
-    }
-    if !deferred_bindings.is_empty() {
-        eprintln!(
-            "  {} {}",
-            INFO,
-            style(format!(
-                "Deferring realm flow bindings until flows exist: {}",
-                deferred_keys.join(", ")
-            ))
-            .dim()
-        );
-    }
+        if !exists {
+            // Built-in flows only exist once the realm does: create it without any binding first.
+            let create_rep: RealmRepresentation =
+                deserialize_value(without_keys(&resolved, REALM_FLOW_BINDINGS))?;
+            client
+                .create_realm(&create_rep)
+                .await
+                .context("Failed to create the realm")?;
+            eprintln!(
+                "  {} {}",
+                SUCCESS_CREATE,
+                style(format!("Created realm {}", realm_name)).green()
+            );
+        }
 
-    Ok(Some(PendingRealm {
-        before_sub,
-        resolved,
-        deferred_bindings,
-    }))
+        let remote_flows: HashSet<String> = client
+            .get_authentication_flows_raw()
+            .await
+            .context("Failed to list authentication flows (to bind them to the realm)")?
+            .into_iter()
+            .filter_map(|f| f.alias)
+            .collect();
+
+        let mut deferred_bindings = Map::new();
+        if let Some(obj) = resolved.as_object() {
+            for key in REALM_FLOW_BINDINGS {
+                if let Some(Value::String(alias)) = obj.get(*key)
+                    && !remote_flows.contains(alias)
+                {
+                    deferred_bindings.insert(key.to_string(), Value::String(alias.clone()));
+                }
+            }
+        }
+        let deferred_keys: Vec<&str> = deferred_bindings.keys().map(String::as_str).collect();
+
+        let update_rep: RealmRepresentation =
+            deserialize_value(without_keys(&resolved, &deferred_keys))?;
+        client
+            .update_realm(&update_rep)
+            .await
+            .context("Failed to update the realm settings")?;
+        if exists {
+            eprintln!(
+                "  {} {}",
+                SUCCESS_UPDATE,
+                style("Updated realm configuration").cyan()
+            );
+        }
+        if !deferred_bindings.is_empty() {
+            eprintln!(
+                "  {} {}",
+                INFO,
+                style(format!(
+                    "Deferring realm flow bindings until flows exist: {}",
+                    deferred_keys.join(", ")
+                ))
+                .dim()
+            );
+        }
+
+        Ok(Some(PendingRealm {
+            before_sub,
+            resolved,
+            deferred_bindings,
+        }))
+    }
+    .await
+    .with_context(|| file_context)
 }
 
 /// Final stage: applies deferred flow bindings and offers to sync Keycloak's enrichment locally.
@@ -195,18 +197,24 @@ pub async fn finish_realm(
         let current = client
             .get_realm()
             .await
-            .with_context(|| format!("Failed to get realm '{}'", realm_name))?;
-        let mut current_val = serde_json::to_value(current)?;
+            .context("Failed to read the realm settings")?;
+        let mut current_val =
+            serde_json::to_value(current).context("Failed to serialize the realm settings")?;
         if let Some(obj) = current_val.as_object_mut() {
             for (key, value) in &pending.deferred_bindings {
                 obj.insert(key.clone(), value.clone());
             }
         }
-        let rep: RealmRepresentation = serde_json::from_value(current_val)?;
+        let rep: RealmRepresentation = deserialize_value(current_val)?;
+        let bindings: Vec<&str> = pending
+            .deferred_bindings
+            .keys()
+            .map(String::as_str)
+            .collect();
         client.update_realm(&rep).await.with_context(|| {
             format!(
-                "Failed to bind authentication flows of realm '{}'",
-                realm_name
+                "Failed to bind authentication flows ({})",
+                bindings.join(", ")
             )
         })?;
         eprintln!(
@@ -216,9 +224,12 @@ pub async fn finish_realm(
         );
     }
 
-    if let Ok(enriched) = client.get_realm().await {
-        let realm_path = crate::utils::yaml::find_realm_file(&workspace_dir).await;
-        crate::apply::generic::check_and_update_enrichment(
+    let realm_path = crate::utils::yaml::find_realm_file(&workspace_dir).await;
+    match client.get_realm().await {
+        Err(e) => crate::utils::ui::log_line(crate::apply::generic::enrichment_skipped_warning(
+            "realm", realm_name, &e,
+        )),
+        Ok(enriched) => crate::apply::generic::check_and_update_enrichment(
             &realm_path,
             profile.as_deref(),
             crate::apply::generic::LocalSource {
@@ -232,7 +243,8 @@ pub async fn finish_realm(
             yes,
             prompt_mutex,
         )
-        .await?;
+        .await
+        .with_context(|| realm_path.display().to_string())?,
     }
     Ok(())
 }

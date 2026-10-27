@@ -13,12 +13,13 @@ use crate::client::KeycloakClient;
 use crate::models::{ComponentRepresentation, KeycloakResource};
 use crate::utils::secrets::{SecretResolver, substitute_secrets};
 use crate::utils::ui::Ui;
-use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
+use crate::utils::yaml::{
+    deserialize_value, from_value_at, list_yaml_files, load_yaml_with_overlay,
+};
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::fs as async_fs;
 use tokio::task::JoinSet;
 
 /// Directories holding component files.
@@ -51,11 +52,18 @@ impl ComponentResolver {
         profile: Option<&str>,
         remote: Vec<ComponentRepresentation>,
     ) -> Result<Self> {
-        let realm_id = client
-            .get_realm()
-            .await
-            .ok()
-            .and_then(|r| r.extra.get("id").and_then(|v| v.as_str()).map(String::from));
+        let realm = match client.get_realm().await {
+            Ok(realm) => Some(realm),
+            // The realm does not exist yet (plan of a new realm): no parent ID to resolve.
+            Err(e) if crate::client::is_not_found(&e) => None,
+            Err(e) => {
+                return Err(e).context(
+                    "Failed to read the realm ID (needed to resolve components' parentId)",
+                );
+            }
+        };
+        let realm_id =
+            realm.and_then(|r| r.extra.get("id").and_then(|v| v.as_str()).map(String::from));
         let mut local_parents = HashMap::new();
         for (_, local) in read_local_components(workspace_dir, profile).await? {
             if let Some(id) = &local.id {
@@ -135,19 +143,7 @@ impl ComponentResolver {
 
 /// Lists the component files of a directory (overlays excluded).
 async fn component_files(dir: &Path, profile: Option<&str>) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    let mut entries = match async_fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(files),
-        Err(e) => return Err(e.into()),
-    };
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if is_yaml_file(&path) && !is_overlay_file(&path, profile) {
-            files.push(path);
-        }
-    }
-    Ok(files)
+    Ok(list_yaml_files(dir, profile).await?.unwrap_or_default())
 }
 
 /// Reads every local component (without secret substitution, for identity purposes only).
@@ -159,8 +155,7 @@ async fn read_local_components(
     for dir in COMPONENT_DIRS {
         for path in component_files(&workspace_dir.join(dir), profile).await? {
             let val = load_yaml_with_overlay(&path, profile).await?;
-            let rep: ComponentRepresentation = serde_json::from_value(val)
-                .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
+            let rep: ComponentRepresentation = from_value_at(val, &path)?;
             components.push((path, rep));
         }
     }
@@ -185,7 +180,7 @@ pub async fn process_component_file(
     let local_val_before_sub = val.clone();
     substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
     let local_val_resolved = val.clone();
-    let mut component_rep: ComponentRepresentation = serde_json::from_value(val)?;
+    let mut component_rep: ComponentRepresentation = deserialize_value(val)?;
 
     let id_opt = components
         .find_remote(&component_rep)
@@ -224,35 +219,52 @@ pub async fn process_component_file(
 
     let final_id = match id_opt {
         Some(id) => Some(id),
-        None => client.get_components().await.ok().and_then(|fresh| {
-            fresh
+        None => match client.get_components().await {
+            Ok(fresh) => fresh
                 .into_iter()
                 .find(|c| {
                     c.name == component_rep.name
                         && c.parent_id == component_rep.parent_id
                         && c.provider_id == component_rep.provider_id
                 })
-                .and_then(|c| c.id)
-        }),
+                .and_then(|c| c.id),
+            Err(e) => {
+                crate::utils::ui::log_line(crate::apply::generic::enrichment_skipped_warning(
+                    "component",
+                    &label(&component_rep),
+                    &e,
+                ));
+                None
+            }
+        },
     };
 
     if let Some(id) = final_id {
-        if let Ok(enriched) = client.get_resource::<ComponentRepresentation>(&id).await {
-            crate::apply::generic::check_and_update_enrichment(
-                &path,
-                profile.as_deref(),
-                crate::apply::generic::LocalSource {
-                    before_sub: &local_val_before_sub,
-                    resolved: &local_val_resolved,
-                },
-                &enriched,
-                &realm_name,
-                &secrets_path,
-                &*ui,
-                yes,
-                prompt_mutex,
-            )
-            .await?;
+        match client.get_resource::<ComponentRepresentation>(&id).await {
+            Err(e) => {
+                crate::utils::ui::log_line(crate::apply::generic::enrichment_skipped_warning(
+                    "component",
+                    &label(&component_rep),
+                    &e,
+                ))
+            }
+            Ok(enriched) => {
+                crate::apply::generic::check_and_update_enrichment(
+                    &path,
+                    profile.as_deref(),
+                    crate::apply::generic::LocalSource {
+                        before_sub: &local_val_before_sub,
+                        resolved: &local_val_resolved,
+                    },
+                    &enriched,
+                    &realm_name,
+                    &secrets_path,
+                    &*ui,
+                    yes,
+                    prompt_mutex,
+                )
+                .await?
+            }
         }
     }
 
@@ -293,16 +305,18 @@ pub async fn apply_components_or_keys(
             client,
             &workspace_dir,
             profile.as_deref(),
-            client.get_components().await.with_context(|| {
-                format!("Failed to get components/keys for realm '{}'", realm_name)
-            })?,
+            client
+                .get_components()
+                .await
+                .context("Failed to get components from Keycloak")?,
         )
         .await?,
     );
     for path in files {
-        let raw: ComponentRepresentation =
-            serde_json::from_value(load_yaml_with_overlay(&path, profile.as_deref()).await?)
-                .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
+        let raw: ComponentRepresentation = from_value_at(
+            load_yaml_with_overlay(&path, profile.as_deref()).await?,
+            &path,
+        )?;
         let tier = usize::from(!initial.is_realm_level(&raw));
         tiers[tier].push(path);
     }
@@ -318,7 +332,9 @@ pub async fn apply_components_or_keys(
                     client,
                     &workspace_dir,
                     profile.as_deref(),
-                    client.get_components().await?,
+                    client.get_components().await.context(
+                        "Failed to get components from Keycloak (to resolve child components' parents)",
+                    )?,
                 )
                 .await?,
             );
@@ -334,6 +350,7 @@ pub async fn apply_components_or_keys(
             let ui = Arc::clone(&ui);
             let prompt_mutex = Arc::clone(&prompt_mutex);
             set.spawn(async move {
+                let file_context = path.display().to_string();
                 process_component_file(
                     path,
                     client,
@@ -348,9 +365,10 @@ pub async fn apply_components_or_keys(
                     prompt_mutex,
                 )
                 .await
+                .with_context(|| file_context)
             });
         }
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, dir_name).await?;
     }
     Ok(())
 }
@@ -503,11 +521,8 @@ mod tests {
         )
         .await;
         assert!(res.is_err());
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Failed to update component")
-        );
+        let msg = format!("{:#}", res.unwrap_err());
+        assert!(msg.contains("Failed to update component"), "{msg}");
 
         fs::remove_file(components_dir.join("existing.yaml"))?;
 
@@ -535,11 +550,8 @@ mod tests {
         )
         .await;
         assert!(res.is_err());
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Failed to create component")
-        );
+        let msg = format!("{:#}", res.unwrap_err());
+        assert!(msg.contains("Failed to create component"), "{msg}");
 
         Ok(())
     }

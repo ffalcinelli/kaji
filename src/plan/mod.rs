@@ -184,7 +184,7 @@ pub async fn run_with_outcome(args: PlanArgs<'_>, write_plan: bool) -> Result<Pl
 
     let mut changed_files = Vec::new();
     let mut total_summary = PlanSummary::default();
-    let concurrent = crate::utils::join_all_tasks(set, None).await?;
+    let concurrent = crate::utils::join_all_tasks(set, "realms").await?;
     for res in sequential.into_iter().chain(concurrent) {
         let (files, summary) = res;
         changed_files.extend(files);

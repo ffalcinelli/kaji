@@ -112,7 +112,7 @@ pub async fn run_with_ui_and_secrets(
         });
     }
 
-    crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
+    crate::utils::join_all_tasks(set, "realms").await?;
 
     let secrets_lock = all_secrets.lock().await;
     if !secrets_lock.is_empty() {
@@ -260,7 +260,7 @@ where
             write_if_changed_with_mutex(&path, &yaml, yes, prompt_mutex, ui).await
         });
     }
-    crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
+    crate::utils::join_all_tasks(set, T::LABEL).await?;
     {
         let _lock = prompt_mutex.lock().await;
         eprintln!(
@@ -378,7 +378,7 @@ async fn inspect_realm(
         });
     }
 
-    crate::utils::join_all_tasks(set, Some("Task panicked")).await?;
+    crate::utils::join_all_tasks(set, &format!("realm '{}'", realm_name)).await?;
 
     Ok(())
 }

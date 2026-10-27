@@ -43,9 +43,11 @@ pub async fn reconcile_client_scopes(
         return Ok(());
     }
 
+    let name = rep.get_client_id_or_unknown();
     let scope_ids: HashMap<String, String> = client
         .get_client_scopes()
-        .await?
+        .await
+        .context("Failed to list client scopes")?
         .into_iter()
         .filter_map(|s| Some((s.name?, s.id?)))
         .collect();
@@ -54,21 +56,24 @@ pub async fn reconcile_client_scopes(
         if wanted.is_some() {
             let names = client
                 .get_client_scope_links(client_internal_id, path)
-                .await?
+                .await
+                .with_context(|| format!("Failed to list the {} of client '{}'", path, name))?
                 .into_iter()
                 .collect();
             current.insert(*path, names);
         }
     }
-    let name = rep.get_client_id_or_unknown();
 
     // Removals first, so a scope can move between the default and optional lists.
     for (path, wanted) in &desired {
         let Some(wanted) = wanted else { continue };
         for scope in current[path].iter().filter(|s| !wanted.contains(*s)) {
-            let id = scope_ids
-                .get(scope)
-                .with_context(|| format!("Client scope '{}' not found", scope))?;
+            let id = scope_ids.get(scope).with_context(|| {
+                format!(
+                    "Client scope '{}' linked to client '{}' not found on the server",
+                    scope, name
+                )
+            })?;
             client
                 .unlink_client_scope(client_internal_id, path, id)
                 .await
@@ -152,7 +157,10 @@ pub async fn load_role_mappings(
     if !want_realm && !want_clients {
         return Ok(());
     }
-    let mappings = client.get_role_mappings(owner).await?;
+    let mappings = client
+        .get_role_mappings(owner)
+        .await
+        .context("Failed to read role mappings")?;
     if want_realm {
         extra.insert(
             "realmRoles".to_string(),
@@ -184,7 +192,10 @@ pub async fn load_user_relations(
         return Ok(());
     };
     if declared.is_none_or(|d| d.contains_key("groups")) {
-        let mut paths = client.get_user_group_paths(&id).await?;
+        let mut paths = client
+            .get_user_group_paths(&id)
+            .await
+            .context("Failed to read group memberships")?;
         paths.sort();
         user.extra
             .insert("groups".to_string(), serde_json::json!(paths));
@@ -203,7 +214,10 @@ pub async fn reconcile_role_mappings(
     if realm_roles.is_none() && client_roles.is_none() {
         return Ok(());
     }
-    let current = client.get_role_mappings(owner).await?;
+    let current = client
+        .get_role_mappings(owner)
+        .await
+        .with_context(|| format!("Failed to read the role mappings of {}", owner_label))?;
 
     if let Some(wanted) = realm_roles {
         let wanted: HashSet<String> = wanted.into_iter().collect();
@@ -238,7 +252,13 @@ pub async fn reconcile_role_mappings(
     if let Some(wanted) = client_roles {
         let client_ids: HashMap<String, String> = client
             .get_clients()
-            .await?
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to list clients (for the client roles of {})",
+                    owner_label
+                )
+            })?
             .into_iter()
             .filter_map(|c| Some((c.client_id?, c.id?)))
             .collect();
@@ -256,9 +276,12 @@ pub async fn reconcile_role_mappings(
                 .get(&client_id)
                 .map(|m| m.mappings.clone())
                 .unwrap_or_default();
-            let internal_id = client_ids
-                .get(&client_id)
-                .with_context(|| format!("Client '{}' not found", client_id))?;
+            let internal_id = client_ids.get(&client_id).with_context(|| {
+                format!(
+                    "Client '{}' (in the clientRoles of {}) not found on the server",
+                    client_id, owner_label
+                )
+            })?;
             let remove: Vec<_> = have
                 .iter()
                 .filter(|r| !wanted_names.contains(&r.name))
@@ -345,16 +368,23 @@ pub async fn reconcile_user(
         let wanted: HashSet<String> = wanted.iter().map(|p| normalize(p)).collect();
         let current: HashSet<String> = client
             .get_user_group_paths(user_id)
-            .await?
+            .await
+            .with_context(|| format!("Failed to read the groups of {}", label))?
             .iter()
             .map(|p| normalize(p))
             .collect();
         for path in current.difference(&wanted) {
-            let group = client.get_group_by_path(path).await?;
+            let group = client
+                .get_group_by_path(path)
+                .await
+                .with_context(|| format!("Failed to look up group '{}' of {}", path, label))?;
             let id = group
                 .id
                 .with_context(|| format!("Group '{}' has no ID", path))?;
-            client.set_user_group(user_id, &id, false).await?;
+            client
+                .set_user_group(user_id, &id, false)
+                .await
+                .with_context(|| format!("Failed to remove {} from group '{}'", label, path))?;
             crate::utils::ui::log_line(format!(
                 "    {} Removed {} from group {}",
                 SUCCESS_UPDATE, label, path
@@ -368,7 +398,10 @@ pub async fn reconcile_user(
             let id = group
                 .id
                 .with_context(|| format!("Group '{}' has no ID", path))?;
-            client.set_user_group(user_id, &id, true).await?;
+            client
+                .set_user_group(user_id, &id, true)
+                .await
+                .with_context(|| format!("Failed to add {} to group '{}'", label, path))?;
             crate::utils::ui::log_line(format!(
                 "    {} Added {} to group {}",
                 SUCCESS_CREATE, label, path
@@ -389,14 +422,25 @@ pub async fn reconcile_user(
 ///
 /// Declared sub-groups are matched by name: missing ones are created, existing ones updated,
 /// and sub-groups that are no longer declared are deleted.
-#[async_recursion::async_recursion]
-#[allow(clippy::double_must_use)]
 pub async fn reconcile_group(
     client: &KeycloakClient,
     group: &crate::models::GroupRepresentation,
     group_id: &str,
 ) -> Result<()> {
-    let label = format!("group {}", group.get_name_or_unknown());
+    let path = format!("/{}", group.get_name_or_unknown().trim_start_matches('/'));
+    reconcile_group_at(client, group, group_id, &path).await
+}
+
+/// [`reconcile_group`] for the group at `path` (e.g. `/parent/child`, used in messages).
+#[async_recursion::async_recursion]
+#[allow(clippy::double_must_use)]
+async fn reconcile_group_at(
+    client: &KeycloakClient,
+    group: &crate::models::GroupRepresentation,
+    group_id: &str,
+    path: &str,
+) -> Result<()> {
+    let label = format!("group {}", path);
     reconcile_role_mappings(
         client,
         &["groups", group_id],
@@ -409,11 +453,20 @@ pub async fn reconcile_group(
     let Some(wanted) = group.sub_groups.as_ref() else {
         return Ok(());
     };
-    let current = client.get_group_children(group_id).await?;
+    let current = client
+        .get_group_children(group_id)
+        .await
+        .with_context(|| format!("Failed to list the sub-groups of {}", label))?;
     for existing in &current {
         let declared = wanted.iter().any(|w| w.name == existing.name);
         if !declared {
-            let id = existing.id.as_deref().context("Sub-group has no ID")?;
+            let id = existing.id.as_deref().with_context(|| {
+                format!(
+                    "Sub-group '{}' of {} has no ID",
+                    existing.get_name_or_unknown(),
+                    label
+                )
+            })?;
             client.delete_group(id).await.with_context(|| {
                 format!(
                     "Failed to delete sub-group '{}' of {}",
@@ -467,15 +520,33 @@ pub async fn reconcile_group(
                     Some(id) => id,
                     None => client
                         .get_group_children(group_id)
-                        .await?
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Created sub-group '{}' of {}, but looking up its ID failed",
+                                child.get_name_or_unknown(),
+                                label
+                            )
+                        })?
                         .into_iter()
                         .find(|c| c.name == child.name)
                         .and_then(|c| c.id)
-                        .context("Created sub-group not found")?,
+                        .with_context(|| {
+                            format!(
+                                "Created sub-group '{}' of {} is not listed by Keycloak",
+                                child.get_name_or_unknown(),
+                                label
+                            )
+                        })?,
                 }
             }
         };
-        reconcile_group(client, child, &child_id).await?;
+        let child_path = format!(
+            "{}/{}",
+            path.trim_end_matches('/'),
+            child.get_name_or_unknown()
+        );
+        reconcile_group_at(client, child, &child_id, &child_path).await?;
     }
     Ok(())
 }
@@ -486,7 +557,11 @@ pub async fn client_id_maps(
 ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
     let mut by_internal_id = HashMap::new();
     let mut by_client_id = HashMap::new();
-    for c in client.get_clients().await? {
+    let clients = client
+        .get_clients()
+        .await
+        .context("Failed to list clients (to resolve client role references)")?;
+    for c in clients {
         if let (Some(internal_id), Some(client_id)) = (c.id, c.client_id) {
             by_internal_id.insert(internal_id.clone(), client_id.clone());
             by_client_id.insert(client_id, internal_id);
@@ -504,7 +579,10 @@ pub async fn load_role_composites(
     let Some(id) = role.id.clone() else {
         return Ok(());
     };
-    let composites = client.get_role_composites(&id).await?;
+    let composites = client
+        .get_role_composites(&id)
+        .await
+        .context("Failed to read role composites")?;
     let (by_internal_id, _) = client_id_maps(client).await?;
     let mut realm = Vec::new();
     let mut clients: std::collections::BTreeMap<String, Vec<String>> = Default::default();
@@ -574,7 +652,10 @@ pub async fn reconcile_role_composites(
         .unwrap_or_default();
 
     let (by_internal_id, by_client_id) = client_id_maps(client).await?;
-    let current = client.get_role_composites(role_id).await?;
+    let current = client
+        .get_role_composites(role_id)
+        .await
+        .with_context(|| format!("Failed to read the composites of {}", label))?;
     let key_of = |r: &crate::models::RoleRepresentation| {
         if r.client_role {
             let client_id = r
@@ -608,9 +689,12 @@ pub async fn reconcile_role_composites(
     }
     for (client_id, name) in &wanted_client {
         if !have.contains(&(Some(client_id.clone()), name.clone())) {
-            let internal_id = by_client_id
-                .get(client_id)
-                .with_context(|| format!("Client '{}' not found", client_id))?;
+            let internal_id = by_client_id.get(client_id).with_context(|| {
+                format!(
+                    "Client '{}' (in the composites of {}) not found on the server",
+                    client_id, label
+                )
+            })?;
             add.push(
                 client
                     .get_client_role(internal_id, name)

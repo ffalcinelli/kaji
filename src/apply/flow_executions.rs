@@ -54,6 +54,17 @@ fn describe(key: &Option<ExecutionKey<'_>>) -> String {
     }
 }
 
+/// Describes the `index`-th declared execution (its position when it has no key).
+fn describe_declared(key: &Option<ExecutionKey<'_>>, index: usize) -> String {
+    match key {
+        Some(_) => describe(key),
+        None => format!(
+            "execution #{} (no 'authenticator' or 'flowAlias')",
+            index + 1
+        ),
+    }
+}
+
 /// Target priority of the `index`-th declared execution.
 fn target_priority(exec: &AuthenticationExecutionExportRepresentation, index: usize) -> i32 {
     exec.priority
@@ -67,7 +78,13 @@ async fn direct_children(
 ) -> Result<Vec<AuthenticationExecutionInfoRepresentation>> {
     Ok(client
         .get_flow_executions(flow_alias)
-        .await?
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to list the executions of authentication flow '{}'",
+                flow_alias
+            )
+        })?
         .into_iter()
         .filter(|row| row.level.unwrap_or(0) == 0)
         .collect())
@@ -81,7 +98,8 @@ async fn find_flow_id(client: &KeycloakClient, alias: &str) -> Result<Option<Str
     }
     Ok(client
         .get_raw_flows_with_executions()
-        .await?
+        .await
+        .with_context(|| format!("Failed to look up the ID of flow '{}'", alias))?
         .into_iter()
         .find(|f| f.alias.as_deref() == Some(alias))
         .and_then(|f| f.id))
@@ -143,7 +161,7 @@ pub async fn reconcile(
         let id = row
             .id
             .as_deref()
-            .context("Remote execution is missing 'id'")?;
+            .with_context(|| format!("Remote {} of flow '{}' has no ID", describe(&key), alias))?;
         client.delete_execution(id).await.with_context(|| {
             format!("Failed to remove {} from flow '{}'", describe(&key), alias)
         })?;
@@ -183,16 +201,25 @@ pub async fn reconcile(
             }
             None => {
                 if built_in {
-                    anyhow::bail!(
-                        "Cannot add {} to built-in flow '{}': copy the flow and bind the copy instead",
-                        describe(&key),
-                        alias
-                    );
+                    return Err(anyhow::anyhow!(
+                        "Hint: copy the flow, change the copy and bind it to the realm or client instead"
+                    ))
+                    .with_context(|| {
+                        format!(
+                            "Cannot add {} to built-in flow '{}'",
+                            describe_declared(&key, index),
+                            alias
+                        )
+                    });
                 }
                 add_execution(client, alias, flow_id, exec, priority)
                     .await
                     .with_context(|| {
-                        format!("Failed to add {} to flow '{}'", describe(&key), alias)
+                        format!(
+                            "Failed to add {} to flow '{}'",
+                            describe_declared(&key, index),
+                            alias
+                        )
                     })?;
                 crate::utils::ui::log_line(format!(
                     "    {} Added {} to flow {}",
@@ -258,7 +285,15 @@ async fn add_execution(
         updated.requirement = exec.requirement.clone();
     }
     updated.priority = Some(priority);
-    client.update_flow_execution(flow_alias, &updated).await?;
+    client
+        .update_flow_execution(flow_alias, &updated)
+        .await
+        .with_context(|| {
+            format!(
+                "Failed to set the requirement and priority of the new sub-flow '{}'",
+                subflow_alias
+            )
+        })?;
     if let Some(id) = updated.flow_id.as_deref() {
         client.remember_flow_id(subflow_alias, id);
     }

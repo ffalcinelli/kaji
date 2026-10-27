@@ -21,6 +21,49 @@ pub fn is_yaml_file(path: &Path) -> bool {
         .is_some_and(|ext| ext == "yaml" || ext == "yml")
 }
 
+/// Lists the YAML resource files of a directory, sorted, excluding the overlays of `profile`.
+/// Returns `None` if the directory does not exist.
+///
+/// # Errors
+/// Returns an error naming the directory if it cannot be read.
+pub async fn list_yaml_files(dir: &Path, profile: Option<&str>) -> Result<Option<Vec<PathBuf>>> {
+    let Some(entries) = crate::utils::read_dir_entries(dir).await? else {
+        return Ok(None);
+    };
+    let mut files: Vec<PathBuf> = entries
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| is_yaml_file(path) && !is_overlay_file(path, profile))
+        .collect();
+    files.sort();
+    Ok(Some(files))
+}
+
+/// Deserializes a resource, naming the offending field on error
+/// (e.g. `attributes.enabled: invalid type: string "yes", expected a boolean`).
+///
+/// # Errors
+/// Returns an error if the value does not match `T`.
+pub fn deserialize_value<T: serde::de::DeserializeOwned>(value: Value) -> Result<T> {
+    serde_path_to_error::deserialize(value).map_err(|err| {
+        let field = err.path().to_string();
+        let inner = err.into_inner();
+        if field == "." {
+            anyhow::anyhow!("{}", inner)
+        } else {
+            anyhow::anyhow!("{}: {}", field, inner)
+        }
+    })
+}
+
+/// Like [`deserialize_value`], naming the file the value was loaded from.
+///
+/// # Errors
+/// Returns an error if the value does not match `T`.
+pub fn from_value_at<T: serde::de::DeserializeOwned>(value: Value, path: &Path) -> Result<T> {
+    deserialize_value(value).with_context(|| format!("Invalid {}", path.display()))
+}
+
 /// Returns the path to `realm.yaml` in `realm_dir`, falling back to `realm.yml` when `realm.yaml`
 /// does not exist and `realm.yml` does.
 pub async fn find_realm_file(realm_dir: &Path) -> PathBuf {

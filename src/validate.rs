@@ -50,7 +50,7 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
             }
         }
 
-        results = crate::utils::join_all_tasks(join_set, None).await?;
+        results = crate::utils::join_all_tasks(join_set, &dir.display().to_string()).await?;
         results.sort_by(|a, b| a.0.cmp(&b.0));
     }
     Ok(results)

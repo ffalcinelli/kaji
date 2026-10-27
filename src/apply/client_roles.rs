@@ -9,7 +9,7 @@ use crate::client::KeycloakResourceMapping;
 use crate::models::{KeycloakResource, RoleRepresentation};
 use crate::utils::secrets::substitute_secrets;
 use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE, log_line};
-use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
+use crate::utils::yaml::{deserialize_value, list_yaml_files, load_yaml_with_overlay};
 use anyhow::{Context, Result};
 use sanitize_filename::sanitize;
 use std::collections::{HashMap, HashSet};
@@ -31,14 +31,11 @@ pub struct ClientRolesDir {
 /// Returns an error if the `clients` directory cannot be read.
 pub async fn client_role_dirs(realm_dir: &Path) -> Result<Vec<ClientRolesDir>> {
     let mut dirs = Vec::new();
-    let mut entries = match async_fs::read_dir(realm_dir.join("clients")).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(dirs),
-        Err(e) => return Err(e.into()),
-    };
-    while let Some(entry) = entries.next_entry().await? {
+    let entries = crate::utils::read_dir_entries(&realm_dir.join("clients")).await?;
+    for entry in entries.unwrap_or_default() {
         let roles_dir = entry.path().join("roles");
-        if entry.file_type().await?.is_dir() && async_fs::metadata(&roles_dir).await.is_ok() {
+        if crate::utils::is_dir_entry(&entry).await? && async_fs::metadata(&roles_dir).await.is_ok()
+        {
             dirs.push(ClientRolesDir {
                 dir_name: entry.file_name().to_string_lossy().to_string(),
                 roles_dir,
@@ -51,20 +48,7 @@ pub async fn client_role_dirs(realm_dir: &Path) -> Result<Vec<ClientRolesDir>> {
 
 /// Lists the role files of a directory (overlays excluded).
 pub async fn role_files(dir: &Path, profile: Option<&str>) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    let mut entries = match async_fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(files),
-        Err(e) => return Err(e.into()),
-    };
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if is_yaml_file(&path) && !is_overlay_file(&path, profile) {
-            files.push(path);
-        }
-    }
-    files.sort();
-    Ok(files)
+    Ok(list_yaml_files(dir, profile).await?.unwrap_or_default())
 }
 
 /// Remote clients by sanitized client ID: `(client UUID, client ID)`.
@@ -73,7 +57,8 @@ pub async fn clients_by_dir_name(
 ) -> Result<HashMap<String, (String, String)>> {
     Ok(client
         .get_clients()
-        .await?
+        .await
+        .context("Failed to list clients (to match client role directories)")?
         .into_iter()
         .filter_map(|c| {
             let client_id = c.client_id?;
@@ -90,8 +75,7 @@ async fn load_role(
     let mut val = load_yaml_with_overlay(path, profile).await?;
     let before_sub = val.clone();
     substitute_secrets(&mut val, resolver).await?;
-    let rep: RoleRepresentation = serde_json::from_value(val.clone())
-        .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
+    let rep: RoleRepresentation = deserialize_value(val.clone())?;
     Ok((before_sub, val, rep))
 }
 
@@ -121,15 +105,25 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
 
     for dir in dirs {
         let (client_internal_id, client_id) =
-            clients.get(&dir.dir_name).cloned().with_context(|| {
-                format!(
-                    "Client '{}' of roles directory {:?} not found in realm '{}'",
-                    dir.dir_name, dir.roles_dir, realm_name
-                )
-            })?;
+            clients
+                .get(&dir.dir_name)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Hint: the directory name must be the (filename-sanitized) clientId of a client declared in clients/"
+                    )
+                })
+                .with_context(|| {
+                    format!(
+                        "No client '{}' on the server for roles directory {}",
+                        dir.dir_name,
+                        dir.roles_dir.display()
+                    )
+                })?;
         let existing: HashMap<String, RoleRepresentation> = client
             .get_client_roles(&client_internal_id)
-            .await?
+            .await
+            .with_context(|| format!("Failed to list the roles of client '{}'", client_id))?
             .into_iter()
             .map(|r| (r.name.clone(), r))
             .collect();
@@ -137,9 +131,14 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
         let files = role_files(&dir.roles_dir, profile.as_deref()).await?;
         let mut declared = HashSet::new();
         for path in files {
-            let (before_sub, resolved, mut rep) =
-                load_role(&path, profile.as_deref(), Arc::clone(&resolver)).await?;
-            declared.insert(rep.name.clone());
+            // Only the name is needed to know which roles are declared: secrets are resolved
+            // for the files being applied only.
+            let raw = load_yaml_with_overlay(&path, profile.as_deref()).await?;
+            let name = raw
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .with_context(|| format!("{} has no 'name'", path.display()))?;
+            declared.insert(name.to_string());
             if planned_files
                 .as_ref()
                 .as_ref()
@@ -147,71 +146,86 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
             {
                 continue;
             }
-            let label = format!("role {} of client {}", rep.name, client_id);
-            let current = existing.get(&rep.name);
-            if review {
-                let action = if current.is_some() {
-                    "update"
-                } else {
-                    "create"
+            async {
+                let (before_sub, resolved, mut rep) =
+                    load_role(&path, profile.as_deref(), Arc::clone(&resolver)).await?;
+                let label = format!("role {} of client {}", rep.name, client_id);
+                let current = existing.get(&rep.name);
+                if review {
+                    let action = if current.is_some() {
+                        "update"
+                    } else {
+                        "create"
+                    };
+                    let proceed = {
+                        let _lock = prompt_mutex.lock().await;
+                        ui.confirm(&format!("Do you want to {} {}?", action, label), true)?
+                    };
+                    if !proceed {
+                        return Ok(());
+                    }
+                }
+                rep.client_role = true;
+                rep.container_id = Some(client_internal_id.clone());
+                let role_id = match current.and_then(|c| c.id.clone()) {
+                    Some(id) => {
+                        rep.id = Some(id.clone());
+                        client
+                            .update_resource(&id, &rep)
+                            .await
+                            .with_context(|| format!("Failed to update {}", label))?;
+                        log_line(format!("  {} Updated {}", SUCCESS_UPDATE, label));
+                        id
+                    }
+                    None => {
+                        rep.id = None;
+                        client
+                            .create_client_role(&client_internal_id, &rep)
+                            .await
+                            .with_context(|| format!("Failed to create {}", label))?;
+                        log_line(format!("  {} Created {}", SUCCESS_CREATE, label));
+                        client
+                            .get_client_role(&client_internal_id, &rep.name)
+                            .await
+                            .with_context(|| {
+                                format!("Created {}, but looking up its ID failed", label)
+                            })?
+                            .id
+                            .with_context(|| format!("Created {} has no ID", label))?
+                    }
                 };
-                let proceed = {
-                    let _lock = prompt_mutex.lock().await;
-                    ui.confirm(&format!("Do you want to {} {}?", action, label), true)?
-                };
-                if !proceed {
-                    continue;
-                }
-            }
-            rep.client_role = true;
-            rep.container_id = Some(client_internal_id.clone());
-            let role_id = match current.and_then(|c| c.id.clone()) {
-                Some(id) => {
-                    rep.id = Some(id.clone());
-                    client
-                        .update_resource(&id, &rep)
-                        .await
-                        .with_context(|| format!("Failed to update {}", label))?;
-                    log_line(format!("  {} Updated {}", SUCCESS_UPDATE, label));
-                    id
-                }
-                None => {
-                    rep.id = None;
-                    client
-                        .create_client_role(&client_internal_id, &rep)
-                        .await
-                        .with_context(|| format!("Failed to create {}", label))?;
-                    log_line(format!("  {} Created {}", SUCCESS_CREATE, label));
-                    client
-                        .get_client_role(&client_internal_id, &rep.name)
-                        .await?
-                        .id
-                        .with_context(|| format!("Created {} has no ID", label))?
-                }
-            };
 
-            if let Ok(mut enriched) = client.get_resource::<RoleRepresentation>(&role_id).await {
-                rep.prepare_enriched(&mut enriched);
-                if before_sub.get("clientRole").is_none() {
-                    enriched.client_role = false;
+                match client.get_resource::<RoleRepresentation>(&role_id).await {
+                    Err(e) => log_line(crate::apply::generic::enrichment_skipped_warning(
+                        "role", &label, &e,
+                    )),
+                    Ok(mut enriched) => {
+                        rep.prepare_enriched(&mut enriched);
+                        if before_sub.get("clientRole").is_none() {
+                            enriched.client_role = false;
+                        }
+                        let client_realm_prefix = format!("{}_client_{}", realm_name, client_id);
+                        crate::apply::generic::check_and_update_enrichment(
+                            &path,
+                            profile.as_deref(),
+                            crate::apply::generic::LocalSource {
+                                before_sub: &before_sub,
+                                resolved: &resolved,
+                            },
+                            &enriched,
+                            &client_realm_prefix,
+                            &secrets_path,
+                            &*ui,
+                            yes,
+                            Arc::clone(&prompt_mutex),
+                        )
+                        .await?;
+                    }
                 }
-                let client_realm_prefix = format!("{}_client_{}", realm_name, client_id);
-                crate::apply::generic::check_and_update_enrichment(
-                    &path,
-                    profile.as_deref(),
-                    crate::apply::generic::LocalSource {
-                        before_sub: &before_sub,
-                        resolved: &resolved,
-                    },
-                    &enriched,
-                    &client_realm_prefix,
-                    &secrets_path,
-                    &*ui,
-                    yes,
-                    Arc::clone(&prompt_mutex),
-                )
-                .await?;
+                Ok::<(), anyhow::Error>(())
             }
+            .await
+            .with_context(|| path.display().to_string())?;
         }
 
         if prune && !crate::apply::generic::is_protected_client(&client_id, realm_name) {
@@ -227,7 +241,9 @@ pub async fn apply_client_roles(ctx: crate::apply::ApplyContext<'_>) -> Result<(
                     )?
                 };
                 if proceed {
-                    let id = role.id.as_deref().context("Remote role has no ID")?;
+                    let id = role.id.as_deref().with_context(|| {
+                        format!("Role '{}' of client '{}' has no ID", name, client_id)
+                    })?;
                     client
                         .delete_resource::<RoleRepresentation>(id)
                         .await
@@ -271,17 +287,22 @@ pub async fn apply_role_composites(ctx: crate::apply::ApplyContext<'_>) -> Resul
         if !is_planned(&path) {
             continue;
         }
-        let (_, _, rep) = load_role(&path, profile.as_deref(), Arc::clone(&resolver)).await?;
-        if !rep.extra.contains_key("composites") {
-            continue;
+        async {
+            let (_, _, rep) = load_role(&path, profile.as_deref(), Arc::clone(&resolver)).await?;
+            if !rep.extra.contains_key("composites") {
+                return Ok(());
+            }
+            let id = client
+                .get_realm_role(&rep.name)
+                .await
+                .with_context(|| format!("Failed to look up realm role '{}'", rep.name))?
+                .id
+                .with_context(|| format!("Realm role '{}' has no ID", rep.name))?;
+            let label = format!("realm role {}", rep.name);
+            reconcile_role_composites(client, &rep, &id, &label).await
         }
-        let id = client
-            .get_realm_role(&rep.name)
-            .await?
-            .id
-            .with_context(|| format!("Realm role '{}' has no ID", rep.name))?;
-        let label = format!("realm role {}", rep.name);
-        reconcile_role_composites(client, &rep, &id, &label).await?;
+        .await
+        .with_context(|| path.display().to_string())?;
     }
 
     let dirs = client_role_dirs(&workspace_dir).await?;
@@ -297,19 +318,30 @@ pub async fn apply_role_composites(ctx: crate::apply::ApplyContext<'_>) -> Resul
             if !is_planned(&path) {
                 continue;
             }
-            let (_, _, rep) = load_role(&path, profile.as_deref(), Arc::clone(&resolver)).await?;
-            if !rep.extra.contains_key("composites") {
-                continue;
+            async {
+                let (_, _, rep) =
+                    load_role(&path, profile.as_deref(), Arc::clone(&resolver)).await?;
+                if !rep.extra.contains_key("composites") {
+                    return Ok(());
+                }
+                let id = client
+                    .get_client_role(client_internal_id, &rep.name)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to look up role '{}' of client '{}'",
+                            rep.name, client_id
+                        )
+                    })?
+                    .id
+                    .with_context(|| {
+                        format!("Role '{}' of client '{}' has no ID", rep.name, client_id)
+                    })?;
+                let label = format!("role {} of client {}", rep.name, client_id);
+                reconcile_role_composites(client, &rep, &id, &label).await
             }
-            let id = client
-                .get_client_role(client_internal_id, &rep.name)
-                .await?
-                .id
-                .with_context(|| {
-                    format!("Role '{}' of client '{}' has no ID", rep.name, client_id)
-                })?;
-            let label = format!("role {} of client {}", rep.name, client_id);
-            reconcile_role_composites(client, &rep, &id, &label).await?;
+            .await
+            .with_context(|| path.display().to_string())?;
         }
     }
     Ok(())

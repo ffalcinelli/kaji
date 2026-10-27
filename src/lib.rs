@@ -14,6 +14,8 @@ pub mod clean;
 pub mod cli;
 /// Keycloak Admin REST API HTTP client wrapper.
 pub mod client;
+/// Shared error types (`HttpError`, `MultiError`) and helpers to inspect them.
+pub mod error;
 /// Scaffolding for project configuration.
 pub mod init;
 /// Inspection pipeline to bootstrap local configuration files.
@@ -287,8 +289,7 @@ pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<Keycloa
             user.as_deref(),
             password.as_deref(),
         )
-        .await
-        .context("Login failed")?;
+        .await?;
     Ok(client)
 }
 

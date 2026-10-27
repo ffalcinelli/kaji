@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 #![allow(clippy::collapsible_if)]
+use crate::error::HttpError;
 use crate::models::{
     AuthenticationExecutionInfoRepresentation, AuthenticationFlowRepresentation,
     AuthenticatorConfigRepresentation, ClientRepresentation, ClientScopeRepresentation,
@@ -217,10 +218,9 @@ impl KeycloakClient {
 
     /// Builds `{realm}/{segments...}` with every segment percent-encoded.
     fn realm_url(&self, segments: &[&str]) -> Result<String> {
-        let mut url =
-            reqwest::Url::parse(&self.realm_admin_url()).context("Invalid Keycloak base URL")?;
+        let mut url = self.parsed_realm_admin_url()?;
         url.path_segments_mut()
-            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL"))?
+            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL '{}'", self.base_url))?
             .extend(segments);
         Ok(url.to_string())
     }
@@ -250,7 +250,16 @@ impl KeycloakClient {
             group.sub_groups = Some(Vec::new());
             return Ok(());
         }
-        let mut children = self.get_group_children(&id).await?;
+        let mut children = self.get_group_children(&id).await.with_context(|| {
+            format!(
+                "Failed to list sub-groups of group '{}'",
+                group
+                    .path
+                    .as_deref()
+                    .or(group.name.as_deref())
+                    .unwrap_or(&id)
+            )
+        })?;
         for child in &mut children {
             self.load_group_children(child).await?;
         }
@@ -588,10 +597,12 @@ impl KeycloakClient {
             name: &'a str,
         }
 
-        let provider_id = action_rep
-            .provider_id
-            .as_deref()
-            .context("Provider ID required for registration")?;
+        let provider_id = action_rep.provider_id.as_deref().with_context(|| {
+            format!(
+                "Required action '{}' needs a 'providerId' to be registered",
+                action_rep.alias.as_deref().unwrap_or_default()
+            )
+        })?;
         let name = action_rep.name.as_deref().unwrap_or(provider_id);
 
         let body = RegisterActionBody { provider_id, name };
@@ -624,9 +635,28 @@ impl KeycloakClient {
         self.delete_resource::<ComponentRepresentation>(id).await
     }
 
+    /// Parses the realm admin URL (`{base}/admin/realms/{realm}`).
+    fn parsed_realm_admin_url(&self) -> Result<reqwest::Url> {
+        reqwest::Url::parse(&self.realm_admin_url())
+            .with_context(|| format!("Invalid Keycloak base URL '{}'", self.base_url))
+    }
+
     async fn get<T: for<'a> Deserialize<'a>>(&self, url: &str) -> Result<T> {
         let response = self.execute(reqwest::Method::GET, url, |rb| rb).await?;
-        response.json().await.context("Failed to parse response")
+        let parse_context = || {
+            format!(
+                "Failed to parse response of GET {} as {}",
+                redact_url(url),
+                std::any::type_name::<T>()
+            )
+        };
+        let body = response
+            .bytes()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .with_context(parse_context)?;
+        let deserializer = &mut serde_json::Deserializer::from_slice(&body);
+        serde_path_to_error::deserialize(deserializer).with_context(parse_context)
     }
 
     /// Fetches every page of a paginated list endpoint (`first`/`max` query parameters).
@@ -643,7 +673,8 @@ impl KeycloakClient {
                     all.len(),
                     PAGE_SIZE
                 ))
-                .await?;
+                .await
+                .with_context(|| format!("Failed to read page starting at item {}", all.len()))?;
             let len = page.len();
             all.extend(page);
             if len < PAGE_SIZE {
@@ -712,7 +743,7 @@ impl KeycloakClient {
                         tokio::time::sleep(backoff_delay(attempt)).await;
                         continue;
                     }
-                    return Err(e).with_context(|| {
+                    return Err(e.without_url()).with_context(|| {
                         format!("Failed to send {} request to {}", label, redact_url(url))
                     });
                 }
@@ -742,8 +773,7 @@ impl KeycloakClient {
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    return Self::check_response(response, &format!("{} request failed", label))
-                        .await;
+                    return Self::check_response(response, &label, url).await;
                 }
             }
         }
@@ -764,8 +794,9 @@ impl KeycloakClient {
             .form(params)
             .send()
             .await
-            .context("Failed to send login request")?;
-        let response = Self::check_response(response, "Login failed").await?;
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| format!("Failed to send login request to {}", self.token_url()))?;
+        let response = Self::check_response(response, "POST", &self.token_url()).await?;
 
         #[derive(Deserialize)]
         struct TokenResponse {
@@ -802,7 +833,25 @@ impl KeycloakClient {
             )).context("Missing authentication credentials");
         }
         debug!("Logging in to {}", redact_url(&self.token_url()));
-        self.request_token(&params).await
+        self.request_token(&params).await.map_err(|err| {
+            let rejected = matches!(
+                crate::error::http_status(&err).map(|s| s.as_u16()),
+                Some(400 | 401)
+            );
+            let err = if rejected {
+                err.context(format!(
+                    "Hint: check the credentials, that client '{}' exists in realm '{}', and the authentication realm (--auth-realm, KEYCLOAK_AUTH_REALM)",
+                    credentials.client_id, self.auth_realm
+                ))
+            } else {
+                err
+            };
+            err.context(format!(
+                "Login to {} (client '{}') failed",
+                redact_url(&self.token_url()),
+                credentials.client_id
+            ))
+        })
     }
 
     /// Returns a valid access token, refreshing it first when it is about to expire.
@@ -939,32 +988,14 @@ impl KeycloakClient {
         }
     }
 
-    async fn check_response(response: Response, context_msg: &str) -> Result<Response> {
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-
-            #[derive(Deserialize)]
-            struct KeycloakErrorBody {
-                error: Option<String>,
-                #[serde(rename = "error_description")]
-                error_description: Option<String>,
-                #[serde(rename = "errorMessage")]
-                error_message: Option<String>,
-            }
-
-            if let Ok(err_body) = serde_json::from_str::<KeycloakErrorBody>(&text) {
-                let detail = err_body
-                    .error_description
-                    .or(err_body.error_message)
-                    .unwrap_or_else(|| err_body.error.unwrap_or_default());
-                if !detail.is_empty() {
-                    anyhow::bail!("{}: {} - {}", context_msg, status, detail);
-                }
-            }
-            anyhow::bail!("{}: {} - {}", context_msg, status, text);
+    /// Turns a non-success response into an [`HttpError`] naming the request.
+    async fn check_response(response: Response, method: &str, url: &str) -> Result<Response> {
+        if response.status().is_success() {
+            return Ok(response);
         }
-        Ok(response)
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        Err(HttpError::new(method, redact_url(url), status, &text).into())
     }
 }
 
@@ -1057,11 +1088,7 @@ fn retry_after(response: &Response) -> Option<Duration> {
         .map(|secs| Duration::from_secs(secs.min(10)))
 }
 
-/// Returns true if the error chain contains an HTTP 404 response from Keycloak.
-pub fn is_not_found(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.to_string().contains("404 Not Found"))
-}
+pub use crate::error::{is_conflict, is_not_found};
 
 fn redact_url(url_str: &str) -> String {
     match reqwest::Url::parse(url_str) {
@@ -1206,10 +1233,9 @@ impl KeycloakClient {
 
     /// Builds `{realm}/authentication/flows/{alias}/{suffix...}` with the alias percent-encoded.
     fn flow_url(&self, flow_alias: &str, suffix: &[&str]) -> Result<String> {
-        let mut url =
-            reqwest::Url::parse(&self.realm_admin_url()).context("Invalid Keycloak base URL")?;
+        let mut url = self.parsed_realm_admin_url()?;
         url.path_segments_mut()
-            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL"))?
+            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL '{}'", self.base_url))?
             .extend(["authentication", "flows", flow_alias])
             .extend(suffix);
         Ok(url.to_string())
@@ -1307,7 +1333,13 @@ impl KeycloakClient {
         let response = self
             .execute(reqwest::Method::POST, &url, |rb| rb.json(config))
             .await
-            .context("POST authenticator config failed")?;
+            .with_context(|| {
+                format!(
+                    "Failed to create authenticator config '{}' for execution {}",
+                    config.alias.as_deref().unwrap_or_default(),
+                    execution_id
+                )
+            })?;
         self.invalidate_resource_cache::<AuthenticatorConfigRepresentation>();
         self.invalidate_resource_cache::<AuthenticationFlowRepresentation>();
         if let Some(id) = location_id(&response) {
@@ -1317,10 +1349,13 @@ impl KeycloakClient {
         let created: AuthenticatorConfigRepresentation = response
             .json()
             .await
-            .context("Failed to parse created authenticator config response")?;
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| {
+                format!("Failed to parse the response of POST {}", redact_url(&url))
+            })?;
         created
             .id
-            .context("Created authenticator config response has no ID")
+            .with_context(|| format!("POST {} returned no config ID", redact_url(&url)))
     }
 }
 
@@ -1425,7 +1460,13 @@ impl KeycloakResourceMapping for RoleRepresentation {
     /// The `Location` of a created role ends with its name, not its ID: look the ID up.
     async fn create(client: &KeycloakClient, res: &Self) -> Result<Option<String>> {
         client.post(&client.resource_url::<Self>(), res).await?;
-        Ok(client.get_realm_role(&res.name).await?.id)
+        let created = client.get_realm_role(&res.name).await.with_context(|| {
+            format!(
+                "Role '{}' was created, but looking up its ID failed",
+                res.name
+            )
+        })?;
+        Ok(created.id)
     }
 
     /// Composites are reconciled after the enrichment check: keep the declared flag.
@@ -1508,7 +1549,10 @@ impl KeycloakResourceMapping for RequiredActionProviderRepresentation {
     /// Required actions cannot be POSTed: they are registered from their provider and then
     /// configured with a PUT.
     async fn create(client: &KeycloakClient, res: &Self) -> Result<Option<String>> {
-        client.register_required_action(res).await?;
+        client
+            .register_required_action(res)
+            .await
+            .context("Failed to register the required action from its provider")?;
         let alias = res
             .provider_id
             .clone()
@@ -1518,7 +1562,10 @@ impl KeycloakResourceMapping for RequiredActionProviderRepresentation {
         registered.alias = Some(alias.clone());
         client
             .put(&client.object_url::<Self>(&alias), &registered)
-            .await?;
+            .await
+            .with_context(|| {
+                format!("Required action '{alias}' was registered, but configuring it failed")
+            })?;
         Ok(Some(alias))
     }
 }

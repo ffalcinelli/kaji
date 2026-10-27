@@ -85,7 +85,7 @@ pub async fn plan_components_or_keys(
         }
     }
 
-    for res in crate::utils::join_all_tasks(set, None).await? {
+    for res in crate::utils::join_all_tasks(set, dir_name).await? {
         let (local_component, path, remote) = res;
 
         let is_update = remote.is_some();

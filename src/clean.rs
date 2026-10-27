@@ -91,7 +91,7 @@ pub async fn run(
         });
     }
 
-    crate::utils::join_all_tasks(set, Some("Join error")).await?;
+    crate::utils::join_all_tasks(set, "clean").await?;
 
     eprintln!(
         "{} {}",

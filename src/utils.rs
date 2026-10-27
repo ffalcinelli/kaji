@@ -277,33 +277,27 @@ pub fn to_sorted_yaml<T: Serialize>(value: &T) -> anyhow::Result<String> {
 ///
 /// All tasks are always awaited, even after a failure: aborting siblings could interrupt
 /// a resource between its API call and the local file update. When several tasks fail, the
-/// returned error lists every failure.
+/// returned error is a [`crate::error::MultiError`] keeping every failure with its full context.
+/// `label` names what the tasks work on and is only used for tasks that panicked.
 pub async fn join_all_tasks<T: 'static>(
     mut set: tokio::task::JoinSet<anyhow::Result<T>>,
-    context_msg: Option<&str>,
+    label: &str,
 ) -> anyhow::Result<Vec<T>> {
     let mut results = Vec::new();
     let mut errors: Vec<anyhow::Error> = Vec::new();
     while let Some(res) = set.join_next().await {
         let outcome = match res {
             Ok(result) => result,
-            Err(join_err) => Err(anyhow::Error::new(join_err)
-                .context(context_msg.unwrap_or("Task panicked").to_string())),
+            Err(join_err) => {
+                Err(anyhow::Error::new(join_err).context(format!("Task for {} failed", label)))
+            }
         };
         match outcome {
             Ok(value) => results.push(value),
             Err(e) => errors.push(e),
         }
     }
-    match errors.len() {
-        0 => Ok(results),
-        1 => Err(errors.remove(0)),
-        n => {
-            let details: Vec<String> = errors.iter().map(|e| format!("- {:#}", e)).collect();
-            Err(anyhow::anyhow!("{}", details.join("\n")))
-                .with_context(|| format!("{} tasks failed", n))
-        }
-    }
+    crate::error::MultiError::into_result(errors).map(|()| results)
 }
 
 /// Validates that a realm name is safe to use as a workspace directory name.
@@ -322,25 +316,44 @@ pub fn validate_realm_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Lists the entries of a directory, or `None` if it does not exist.
+///
+/// # Errors
+/// Returns an error naming the directory if it cannot be read.
+pub async fn read_dir_entries(dir: &Path) -> anyhow::Result<Option<Vec<fs::DirEntry>>> {
+    let context = || format!("Failed to read directory {}", dir.display());
+    let mut entries = match fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(context),
+    };
+    let mut result = Vec::new();
+    while let Some(entry) = entries.next_entry().await.with_context(context)? {
+        result.push(entry);
+    }
+    Ok(Some(result))
+}
+
+/// Returns true if the entry is a directory (symlinks are not followed).
+pub async fn is_dir_entry(entry: &fs::DirEntry) -> anyhow::Result<bool> {
+    let file_type = entry
+        .file_type()
+        .await
+        .with_context(|| format!("Failed to read the file type of {}", entry.path().display()))?;
+    Ok(file_type.is_dir())
+}
+
 /// Discovers valid realm directories in the given workspace.
 /// Ignores hidden directories (`.*`), `profiles`, `target`, and non-directories.
 pub async fn discover_realms(workspace_dir: &Path) -> anyhow::Result<Vec<String>> {
     let mut realms = Vec::new();
-    match fs::read_dir(workspace_dir).await {
-        Ok(mut entries) => {
-            while let Some(entry) = entries.next_entry().await? {
-                if entry.file_type().await?.is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if !name.starts_with('.') && name != "profiles" && name != "target" {
-                        realms.push(name);
-                    }
-                }
+    for entry in read_dir_entries(workspace_dir).await?.unwrap_or_default() {
+        if is_dir_entry(&entry).await? {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with('.') && name != "profiles" && name != "target" {
+                realms.push(name);
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(realms);
-        }
-        Err(e) => return Err(e).context("Failed to read workspace directory"),
     }
     realms.sort();
     Ok(realms)
@@ -842,10 +855,10 @@ mod tests {
             }
             Ok::<(), anyhow::Error>(())
         });
-        let err = join_all_tasks(set, Some("Realm task panicked"))
-            .await
-            .unwrap_err();
-        assert!(format!("{:#}", err).contains("Realm task panicked"));
+        let err = join_all_tasks(set, "realm 'r'").await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("Task for realm 'r' failed"), "{msg}");
+        assert!(msg.contains("boom"), "{msg}");
     }
 
     #[tokio::test]
@@ -862,16 +875,18 @@ mod tests {
             counter.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
-        let err = join_all_tasks(set, None).await.unwrap_err();
+        let err = join_all_tasks(set, "test").await.unwrap_err();
+        let multi = err.downcast_ref::<crate::error::MultiError>().unwrap();
+        assert_eq!(multi.errors().len(), 2);
         let msg = format!("{:#}", err);
-        assert!(msg.contains("2 tasks failed"), "{msg}");
+        assert!(msg.contains("2 operations failed"), "{msg}");
         assert!(msg.contains("first failure") && msg.contains("second failure"));
         // The slow sibling was not aborted.
         assert_eq!(finished.load(Ordering::SeqCst), 1);
 
         let mut ok_set = tokio::task::JoinSet::new();
         ok_set.spawn(async { Ok::<_, anyhow::Error>(1) });
-        assert_eq!(join_all_tasks(ok_set, None).await.unwrap(), vec![1]);
+        assert_eq!(join_all_tasks(ok_set, "test").await.unwrap(), vec![1]);
     }
 
     #[test]

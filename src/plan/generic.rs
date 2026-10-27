@@ -81,7 +81,7 @@ where
     }
 
     let mut declared = std::collections::HashSet::new();
-    for res in crate::utils::join_all_tasks(set, None).await? {
+    for res in crate::utils::join_all_tasks(set, T::LABEL).await? {
         let (mut local, path, remote) = res;
         if let Some(identity) = local.get_identity() {
             declared.insert(identity);

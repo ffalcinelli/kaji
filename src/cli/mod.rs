@@ -64,49 +64,73 @@ pub async fn run(workspace_dir: PathBuf, ui: &dyn Ui) -> Result<()> {
 
 async fn handle_create_user(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = user::create_user_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error creating user: {}", e));
+        ui.print_error(&format!(
+            "Error creating user:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_change_password(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = user::change_user_password_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error changing password: {}", e));
+        ui.print_error(&format!(
+            "Error changing password:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_create_client(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = client::create_client_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error creating client: {}", e));
+        ui.print_error(&format!(
+            "Error creating client:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_create_role(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = role::create_role_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error creating role: {}", e));
+        ui.print_error(&format!(
+            "Error creating role:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_create_group(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = group::create_group_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error creating group: {}", e));
+        ui.print_error(&format!(
+            "Error creating group:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_create_idp(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = idp::create_idp_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error creating IDP: {}", e));
+        ui.print_error(&format!(
+            "Error creating IDP:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_create_client_scope(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = client::create_client_scope_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error creating client scope: {}", e));
+        ui.print_error(&format!(
+            "Error creating client scope:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 
 async fn handle_rotate_keys(workspace_dir: &std::path::Path, ui: &dyn Ui) {
     if let Err(e) = keys::rotate_keys_interactive(workspace_dir, ui).await {
-        ui.print_error(&format!("Error rotating keys: {}", e));
+        ui.print_error(&format!(
+            "Error rotating keys:\n{}",
+            crate::utils::ui::format_error(&e)
+        ));
     }
 }
 

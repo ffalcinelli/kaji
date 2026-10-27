@@ -40,9 +40,16 @@ async fn test_client_get_all_error() {
         .create_async()
         .await;
 
-    let res = client.get_clients().await;
-    assert!(res.is_err());
-    assert!(res.unwrap_err().to_string().contains("GET request failed"));
+    let err = client.get_clients().await.unwrap_err();
+    assert_eq!(
+        kaji::error::http_status(&err),
+        Some(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.starts_with("GET http") && msg.contains("/admin/realms/test-realm/clients failed: 500"),
+        "{msg}"
+    );
 }
 
 #[tokio::test]
