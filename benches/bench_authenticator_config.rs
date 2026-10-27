@@ -54,8 +54,10 @@ async fn start_benchmark_server() -> String {
                             .map(|j| {
                                 serde_json::json!({
                                     "id": format!("exec-id-{}", j),
-                                    "authenticator": format!("provider-{}", j),
+                                    "providerId": format!("provider-{}", j),
                                     "requirement": "REQUIRED",
+                                    "level": 0,
+                                    "index": j,
                                     "priority": j
                                 })
                             })

@@ -656,7 +656,7 @@ impl KeycloakClient {
             format!(
                 "Failed to parse response of GET {} as {}",
                 redact_url(url),
-                std::any::type_name::<T>()
+                short_type_name::<T>()
             )
         };
         let body = response
@@ -1086,6 +1086,25 @@ fn location_id(response: &Response) -> Option<String> {
 
 fn backoff_delay(attempt: u32) -> Duration {
     Duration::from_millis(200u64.saturating_mul(1 << attempt.min(5))).min(Duration::from_secs(5))
+}
+
+/// `std::any::type_name` without module paths (`Vec<RoleRepresentation>`).
+fn short_type_name<T: ?Sized>() -> String {
+    let mut out = String::new();
+    let mut ident_start = 0;
+    let mut chars = std::any::type_name::<T>().chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ':' && chars.peek() == Some(&':') {
+            chars.next();
+            out.truncate(ident_start);
+            continue;
+        }
+        out.push(c);
+        if !(c.is_alphanumeric() || c == '_') {
+            ident_start = out.len();
+        }
+    }
+    out
 }
 
 fn retry_after(response: &Response) -> Option<Duration> {
@@ -2191,6 +2210,18 @@ mod tests {
             .unwrap();
         assert!(client.get_roles().await.unwrap().is_empty());
         api.assert_async().await;
+    }
+
+    #[test]
+    fn test_short_type_name() {
+        assert_eq!(
+            short_type_name::<Vec<crate::models::RoleRepresentation>>(),
+            "Vec<RoleRepresentation>"
+        );
+        assert_eq!(
+            short_type_name::<HashMap<String, Vec<u8>>>(),
+            "HashMap<String, Vec<u8>>"
+        );
     }
 
     #[test]
