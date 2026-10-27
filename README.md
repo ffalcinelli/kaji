@@ -271,6 +271,8 @@ Ensures your local YAML files are syntactically correct and follow the Keycloak 
 - **No duplicate resource identities** across YAML files in the same directory (roles, client roles, clients, identity providers, client scopes, groups and sibling sub-groups, users, authentication flows, required actions, and authenticator configs)
 - **Authentication flow aliases do not contain characters forbidden by Keycloak** (`(`, `)`, `[`, `]`, `{`, `}`, `/`, `\`)
 - **Cycle detection (DFS)** and reference validation for authentication flows and sub-flows
+
+Every problem is reported at once, grouped by realm, each with the file it was found in (duplicates name both files; type errors name the field, e.g. `attributes.enabled: invalid type: string "yes", expected a boolean`).
 ```bash
 kaji validate
 kaji -p prod validate
@@ -301,7 +303,7 @@ Local files may be **partial**. For the realm, clients, client scopes and users,
 ### `apply`
 Reconciles the remote state. It follows a **staged application order** (Realm → Roles/Client Scopes/Required Actions → Flows/Groups → Identity Providers/Clients → Users/Authenticator Configs/Components/Keys → realm flow bindings) so that every referenced resource exists before it is used, even when bootstrapping a new realm.
 
-**`apply` automatically runs `validate` first** (pure local file I/O — no network cost). If validation fails, apply aborts immediately with a clear error message pointing to the offending file, before making any API calls to Keycloak. Validation enforces execution requirement enums, ensures subflows specify valid aliases, and detects circular dependency graphs using DFS.
+**`apply` automatically runs `validate` first** (pure local file I/O — no network cost). If validation fails, apply aborts immediately and lists every problem with its file, before making any API calls to Keycloak. Validation enforces execution requirement enums, ensures subflows specify valid aliases, and detects circular dependency graphs using DFS.
 
 Authentication flows use Keycloak's export format: each flow file lists its `authenticationExecutions` (`authenticator` or `authenticatorFlow: true` + `flowAlias`, `requirement`, optional `priority` and `authenticatorConfig` alias), and sub-flows live in their own files with `topLevel: false`. Flows are applied in **topological tiers** (sub-flows first), then their executions are reconciled: missing executions are added (sub-flows are linked), undeclared ones are removed, and requirements/priorities are updated. Executions without `priority` are ordered as listed. Built-in flows only accept requirement/priority changes; copy a built-in flow to change its structure. Leaving out `authenticationExecutions` keeps the remote executions untouched.
 
@@ -408,6 +410,8 @@ redirectUris:
 protocol: openid-connect
 ```
 
+A missing secret is reported with every unresolved placeholder of the file, where each is used and where it can be defined, e.g. `Missing secrets: ${LDAP_PASSWORD} (at config.bindCredential[0]), ${SMTP_PASSWORD} (at smtpServer.password)`.
+
 ### Usage Workflow
 
 1. Run `kaji inspect` to bootstrap your local configuration.
@@ -416,6 +420,25 @@ protocol: openid-connect
 4. (Optional) Replace placeholders with `vault:` syntax if using HashiCorp Vault.
 5. Provide secrets via environment variables or set `VAULT_ADDR` and `VAULT_TOKEN`.
 6. Run `kaji apply` to synchronize changes.
+
+---
+
+## 🧯 Troubleshooting
+
+Errors are printed as a tree: the realm, the stage, the file and the operation that failed, down to the Keycloak request (`GET <url> failed: 404 Not Found - <Keycloak message>`), with suggested fixes (💡) at the end. Independent failures are all listed, numbered.
+
+**`Could not find authenticator provider`**: an authentication flow uses an authenticator whose provider (a custom jar) is not installed on the server, so Keycloak cannot list the flow's executions. kaji names the flow and the missing provider IDs:
+
+```
+Failed to inspect realm 'demo'
+  ↳ Failed to fetch authentication flows
+  ↳ Authentication flow 'browser-custom' uses authenticator providers not installed on the server: my-otp-authenticator
+  ↳ GET https://kc/admin/realms/demo/authentication/flows/browser-custom/executions failed: 404 Not Found - Could not find authenticator provider
+
+💡 Hint: install the provider jar on the Keycloak server, or remove these executions from the flow
+```
+
+When the provider is used in a nested sub-flow, the message lists the flow's sub-flows instead.
 
 ---
 

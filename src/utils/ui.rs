@@ -47,6 +47,95 @@ pub trait Ui: Send + Sync {
     fn print_warn(&self, msg: &str);
 }
 
+/// Lines and hints of a rendered error.
+struct ErrorReport {
+    lines: Vec<String>,
+    hints: Vec<String>,
+}
+
+impl ErrorReport {
+    fn new(err: &anyhow::Error) -> Self {
+        let mut report = Self {
+            lines: Vec::new(),
+            hints: Vec::new(),
+        };
+        report.add_chain(err.chain(), 2, "");
+        report
+    }
+
+    /// Adds a cause chain. The first message is printed at `indent` after `head` (e.g. `"1. "`),
+    /// the following ones below it as `↳` lines; `Hint:` causes are collected for the end.
+    fn add_chain<'a>(
+        &mut self,
+        chain: impl Iterator<Item = &'a (dyn std::error::Error + 'static)>,
+        indent: usize,
+        head: &str,
+    ) {
+        let mut first = true;
+        for cause in chain {
+            let multi = cause.downcast_ref::<crate::error::MultiError>();
+            let message = match multi {
+                Some(m) => m.summary(),
+                None => cause.to_string(),
+            };
+            if message.starts_with("Hint:") {
+                if !self.hints.contains(&message) {
+                    self.hints.push(message);
+                }
+                continue;
+            }
+            let prefix = if first {
+                format!("{}{}", " ".repeat(indent), head)
+            } else {
+                format!("{}↳ ", " ".repeat(indent + head.chars().count() + 2))
+            };
+            let text_column = prefix.chars().count();
+            for (i, line) in message.lines().enumerate() {
+                if i == 0 {
+                    self.lines.push(format!("{}{}", prefix, line));
+                } else {
+                    self.lines
+                        .push(format!("{}{}", " ".repeat(text_column), line));
+                }
+            }
+            if let Some(multi) = multi {
+                for (i, err) in multi.errors().iter().enumerate() {
+                    self.add_chain(err.chain(), text_column + 2, &format!("{}. ", i + 1));
+                }
+            }
+            first = false;
+        }
+    }
+}
+
+/// Renders an error chain as indented plain text: one cause per line, the failures collected in
+/// a [`crate::error::MultiError`] as numbered sub-trees, and `Hint:` causes at the end.
+pub fn format_error(err: &anyhow::Error) -> String {
+    let report = ErrorReport::new(err);
+    let mut out = report.lines.join("\n");
+    for hint in report.hints {
+        out.push_str("\n\n");
+        out.push_str(&hint);
+    }
+    out
+}
+
+/// Prints an error to stderr: a header, the cause tree and the hints (styled).
+pub fn eprint_error(err: &anyhow::Error) {
+    let report = ErrorReport::new(err);
+    eprintln!("{} {}", ERROR, console::style("Error:").red().bold());
+    for (i, line) in report.lines.iter().enumerate() {
+        if i == 0 {
+            eprintln!("{}", console::style(line).bold());
+        } else {
+            eprintln!("{}", line);
+        }
+    }
+    for hint in report.hints {
+        eprintln!("\n{} {}", INFO, console::style(hint).blue());
+    }
+}
+
 /// All progress bars are attached to one `MultiProgress` so prompts can hide them while the
 /// user answers (otherwise the bars redraw over the prompt).
 static PROGRESS: std::sync::LazyLock<indicatif::MultiProgress> =
@@ -314,6 +403,55 @@ impl Ui for MockUi {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_hints_are_printed_once() {
+        let first = anyhow::anyhow!("Hint: same").context("first");
+        let second = anyhow::anyhow!("Hint: same").context("second");
+        let err = crate::error::MultiError::with_noun(vec![first, second], "problems found");
+        let err: anyhow::Error = err.into();
+        let rendered = super::format_error(&err);
+        assert_eq!(rendered.matches("Hint: same").count(), 1, "{rendered}");
+        assert!(rendered.starts_with("  2 problems found:"), "{rendered}");
+        // The styled variant prints the same report to stderr.
+        super::eprint_error(&err);
+    }
+
+    #[test]
+    fn test_format_error_renders_tree_and_hints() {
+        let http: anyhow::Error = crate::error::HttpError::new(
+            "PUT",
+            "https://kc/admin/realms/r/clients/1",
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"errorMessage":"Invalid redirect"}"#,
+        )
+        .into();
+        let first = http
+            .context("Hint: fix the redirect URIs")
+            .context("Failed to update client 'app'")
+            .context("clients/app.yaml");
+        let second = anyhow::anyhow!("multi\nline").context("clients/web.yaml");
+        let multi = crate::error::MultiError::into_result(vec![second, first])
+            .unwrap_err()
+            .context("Failed to apply realm 'r'");
+
+        assert_eq!(
+            super::format_error(&multi),
+            [
+                "  Failed to apply realm 'r'",
+                "    ↳ 2 operations failed:",
+                "        1. clients/app.yaml",
+                "             ↳ Failed to update client 'app'",
+                "             ↳ PUT https://kc/admin/realms/r/clients/1 failed: 400 Bad Request - Invalid redirect",
+                "        2. clients/web.yaml",
+                "             ↳ multi",
+                "               line",
+                "",
+                "Hint: fix the redirect URIs",
+            ]
+            .join("\n")
+        );
+    }
+
     #[test]
     fn test_progress_helpers_never_lose_messages() {
         assert_eq!(super::suspend_progress(|| 42), 42);

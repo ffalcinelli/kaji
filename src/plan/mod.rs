@@ -20,7 +20,7 @@ macro_rules! plan_generic_resources {
 use crate::client::KeycloakClient;
 use crate::utils::secrets::{SecretResolver, obfuscate_secrets};
 use crate::utils::ui::{ACTION, CHECK, MEMO, Ui, WARN};
-use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
+use crate::utils::yaml::{list_yaml_files, load_yaml_with_overlay};
 
 use anyhow::{Context, Result};
 use console::{Style, style};
@@ -58,6 +58,23 @@ impl PlanSummary {
 
     pub fn total(&self) -> usize {
         self.created + self.updated
+    }
+}
+
+/// Remote resources of a type, or none when the realm does not exist yet (everything declared
+/// locally will be created). Any other failure, including a 404 on a resource of an existing
+/// realm, is an error described by `what`.
+pub(crate) async fn remote_or_empty_for_new_realm<T>(
+    client: &KeycloakClient,
+    result: Result<Vec<T>>,
+    what: impl FnOnce() -> String,
+) -> Result<Vec<T>> {
+    match result {
+        Ok(resources) => Ok(resources),
+        Err(e) if crate::client::is_not_found(&e) && !client.realm_exists().await? => {
+            Ok(Vec::new())
+        }
+        Err(e) => Err(e).with_context(what),
     }
 }
 
@@ -110,7 +127,10 @@ pub async fn run_with_outcome(args: PlanArgs<'_>, write_plan: bool) -> Result<Pl
         verbose,
     } = args;
 
-    if !async_fs::try_exists(&workspace_dir).await? {
+    let workspace_exists = async_fs::try_exists(&workspace_dir)
+        .await
+        .with_context(|| format!("Failed to check {}", workspace_dir.display()))?;
+    if !workspace_exists {
         return Err(anyhow::anyhow!(
             "Hint: Create the workspace directory first or use `kaji init`."
         ))
@@ -170,7 +190,9 @@ pub async fn run_with_outcome(args: PlanArgs<'_>, write_plan: bool) -> Result<Pl
                 ui: ui.as_ref(),
                 profile,
             };
-            plan_single_realm(ctx, &mut changed_files, &mut summary).await?;
+            plan_single_realm(ctx, &mut changed_files, &mut summary)
+                .await
+                .with_context(|| format!("Failed to plan realm '{}'", realm_name))?;
 
             Ok::<(Vec<PathBuf>, PlanSummary), anyhow::Error>((changed_files, summary))
         };
@@ -184,7 +206,7 @@ pub async fn run_with_outcome(args: PlanArgs<'_>, write_plan: bool) -> Result<Pl
 
     let mut changed_files = Vec::new();
     let mut total_summary = PlanSummary::default();
-    let concurrent = crate::utils::join_all_tasks(set, None).await?;
+    let concurrent = crate::utils::join_all_tasks(set, "realms").await?;
     for res in sequential.into_iter().chain(concurrent) {
         let (files, summary) = res;
         changed_files.extend(files);
@@ -198,7 +220,11 @@ pub async fn run_with_outcome(args: PlanArgs<'_>, write_plan: bool) -> Result<Pl
             match async_fs::remove_file(&plan_path).await {
                 Ok(_) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    return Err(e).with_context(|| {
+                        format!("Failed to remove the outdated plan {}", plan_path.display())
+                    });
+                }
             }
         }
         eprintln!(
@@ -259,21 +285,14 @@ async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
     let flows_dir = ctx
         .workspace_dir
         .join(AuthenticationFlowRepresentation::DIR_NAME);
-    if !async_fs::try_exists(&flows_dir).await? {
+    let Some(files) = list_yaml_files(&flows_dir, ctx.profile.as_deref()).await? else {
         return Ok(());
-    }
+    };
 
-    // 1. Load all local flow representations from YAML files.
+    // 1. Load all local flow representations from YAML files (already validated by the
+    // flows plan).
     let mut local_flows: Vec<AuthenticationFlowRepresentation> = Vec::new();
-    let mut entries = async_fs::read_dir(&flows_dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if !is_yaml_file(&path) {
-            continue;
-        }
-        if is_overlay_file(&path, ctx.profile.as_deref()) {
-            continue;
-        }
+    for path in files {
         let val = load_yaml_with_overlay(&path, ctx.profile.as_deref()).await?;
         if let Ok(flow) = serde_json::from_value::<AuthenticationFlowRepresentation>(val) {
             local_flows.push(flow);
@@ -284,22 +303,14 @@ async fn check_flow_subflow_collisions(ctx: &PlanContext<'_>) -> Result<()> {
     }
 
     // 2. Fetch remote flows to determine which local flows are "to create" (not yet in Keycloak).
-    let remote_flows = match ctx
-        .client
-        .get_resources::<AuthenticationFlowRepresentation>()
-        .await
-    {
-        Ok(flows) => flows,
-        Err(e) if crate::client::is_not_found(&e) => Vec::new(),
-        Err(e) => {
-            return Err(e).with_context(|| {
-                format!(
-                    "Failed to fetch authentication flows for realm '{}' during sub-flow collision check",
-                    ctx.realm_name
-                )
-            });
-        }
-    };
+    let remote_flows = remote_or_empty_for_new_realm(
+        ctx.client,
+        ctx.client
+            .get_resources::<AuthenticationFlowRepresentation>()
+            .await,
+        || "Failed to fetch authentication flows for the sub-flow check".to_string(),
+    )
+    .await?;
     let remote_aliases: HashSet<String> = remote_flows
         .iter()
         .filter_map(|f| f.get_identity())
@@ -390,19 +401,25 @@ async fn plan_single_realm(
     check_flow_subflow_collisions(&ctx).await?;
 
     // 4. Plan custom components and keys
-    let ((mut component_changes, component_summary), (mut key_changes, key_summary), _) = tokio::try_join!(
+    let (components, keys, drift) = tokio::join!(
         components::plan_components_or_keys(&ctx, "components"),
         components::plan_components_or_keys(&ctx, "keys"),
         components::check_keys_drift(ctx.client, ctx.options, ctx.realm_name),
-    )?;
-
-    changed_files.append(&mut component_changes);
-    changed_files.append(&mut key_changes);
-
-    summary.add(&component_summary);
-    summary.add(&key_summary);
-
-    Ok(())
+    );
+    let mut errors = Vec::new();
+    for result in [components, keys] {
+        match result {
+            Ok((mut files, sum)) => {
+                changed_files.append(&mut files);
+                summary.add(&sum);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    if let Err(e) = drift {
+        errors.push(e);
+    }
+    crate::error::MultiError::into_result(errors)
 }
 
 pub fn prompt_interactive_change<T: Serialize>(

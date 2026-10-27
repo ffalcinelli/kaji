@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
 #![allow(clippy::collapsible_if)]
+use crate::error::HttpError;
 use crate::models::{
     AuthenticationExecutionInfoRepresentation, AuthenticationFlowRepresentation,
     AuthenticatorConfigRepresentation, ClientRepresentation, ClientScopeRepresentation,
@@ -183,6 +184,15 @@ impl KeycloakClient {
         self.get_resource(&self.target_realm).await
     }
 
+    /// Returns whether the target realm exists on the server.
+    pub async fn realm_exists(&self) -> Result<bool> {
+        match self.get_realm().await {
+            Ok(_) => Ok(true),
+            Err(e) if is_not_found(&e) => Ok(false),
+            Err(e) => Err(e).context("Failed to check whether the realm exists"),
+        }
+    }
+
     /// Creates a new realm (`POST /admin/realms`).
     pub async fn create_realm(&self, realm_rep: &RealmRepresentation) -> Result<()> {
         self.create_resource(realm_rep).await?;
@@ -217,10 +227,9 @@ impl KeycloakClient {
 
     /// Builds `{realm}/{segments...}` with every segment percent-encoded.
     fn realm_url(&self, segments: &[&str]) -> Result<String> {
-        let mut url =
-            reqwest::Url::parse(&self.realm_admin_url()).context("Invalid Keycloak base URL")?;
+        let mut url = self.parsed_realm_admin_url()?;
         url.path_segments_mut()
-            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL"))?
+            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL '{}'", self.base_url))?
             .extend(segments);
         Ok(url.to_string())
     }
@@ -250,7 +259,16 @@ impl KeycloakClient {
             group.sub_groups = Some(Vec::new());
             return Ok(());
         }
-        let mut children = self.get_group_children(&id).await?;
+        let mut children = self.get_group_children(&id).await.with_context(|| {
+            format!(
+                "Failed to list sub-groups of group '{}'",
+                group
+                    .path
+                    .as_deref()
+                    .or(group.name.as_deref())
+                    .unwrap_or(&id)
+            )
+        })?;
         for child in &mut children {
             self.load_group_children(child).await?;
         }
@@ -588,10 +606,12 @@ impl KeycloakClient {
             name: &'a str,
         }
 
-        let provider_id = action_rep
-            .provider_id
-            .as_deref()
-            .context("Provider ID required for registration")?;
+        let provider_id = action_rep.provider_id.as_deref().with_context(|| {
+            format!(
+                "Required action '{}' needs a 'providerId' to be registered",
+                action_rep.alias.as_deref().unwrap_or_default()
+            )
+        })?;
         let name = action_rep.name.as_deref().unwrap_or(provider_id);
 
         let body = RegisterActionBody { provider_id, name };
@@ -624,9 +644,28 @@ impl KeycloakClient {
         self.delete_resource::<ComponentRepresentation>(id).await
     }
 
+    /// Parses the realm admin URL (`{base}/admin/realms/{realm}`).
+    fn parsed_realm_admin_url(&self) -> Result<reqwest::Url> {
+        reqwest::Url::parse(&self.realm_admin_url())
+            .with_context(|| format!("Invalid Keycloak base URL '{}'", self.base_url))
+    }
+
     async fn get<T: for<'a> Deserialize<'a>>(&self, url: &str) -> Result<T> {
         let response = self.execute(reqwest::Method::GET, url, |rb| rb).await?;
-        response.json().await.context("Failed to parse response")
+        let parse_context = || {
+            format!(
+                "Failed to parse response of GET {} as {}",
+                redact_url(url),
+                short_type_name::<T>()
+            )
+        };
+        let body = response
+            .bytes()
+            .await
+            .map_err(reqwest::Error::without_url)
+            .with_context(parse_context)?;
+        let deserializer = &mut serde_json::Deserializer::from_slice(&body);
+        serde_path_to_error::deserialize(deserializer).with_context(parse_context)
     }
 
     /// Fetches every page of a paginated list endpoint (`first`/`max` query parameters).
@@ -643,7 +682,8 @@ impl KeycloakClient {
                     all.len(),
                     PAGE_SIZE
                 ))
-                .await?;
+                .await
+                .with_context(|| format!("Failed to read page starting at item {}", all.len()))?;
             let len = page.len();
             all.extend(page);
             if len < PAGE_SIZE {
@@ -712,7 +752,7 @@ impl KeycloakClient {
                         tokio::time::sleep(backoff_delay(attempt)).await;
                         continue;
                     }
-                    return Err(e).with_context(|| {
+                    return Err(e.without_url()).with_context(|| {
                         format!("Failed to send {} request to {}", label, redact_url(url))
                     });
                 }
@@ -742,8 +782,7 @@ impl KeycloakClient {
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    return Self::check_response(response, &format!("{} request failed", label))
-                        .await;
+                    return Self::check_response(response, &label, url).await;
                 }
             }
         }
@@ -764,8 +803,9 @@ impl KeycloakClient {
             .form(params)
             .send()
             .await
-            .context("Failed to send login request")?;
-        let response = Self::check_response(response, "Login failed").await?;
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| format!("Failed to send login request to {}", self.token_url()))?;
+        let response = Self::check_response(response, "POST", &self.token_url()).await?;
 
         #[derive(Deserialize)]
         struct TokenResponse {
@@ -802,7 +842,25 @@ impl KeycloakClient {
             )).context("Missing authentication credentials");
         }
         debug!("Logging in to {}", redact_url(&self.token_url()));
-        self.request_token(&params).await
+        self.request_token(&params).await.map_err(|err| {
+            let rejected = matches!(
+                crate::error::http_status(&err).map(|s| s.as_u16()),
+                Some(400 | 401)
+            );
+            let err = if rejected {
+                err.context(format!(
+                    "Hint: check the credentials, that client '{}' exists in realm '{}', and the authentication realm (--auth-realm, KEYCLOAK_AUTH_REALM)",
+                    credentials.client_id, self.auth_realm
+                ))
+            } else {
+                err
+            };
+            err.context(format!(
+                "Login to {} (client '{}') failed",
+                redact_url(&self.token_url()),
+                credentials.client_id
+            ))
+        })
     }
 
     /// Returns a valid access token, refreshing it first when it is about to expire.
@@ -939,32 +997,14 @@ impl KeycloakClient {
         }
     }
 
-    async fn check_response(response: Response, context_msg: &str) -> Result<Response> {
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-
-            #[derive(Deserialize)]
-            struct KeycloakErrorBody {
-                error: Option<String>,
-                #[serde(rename = "error_description")]
-                error_description: Option<String>,
-                #[serde(rename = "errorMessage")]
-                error_message: Option<String>,
-            }
-
-            if let Ok(err_body) = serde_json::from_str::<KeycloakErrorBody>(&text) {
-                let detail = err_body
-                    .error_description
-                    .or(err_body.error_message)
-                    .unwrap_or_else(|| err_body.error.unwrap_or_default());
-                if !detail.is_empty() {
-                    anyhow::bail!("{}: {} - {}", context_msg, status, detail);
-                }
-            }
-            anyhow::bail!("{}: {} - {}", context_msg, status, text);
+    /// Turns a non-success response into an [`HttpError`] naming the request.
+    async fn check_response(response: Response, method: &str, url: &str) -> Result<Response> {
+        if response.status().is_success() {
+            return Ok(response);
         }
-        Ok(response)
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        Err(HttpError::new(method, redact_url(url), status, &text).into())
     }
 }
 
@@ -1048,6 +1088,25 @@ fn backoff_delay(attempt: u32) -> Duration {
     Duration::from_millis(200u64.saturating_mul(1 << attempt.min(5))).min(Duration::from_secs(5))
 }
 
+/// `std::any::type_name` without module paths (`Vec<RoleRepresentation>`).
+fn short_type_name<T: ?Sized>() -> String {
+    let mut out = String::new();
+    let mut ident_start = 0;
+    let mut chars = std::any::type_name::<T>().chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ':' && chars.peek() == Some(&':') {
+            chars.next();
+            out.truncate(ident_start);
+            continue;
+        }
+        out.push(c);
+        if !(c.is_alphanumeric() || c == '_') {
+            ident_start = out.len();
+        }
+    }
+    out
+}
+
 fn retry_after(response: &Response) -> Option<Duration> {
     response
         .headers()
@@ -1057,11 +1116,7 @@ fn retry_after(response: &Response) -> Option<Duration> {
         .map(|secs| Duration::from_secs(secs.min(10)))
 }
 
-/// Returns true if the error chain contains an HTTP 404 response from Keycloak.
-pub fn is_not_found(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.to_string().contains("404 Not Found"))
-}
+pub use crate::error::{is_conflict, is_not_found};
 
 fn redact_url(url_str: &str) -> String {
     match reqwest::Url::parse(url_str) {
@@ -1118,7 +1173,10 @@ impl KeycloakClient {
             return Ok(tree.clone());
         }
 
-        let top_level = self.get_authentication_flows_raw().await?;
+        let top_level = self
+            .get_authentication_flows_raw()
+            .await
+            .context("Failed to list authentication flows")?;
         let aliases: Vec<String> = top_level.iter().filter_map(|f| f.alias.clone()).collect();
         let rows: Vec<Result<Vec<AuthenticationExecutionInfoRepresentation>>> =
             futures::stream::iter(
@@ -1131,38 +1189,146 @@ impl KeycloakClient {
             .await;
 
         let mut executions = Vec::new();
-        for result in rows {
-            executions.extend(result?);
+        let mut errors = Vec::new();
+        let mut installed_providers = None;
+        let flows_with_alias = top_level.iter().filter(|f| f.alias.is_some());
+        for (flow, result) in flows_with_alias.zip(rows) {
+            match result {
+                Ok(rows) => executions.extend(rows),
+                Err(e) => errors.push(
+                    self.explain_flow_executions_error(flow, e, &mut installed_providers)
+                        .await,
+                ),
+            }
         }
+        crate::error::MultiError::into_result(errors)?;
 
         // Sub-flows are not listed by `GET /authentication/flows`: discover them through the
         // execution rows (which span all nesting levels) and fetch each one by ID.
         let mut known: HashSet<String> = top_level.iter().filter_map(|f| f.id.clone()).collect();
-        let subflow_ids: Vec<String> = executions
+        let subflow_ids: Vec<(String, String)> = executions
             .iter()
             .filter(|row| row.is_subflow())
-            .filter_map(|row| row.flow_id.clone())
-            .filter(|id| known.insert(id.clone()))
+            .filter_map(|row| {
+                let id = row.flow_id.clone()?;
+                Some((id, row.display_name.clone().unwrap_or_default()))
+            })
+            .filter(|(id, _)| known.insert(id.clone()))
             .collect();
-        let subflows: Vec<Result<AuthenticationFlowRepresentation>> = futures::stream::iter(
-            subflow_ids
-                .into_iter()
-                .map(|id| async move { self.get_flow(&id).await }),
-        )
-        .buffered(10)
-        .collect()
-        .await;
+        let subflows: Vec<Result<AuthenticationFlowRepresentation>> =
+            futures::stream::iter(subflow_ids.into_iter().map(|(id, name)| async move {
+                self.get_flow(&id)
+                    .await
+                    .with_context(|| format!("Failed to fetch sub-flow '{}' ({})", name, id))
+            }))
+            .buffered(10)
+            .collect()
+            .await;
 
         let mut flows = top_level;
+        let mut errors = Vec::new();
         for subflow in subflows {
-            flows.push(subflow?);
+            match subflow {
+                Ok(subflow) => flows.push(subflow),
+                Err(e) => errors.push(e),
+            }
         }
+        crate::error::MultiError::into_result(errors)?;
 
         let tree = RawAuthenticationFlows { flows, executions };
         if let Ok(mut cache) = self.resource_cache.write() {
             cache.insert(type_id, Box::new(tree.clone()));
         }
         Ok(tree)
+    }
+
+    /// Explains why the executions of a top-level flow could not be listed. Keycloak answers
+    /// `404 Could not find authenticator provider` (naming the provider only in its own log) when
+    /// an execution uses a provider that is not installed: the flow's authenticators are compared
+    /// with the installed providers (fetched once, into `installed`) to name it.
+    async fn explain_flow_executions_error(
+        &self,
+        flow: &AuthenticationFlowRepresentation,
+        err: anyhow::Error,
+        installed: &mut Option<Option<HashSet<String>>>,
+    ) -> anyhow::Error {
+        let alias = flow.alias.as_deref().unwrap_or_default();
+        if !is_not_found(&err) {
+            return err.context(format!(
+                "Failed to list the executions of authentication flow '{}'",
+                alias
+            ));
+        }
+        if installed.is_none() {
+            *installed = Some(match self.get_authenticator_provider_ids().await {
+                Ok(ids) => Some(ids),
+                Err(e) => {
+                    debug!("Could not list installed authenticator providers: {:#}", e);
+                    None
+                }
+            });
+        }
+        let mut missing: Vec<&str> = Vec::new();
+        if let Some(Some(ids)) = installed.as_ref() {
+            for exec in flow.authentication_executions.iter().flatten() {
+                if let Some(provider) = exec.authenticator.as_deref()
+                    && !exec.is_subflow()
+                    && !ids.contains(provider)
+                    && !missing.contains(&provider)
+                {
+                    missing.push(provider);
+                }
+            }
+        }
+        if !missing.is_empty() {
+            return err
+                .context(
+                    "Hint: install the provider jar on the Keycloak server, or remove these executions from the flow",
+                )
+                .context(format!(
+                    "Authentication flow '{}' uses authenticator providers not installed on the server: {}",
+                    alias,
+                    missing.join(", ")
+                ));
+        }
+        let subflows = flow.subflow_aliases();
+        let reason = if subflows.is_empty() {
+            "one of its executions may use an authenticator provider that is not installed on the server".to_string()
+        } else {
+            format!(
+                "an execution in it or in its sub-flows ({}) may use an authenticator provider that is not installed on the server",
+                subflows.join(", ")
+            )
+        };
+        err.context(format!(
+            "Failed to list the executions of authentication flow '{}': {}",
+            alias, reason
+        ))
+    }
+
+    /// IDs of the authenticator providers installed on the server (authenticators, client
+    /// authenticators, form authenticators and form actions).
+    pub async fn get_authenticator_provider_ids(&self) -> Result<HashSet<String>> {
+        #[derive(Deserialize)]
+        struct Provider {
+            id: Option<String>,
+        }
+        let kinds = [
+            "authenticator-providers",
+            "client-authenticator-providers",
+            "form-providers",
+            "form-action-providers",
+        ];
+        let lists = futures::future::try_join_all(kinds.iter().map(|kind| async move {
+            let url = self.realm_url(&["authentication", kind])?;
+            self.get::<Vec<Provider>>(&url).await
+        }))
+        .await?;
+        Ok(lists
+            .into_iter()
+            .flatten()
+            .filter_map(|provider| provider.id)
+            .collect())
     }
 
     /// Returns every authentication flow (top-level and sub-flows) in export format.
@@ -1177,12 +1343,27 @@ impl KeycloakClient {
     ) -> Result<Vec<AuthenticatorConfigRepresentation>> {
         let tree = self.get_flow_tree().await?;
         let mut seen = HashSet::new();
-        let futures: Vec<_> = tree
+        let configs: Vec<(String, String)> = tree
             .executions
             .iter()
-            .filter_map(|row| row.authentication_config.clone())
-            .filter(|id| seen.insert(id.clone()))
-            .map(|id| async move { self.get_authenticator_config_raw(&id).await })
+            .filter_map(|row| {
+                let id = row.authentication_config.clone()?;
+                Some((id, row.display_name.clone().unwrap_or_default()))
+            })
+            .filter(|(id, _)| seen.insert(id.clone()))
+            .collect();
+        let futures: Vec<_> = configs
+            .into_iter()
+            .map(|(id, execution)| async move {
+                self.get_authenticator_config_raw(&id)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to fetch authenticator config {} (of execution '{}')",
+                            id, execution
+                        )
+                    })
+            })
             .collect();
         futures::future::join_all(futures)
             .await
@@ -1206,10 +1387,9 @@ impl KeycloakClient {
 
     /// Builds `{realm}/authentication/flows/{alias}/{suffix...}` with the alias percent-encoded.
     fn flow_url(&self, flow_alias: &str, suffix: &[&str]) -> Result<String> {
-        let mut url =
-            reqwest::Url::parse(&self.realm_admin_url()).context("Invalid Keycloak base URL")?;
+        let mut url = self.parsed_realm_admin_url()?;
         url.path_segments_mut()
-            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL"))?
+            .map_err(|_| anyhow::anyhow!("Invalid Keycloak base URL '{}'", self.base_url))?
             .extend(["authentication", "flows", flow_alias])
             .extend(suffix);
         Ok(url.to_string())
@@ -1307,7 +1487,13 @@ impl KeycloakClient {
         let response = self
             .execute(reqwest::Method::POST, &url, |rb| rb.json(config))
             .await
-            .context("POST authenticator config failed")?;
+            .with_context(|| {
+                format!(
+                    "Failed to create authenticator config '{}' for execution {}",
+                    config.alias.as_deref().unwrap_or_default(),
+                    execution_id
+                )
+            })?;
         self.invalidate_resource_cache::<AuthenticatorConfigRepresentation>();
         self.invalidate_resource_cache::<AuthenticationFlowRepresentation>();
         if let Some(id) = location_id(&response) {
@@ -1317,10 +1503,13 @@ impl KeycloakClient {
         let created: AuthenticatorConfigRepresentation = response
             .json()
             .await
-            .context("Failed to parse created authenticator config response")?;
+            .map_err(reqwest::Error::without_url)
+            .with_context(|| {
+                format!("Failed to parse the response of POST {}", redact_url(&url))
+            })?;
         created
             .id
-            .context("Created authenticator config response has no ID")
+            .with_context(|| format!("POST {} returned no config ID", redact_url(&url)))
     }
 }
 
@@ -1425,7 +1614,13 @@ impl KeycloakResourceMapping for RoleRepresentation {
     /// The `Location` of a created role ends with its name, not its ID: look the ID up.
     async fn create(client: &KeycloakClient, res: &Self) -> Result<Option<String>> {
         client.post(&client.resource_url::<Self>(), res).await?;
-        Ok(client.get_realm_role(&res.name).await?.id)
+        let created = client.get_realm_role(&res.name).await.with_context(|| {
+            format!(
+                "Role '{}' was created, but looking up its ID failed",
+                res.name
+            )
+        })?;
+        Ok(created.id)
     }
 
     /// Composites are reconciled after the enrichment check: keep the declared flag.
@@ -1508,7 +1703,10 @@ impl KeycloakResourceMapping for RequiredActionProviderRepresentation {
     /// Required actions cannot be POSTed: they are registered from their provider and then
     /// configured with a PUT.
     async fn create(client: &KeycloakClient, res: &Self) -> Result<Option<String>> {
-        client.register_required_action(res).await?;
+        client
+            .register_required_action(res)
+            .await
+            .context("Failed to register the required action from its provider")?;
         let alias = res
             .provider_id
             .clone()
@@ -1518,7 +1716,10 @@ impl KeycloakResourceMapping for RequiredActionProviderRepresentation {
         registered.alias = Some(alias.clone());
         client
             .put(&client.object_url::<Self>(&alias), &registered)
-            .await?;
+            .await
+            .with_context(|| {
+                format!("Required action '{alias}' was registered, but configuring it failed")
+            })?;
         Ok(Some(alias))
     }
 }
@@ -2009,6 +2210,18 @@ mod tests {
             .unwrap();
         assert!(client.get_roles().await.unwrap().is_empty());
         api.assert_async().await;
+    }
+
+    #[test]
+    fn test_short_type_name() {
+        assert_eq!(
+            short_type_name::<Vec<crate::models::RoleRepresentation>>(),
+            "Vec<RoleRepresentation>"
+        );
+        assert_eq!(
+            short_type_name::<HashMap<String, Vec<u8>>>(),
+            "HashMap<String, Vec<u8>>"
+        );
     }
 
     #[test]

@@ -31,14 +31,14 @@ pub async fn create_group_yaml(workspace_dir: &Path, realm: &str, name: &str) ->
     let realm_dir = workspace_dir.join(sanitize(realm)).join("groups");
     fs::create_dir_all(&realm_dir)
         .await
-        .context("Failed to create groups directory")?;
+        .with_context(|| format!("Failed to create directory {}", realm_dir.display()))?;
 
     let file_path = realm_dir.join(format!("{}.yaml", sanitize(name)));
     let yaml = serde_yaml::to_string(&group).context("Failed to serialize group to YAML")?;
 
     crate::utils::write_secure(&file_path, &yaml)
         .await
-        .context("Failed to write group YAML file")?;
+        .with_context(|| format!("Failed to write group file {}", file_path.display()))?;
 
     Ok(())
 }

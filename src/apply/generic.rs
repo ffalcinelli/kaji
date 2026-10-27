@@ -1,13 +1,15 @@
 #![allow(clippy::collapsible_if)]
+use crate::client::is_conflict;
 use crate::models::{KeycloakResource, ResourceMeta};
 use crate::utils::secrets::substitute_secrets;
 pub use crate::utils::ui::{SUCCESS_CREATE, SUCCESS_UPDATE};
-use crate::utils::ui::{Ui, create_progress_bar};
-use crate::utils::yaml::{is_overlay_file, is_yaml_file, load_yaml_with_overlay};
+use crate::utils::ui::{Ui, WARN, create_progress_bar};
+use crate::utils::yaml::{
+    deserialize_value, from_value_at, list_yaml_files, load_yaml_with_overlay,
+};
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::fs as async_fs;
 use tokio::task::JoinSet;
 
 async fn order_files_topologically<T>(
@@ -116,18 +118,15 @@ where
         prompt_mutex,
     } = ctx;
 
-    let dir_name = T::DIR_NAME;
-    let resources_dir = workspace_dir.join(dir_name);
-    let mut entries = match async_fs::read_dir(&resources_dir).await {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
+    let resources_dir = workspace_dir.join(T::DIR_NAME);
+    let Some(all_files) = list_yaml_files(&resources_dir, profile.as_deref()).await? else {
+        return Ok(());
     };
 
     let existing_resources = client
         .get_resources::<T>()
         .await
-        .with_context(|| format!("Failed to get {} for realm '{}'", T::LABEL, realm_name))?;
+        .with_context(|| format!("Failed to get {} from Keycloak", T::LABEL))?;
 
     let existing_map: HashMap<String, String> = existing_resources
         .iter()
@@ -142,25 +141,16 @@ where
         .collect();
     let existing_map = Arc::new(existing_map);
 
-    let mut files = Vec::new();
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if planned_files
-            .as_ref()
-            .as_ref()
-            .is_some_and(|plan| !plan.contains(&path))
-        {
-            continue;
-        }
-        if !is_yaml_file(&path) {
-            continue;
-        }
-        // Skip overlay files themselves
-        if is_overlay_file(&path, profile.as_deref()) {
-            continue;
-        }
-        files.push(path);
-    }
+    let files: Vec<_> = all_files
+        .iter()
+        .filter(|path| {
+            planned_files
+                .as_ref()
+                .as_ref()
+                .is_none_or(|plan| plan.contains(*path))
+        })
+        .cloned()
+        .collect();
 
     // Without files there is nothing to apply, but an empty directory still means
     // "manage this resource type", so pruning must run.
@@ -186,16 +176,17 @@ where
             let prompt_mutex = Arc::clone(&prompt_mutex);
 
             set.spawn(async move {
+                let file_context = path.display().to_string();
+                async move {
                 let mut val = load_yaml_with_overlay(&path, profile.as_deref()).await?;
                 let local_val_before_sub = val.clone();
                 substitute_secrets(&mut val, Arc::clone(&resolver)).await?;
                 let local_val_resolved = val.clone();
-                let mut rep: T = serde_json::from_value(val)
-                    .with_context(|| format!("Failed to deserialize YAML file: {:?}", path))?;
+                let mut rep: T = deserialize_value(val)?;
 
-                let identity = rep.get_identity().with_context(|| {
-                    format!("Failed to get identity for {} in {:?}", T::LABEL, path)
-                })?;
+                let identity = rep
+                    .get_identity()
+                    .with_context(|| format!("The {} has no identity (name, alias, ...)", T::LABEL))?;
 
                 let id_opt = existing_map.get(&identity);
 
@@ -223,12 +214,7 @@ where
                 if let Some(id) = id_opt {
                     rep.set_id(Some(id.clone()));
                     client.update_resource(id, &rep).await.with_context(|| {
-                        format!(
-                            "Failed to update {} '{}' in realm '{}'",
-                            T::LABEL,
-                            rep.get_name(),
-                            realm_name
-                        )
+                        format!("Failed to update {} '{}'", T::LABEL, rep.get_name())
                     })?;
                     crate::utils::ui::report(&pb, format!(
                         "  {} Updated {} {}",
@@ -253,25 +239,30 @@ where
                                 final_id = Some(id);
                             } else {
                                 // Fallback: Fetch resources to get the generated ID of the created resource
-                                let fresh_resources = client.get_resources::<T>().await?;
-                                if let Some(fresh) = fresh_resources
+                                let fresh_resources = client.get_resources::<T>().await.with_context(|| {
+                                    format!(
+                                        "{} '{}' was created, but looking up its ID failed",
+                                        T::LABEL,
+                                        rep.get_name()
+                                    )
+                                })?;
+                                final_id = fresh_resources
                                     .into_iter()
                                     .find(|r| r.get_identity() == Some(identity.clone()))
-                                {
-                                    if let Some(id) = fresh.get_id() {
-                                        final_id = Some(id.to_string());
-                                    }
+                                    .and_then(|fresh| fresh.get_id().map(str::to_string));
+                                if final_id.is_none() {
+                                    crate::utils::ui::report(&pb, format!(
+                                        "  {} {} '{}' was created but is not listed by Keycloak: its relationships and enrichment were skipped",
+                                        WARN,
+                                        T::LABEL,
+                                        rep.get_name()
+                                    ));
                                 }
                             }
                         }
                         Err(err) => {
-                            let err_str = err.to_string();
-                            let is_conflict = err_str.contains("409")
-                                || err_str.to_lowercase().contains("conflict")
-                                || err_str.to_lowercase().contains("already exists");
-
                             let mut adopted = false;
-                            if is_conflict {
+                            if is_conflict(&err) {
                                 client.invalidate_resource_cache::<T>();
                                 if let Ok(fresh_resources) = client.get_resources::<T>().await {
                                     if let Some(fresh) = fresh_resources
@@ -301,12 +292,7 @@ where
 
                             if !adopted {
                                 return Err(err).with_context(|| {
-                                    format!(
-                                        "Failed to create {} '{}' in realm '{}'",
-                                        T::LABEL,
-                                        rep.get_name(),
-                                        realm_name
-                                    )
+                                    format!("Failed to create {} '{}'", T::LABEL, rep.get_name())
                                 });
                             }
                         }
@@ -316,69 +302,76 @@ where
                 if let Some(id) = &final_id {
                     rep.post_save(&client, id).await.with_context(|| {
                         format!(
-                            "Failed to reconcile {} '{}' in realm '{}'",
+                            "Failed to reconcile the relationships of {} '{}'",
                             T::LABEL,
-                            rep.get_name(),
-                            realm_name
+                            rep.get_name()
                         )
                     })?;
                 }
 
                 if let Some(id) = final_id {
-                    if let Ok(mut enriched) = client.get_resource::<T>(&id).await {
-                        // Relationships declared locally are not part of the single GET.
-                        if !T::DEFERRED_RELATIONS {
-                            enriched.load_relations(&client, Some(&rep)).await?;
+                    match client.get_resource::<T>(&id).await {
+                        Ok(mut enriched) => {
+                            // Relationships declared locally are not part of the single GET.
+                            if !T::DEFERRED_RELATIONS {
+                                enriched
+                                    .load_relations(&client, Some(&rep))
+                                    .await
+                                    .with_context(|| {
+                                        format!(
+                                            "Failed to read back the relationships of {} '{}'",
+                                            T::LABEL,
+                                            rep.get_name()
+                                        )
+                                    })?;
+                            }
+                            rep.prepare_enriched(&mut enriched);
+                            check_and_update_enrichment(
+                                &path,
+                                profile.as_deref(),
+                                LocalSource {
+                                    before_sub: &local_val_before_sub,
+                                    resolved: &local_val_resolved,
+                                },
+                                &enriched,
+                                &realm_name,
+                                &secrets_path,
+                                &*ui,
+                                yes,
+                                Arc::clone(&prompt_mutex),
+                            )
+                            .await?;
                         }
-                        rep.prepare_enriched(&mut enriched);
-                        check_and_update_enrichment(
-                            &path,
-profile.as_deref(),
-LocalSource { before_sub: &local_val_before_sub, resolved: &local_val_resolved },
-                            &enriched,
-                            &realm_name,
-                            &secrets_path,
-                            &*ui,
-                            yes,
-                            Arc::clone(&prompt_mutex),
-                        )
-                        .await?;
+                        Err(e) => crate::utils::ui::report(
+                            &pb,
+                            enrichment_skipped_warning(T::LABEL, &rep.get_name(), &e),
+                        ),
                     }
                 }
 
                 pb.inc(1);
                 Ok::<(), anyhow::Error>(())
+                }
+                .await
+                .with_context(|| file_context)
             });
         }
 
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, T::LABEL).await?;
     }
 
     pb.finish_with_message(format!("Applied {}", T::LABEL));
 
     if prune {
+        // Every local file must be readable: a resource whose file cannot be parsed would
+        // otherwise look undeclared and be offered for deletion.
         let mut declared = HashSet::new();
-        match async_fs::read_dir(&resources_dir).await {
-            Ok(mut entries) => {
-                while let Some(entry) = entries.next_entry().await? {
-                    let path = entry.path();
-                    if !is_yaml_file(&path) {
-                        continue;
-                    }
-                    if is_overlay_file(&path, profile.as_deref()) {
-                        continue;
-                    }
-                    if let Ok(val) = load_yaml_with_overlay(&path, profile.as_deref()).await {
-                        if let Ok(rep) = serde_json::from_value::<T>(val) {
-                            if let Some(identity) = rep.get_identity() {
-                                declared.insert(identity);
-                            }
-                        }
-                    }
-                }
+        for path in &all_files {
+            let val = load_yaml_with_overlay(path, profile.as_deref()).await?;
+            let rep: T = from_value_at(val, path)?;
+            if let Some(identity) = rep.get_identity() {
+                declared.insert(identity);
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
         }
 
         for remote in &existing_resources {
@@ -410,6 +403,15 @@ LocalSource { before_sub: &local_val_before_sub, resolved: &local_val_resolved }
     }
 
     Ok(())
+}
+
+/// Warning shown when a resource was applied but reading it back (to sync server-side defaults
+/// into the local file) failed.
+pub fn enrichment_skipped_warning(label: &str, name: &str, err: &anyhow::Error) -> String {
+    format!(
+        "  {} Applied {} '{}', but reading it back failed, so the local file was not synced: {:#}",
+        WARN, label, name, err
+    )
 }
 
 /// Built-in client scopes created by Keycloak for every realm.
@@ -853,7 +855,11 @@ pub async fn append_secrets(
     let mut content = match tokio::fs::read_to_string(secrets_path).await {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!("Failed to read secrets file {}", secrets_path.display())
+            });
+        }
     };
 
     let mut existing = std::collections::HashMap::new();
@@ -888,6 +894,19 @@ mod tests {
     use crate::utils::ui::MockUi;
     use std::fs;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_append_secrets_names_unreadable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut secrets = std::collections::BTreeMap::new();
+        secrets.insert("KEY".to_string(), "value".to_string());
+        // The secrets "file" is a directory.
+        let err = append_secrets(dir.path(), &secrets).await.unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("Failed to read secrets file"),
+            "{err:#}"
+        );
+    }
 
     #[tokio::test]
     async fn test_check_and_update_enrichment_unit() -> Result<()> {

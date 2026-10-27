@@ -1375,3 +1375,74 @@ async fn get_users_returns_more_than_100() -> Result<()> {
     assert_eq!(users?.len(), 110);
     Ok(())
 }
+
+/// A flow using an authenticator whose provider jar is not installed makes Keycloak answer
+/// `404 Could not find authenticator provider` (without naming it) when listing the flow's
+/// executions. Realm import does not check providers, so such a realm can be reproduced.
+#[tokio::test]
+async fn missing_authenticator_provider_is_named() -> Result<()> {
+    let Some(url) = base_url() else {
+        return Ok(());
+    };
+    let admin = Admin::new(&url).await?;
+    let realm = unique_realm("missing-provider");
+    let status = admin
+        .post(
+            "",
+            &json!({
+                "realm": realm,
+                "enabled": true,
+                "authenticationFlows": [{
+                    "alias": "browser-custom",
+                    "providerId": "basic-flow",
+                    "topLevel": true,
+                    "builtIn": false,
+                    "authenticationExecutions": [
+                        {"authenticator": "auth-cookie", "requirement": "ALTERNATIVE",
+                         "priority": 10, "authenticatorFlow": false, "userSetupAllowed": false},
+                        {"authenticator": "kaji-missing-authenticator", "requirement": "REQUIRED",
+                         "priority": 20, "authenticatorFlow": false, "userSetupAllowed": false}
+                    ]
+                }]
+            }),
+        )
+        .await?;
+    assert_eq!(status, 201);
+
+    let mut client = admin_client(&url).await?;
+    client.set_target_realm(realm.clone());
+    let dir = tempdir()?;
+    let result = inspect::run_with_ui(
+        &client,
+        dir.path().to_path_buf(),
+        std::slice::from_ref(&realm),
+        true,
+        Arc::new(MockUi::new()),
+    )
+    .await;
+    admin.delete_realm(&realm).await;
+
+    let rendered = kaji::utils::ui::format_error(&result.unwrap_err());
+    assert!(
+        rendered.contains(&format!("Failed to inspect realm '{}'", realm)),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "Authentication flow 'browser-custom' uses authenticator providers not installed on the server: kaji-missing-authenticator"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(&format!(
+            "/admin/realms/{}/authentication/flows/browser-custom/executions failed: 404 Not Found - Could not find authenticator provider",
+            realm
+        )),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Hint: install the provider jar"),
+        "{rendered}"
+    );
+    Ok(())
+}

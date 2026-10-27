@@ -1,5 +1,5 @@
 use super::SecretResolver;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -20,18 +20,23 @@ impl VaultResolver {
     /// # Errors
     /// Returns an error if the address is not a valid URL, or if the connection is insecure (HTTP) in a non-local environment.
     pub fn new(address: &str, token: &str) -> Result<Self> {
-        let url = reqwest::Url::parse(address)?;
+        let url = reqwest::Url::parse(address)
+            .with_context(|| format!("Invalid Vault address '{}'", address))?;
         let host = url.host_str().unwrap_or("");
 
         let is_localhost = matches!(host, "localhost" | "127.0.0.1" | "[::1]");
         if url.scheme() == "http" && !is_localhost {
-            anyhow::bail!("Insecure HTTP connection to Vault is only allowed for localhost");
+            anyhow::bail!(
+                "Insecure HTTP connection to Vault is only allowed for localhost (address '{}')",
+                address
+            );
         }
 
         let client = reqwest::Client::builder()
             .https_only(!is_localhost)
             .timeout(std::time::Duration::from_secs(10))
-            .build()?;
+            .build()
+            .context("Failed to create the Vault HTTP client")?;
 
         Ok(Self {
             address: address.trim_end_matches('/').to_string(),
@@ -101,12 +106,16 @@ impl SecretResolver for VaultResolver {
         let path = path_parts[1].trim_start_matches('/');
 
         let base_url = format!("{}/v1/{}/data/", self.address, mount);
-        let parsed_base = reqwest::Url::parse(&base_url)?;
-        let url = parsed_base.join(path)?;
+        let parsed_base = reqwest::Url::parse(&base_url)
+            .with_context(|| format!("Invalid Vault mount '{}'", mount))?;
+        let url = parsed_base
+            .join(path)
+            .with_context(|| format!("Invalid Vault path '{}'", full_path))?;
 
         if !url.as_str().starts_with(parsed_base.as_str()) {
             return Err(anyhow::anyhow!(
-                "Invalid vault path: path traversal detected"
+                "Invalid vault path '{}': path traversal detected",
+                full_path
             ));
         }
         let resp = self
@@ -114,10 +123,21 @@ impl SecretResolver for VaultResolver {
             .get(url)
             .header("X-Vault-Token", &self.token)
             .send()
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to read secret '{}' from Vault at {}",
+                    full_path, self.address
+                )
+            })?;
 
         if resp.status().is_success() {
-            let body: VaultResponse = resp.json().await?;
+            let body: VaultResponse = resp.json().await.with_context(|| {
+                format!(
+                    "Failed to parse the Vault response for secret '{}' (expected a KV v2 secret)",
+                    full_path
+                )
+            })?;
             let secret_data = body.data.data;
 
             // Insert into cache
@@ -138,11 +158,32 @@ impl SecretResolver for VaultResolver {
                 full_path
             ))
         } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            Err(anyhow::anyhow!("Vault secret not found: {}", full_path))
+            Err(anyhow::anyhow!(
+                "Vault secret not found: {} (Vault at {})",
+                full_path,
+                self.address
+            ))
+        } else if resp.status() == reqwest::StatusCode::FORBIDDEN {
+            Err(anyhow::anyhow!(
+                "Hint: check that the Vault token is valid and its policy allows reading {}/data/{}",
+                mount,
+                path
+            ))
+            .with_context(|| {
+                format!(
+                    "Vault denied access to secret '{}' (403 Forbidden)",
+                    full_path
+                )
+            })
         } else {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            Err(anyhow::anyhow!("Vault error ({}): {}", status, text))
+            Err(anyhow::anyhow!(
+                "Vault error ({}) reading secret '{}': {}",
+                status,
+                full_path,
+                text.trim()
+            ))
         }
     }
 }
@@ -282,11 +323,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vault_resolver_forbidden_and_bad_body() {
+        let mut server = Server::new_async().await;
+        let _forbidden = server
+            .mock("GET", "/v1/secret/data/denied")
+            .with_status(403)
+            .create_async()
+            .await;
+        let _bad = server
+            .mock("GET", "/v1/secret/data/kv1")
+            .with_status(200)
+            .with_body(r#"{"data": {"password": "kv1 layout"}}"#)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "token").unwrap();
+        let err = resolver
+            .resolve("vault:secret/denied#field")
+            .await
+            .unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Vault denied access to secret 'secret/denied' (403 Forbidden)"),
+            "{msg}"
+        );
+        assert!(msg.contains("Hint: check that the Vault token"), "{msg}");
+
+        let err = resolver
+            .resolve("vault:secret/kv1#password")
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("expected a KV v2 secret"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_vault_resolver_invalid_address() {
         let res = VaultResolver::new("invalid_addr", "token");
         assert!(res.is_err());
         if let Err(e) = res {
-            assert!(e.to_string().contains("relative URL without a base"));
+            assert!(format!("{:#}", e).contains("relative URL without a base"));
         }
     }
 

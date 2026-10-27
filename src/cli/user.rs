@@ -38,13 +38,15 @@ pub async fn change_user_password_yaml(
             create_user_yaml(workspace_dir, realm, username, None, None, None).await?;
             fs::read_to_string(&file_path)
                 .await
-                .context("Failed to read newly created user YAML file")?
+                .with_context(|| format!("Failed to read {}", file_path.display()))?
         }
-        Err(e) => return Err(anyhow::Error::from(e).context("Failed to read user YAML file")),
+        Err(e) => {
+            return Err(e).with_context(|| format!("Failed to read {}", file_path.display()));
+        }
     };
 
-    let mut user: UserRepresentation =
-        serde_yaml::from_str(&yaml_content).context("Failed to parse user YAML file")?;
+    let mut user: UserRepresentation = serde_yaml::from_str(&yaml_content)
+        .with_context(|| format!("Failed to parse {}", file_path.display()))?;
 
     let new_cred = CredentialRepresentation {
         id: None,
@@ -70,7 +72,7 @@ pub async fn change_user_password_yaml(
     let yaml = serde_yaml::to_string(&user).context("Failed to serialize user to YAML")?;
     crate::utils::write_secure(&file_path, &yaml)
         .await
-        .context("Failed to write updated user YAML file")?;
+        .with_context(|| format!("Failed to write updated user file {}", file_path.display()))?;
 
     Ok(())
 }
@@ -131,14 +133,14 @@ pub async fn create_user_yaml(
     let realm_dir = workspace_dir.join(sanitize(realm)).join("users");
     fs::create_dir_all(&realm_dir)
         .await
-        .context("Failed to create users directory")?;
+        .with_context(|| format!("Failed to create directory {}", realm_dir.display()))?;
 
     let file_path = realm_dir.join(format!("{}.yaml", sanitize(username)));
     let yaml = serde_yaml::to_string(&user).context("Failed to serialize user to YAML")?;
 
     crate::utils::write_secure(&file_path, &yaml)
         .await
-        .context("Failed to write user YAML file")?;
+        .with_context(|| format!("Failed to write user file {}", file_path.display()))?;
 
     Ok(())
 }

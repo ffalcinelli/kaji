@@ -16,17 +16,30 @@ pub trait SecretResolver: Send + Sync {
     /// Returns `Ok(Some(value))` if found, `Ok(None)` if not managed by this resolver,
     /// or an error if resolution fails.
     async fn resolve(&self, key: &str) -> Result<Option<String>>;
+
+    /// Where this resolver looks for `${NAME}` values (e.g. `the environment`, a secrets file),
+    /// used to tell the user where to define a missing secret.
+    fn sources(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Resolves secrets from environment variables or a local `.secrets` file.
 pub struct EnvResolver {
     vars: HashMap<String, String>,
+    source: Option<std::path::PathBuf>,
 }
 
 impl EnvResolver {
     /// Creates a new `EnvResolver` with a predefined map of variables.
     pub fn new(vars: HashMap<String, String>) -> Self {
-        Self { vars }
+        Self { vars, source: None }
+    }
+
+    /// Records the secrets file the variables were read from (named in missing-secret hints).
+    pub fn with_source(mut self, path: &std::path::Path) -> Self {
+        self.source = Some(path.to_path_buf());
+        self
     }
 }
 
@@ -44,6 +57,14 @@ impl SecretResolver for EnvResolver {
             return Ok(Some(val));
         }
         Ok(None)
+    }
+
+    fn sources(&self) -> Vec<String> {
+        let mut sources = vec!["the environment".to_string()];
+        if let Some(path) = &self.source {
+            sources.push(path.display().to_string());
+        }
+        sources
     }
 }
 
@@ -68,6 +89,16 @@ impl SecretResolver for CompositeResolver {
             }
         }
         Ok(None)
+    }
+
+    fn sources(&self) -> Vec<String> {
+        let mut sources: Vec<String> = Vec::new();
+        for source in self.resolvers.iter().flat_map(|r| r.sources()) {
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+        sources
     }
 }
 
@@ -314,57 +345,169 @@ pub fn contains_placeholder(s: &str) -> bool {
             .any(|seg| matches!(seg, Segment::Placeholder(_)))
 }
 
-/// Substitutes every placeholder in a single string.
-///
-/// # Errors
-/// Returns an error if a placeholder cannot be resolved.
-pub async fn substitute_string(s: &str, resolver: &dyn SecretResolver) -> Result<String> {
+/// A placeholder that could not be substituted.
+enum Unresolved {
+    /// No resolver knows the placeholder.
+    Missing { name: String, at: String },
+    /// A resolver failed (e.g. Vault unreachable).
+    Failed {
+        name: String,
+        at: String,
+        error: anyhow::Error,
+    },
+}
+
+/// Substitutes the placeholders of `s`, collecting every one that cannot be resolved.
+async fn substitute_collect(
+    s: &str,
+    resolver: &dyn SecretResolver,
+    at: &str,
+) -> std::result::Result<String, Vec<Unresolved>> {
     let mut result = String::with_capacity(s.len());
+    let mut unresolved = Vec::new();
     for segment in parse_segments(s) {
         match segment {
             Segment::Literal(text) => result.push_str(&text),
-            Segment::Placeholder(name) => match resolver.resolve(&name).await? {
-                Some(val) => result.push_str(&val),
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Missing required secret or environment variable: {}",
-                        name
-                    ));
-                }
+            Segment::Placeholder(name) => match resolver.resolve(&name).await {
+                Ok(Some(val)) => result.push_str(&val),
+                Ok(None) => unresolved.push(Unresolved::Missing {
+                    name,
+                    at: at.to_string(),
+                }),
+                Err(error) => unresolved.push(Unresolved::Failed {
+                    name,
+                    at: at.to_string(),
+                    error,
+                }),
             },
         }
     }
-    Ok(result)
+    if unresolved.is_empty() {
+        Ok(result)
+    } else {
+        Err(unresolved)
+    }
+}
+
+/// Builds one error for every unresolved placeholder: the missing ones together (with a hint
+/// naming where they can be defined), plus one error per failed lookup.
+fn unresolved_error(unresolved: Vec<Unresolved>, resolver: &dyn SecretResolver) -> anyhow::Error {
+    let mut missing = Vec::new();
+    let mut errors = Vec::new();
+    for item in unresolved {
+        match item {
+            Unresolved::Missing { name, at } if at.is_empty() => {
+                missing.push(format!("${{{}}}", name))
+            }
+            Unresolved::Missing { name, at } => missing.push(format!("${{{}}} (at {})", name, at)),
+            Unresolved::Failed { name, at, error } => {
+                let location = if at.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {}", at)
+                };
+                errors.push(error.context(format!("Failed to resolve ${{{}}}{}", name, location)));
+            }
+        }
+    }
+    if !missing.is_empty() {
+        let message = format!(
+            "Missing {}: {}",
+            if missing.len() == 1 {
+                "secret"
+            } else {
+                "secrets"
+            },
+            missing.join(", ")
+        );
+        let sources = resolver.sources();
+        let error = if sources.is_empty() {
+            anyhow::anyhow!(message)
+        } else {
+            anyhow::anyhow!(
+                "Hint: define {} in {}",
+                if missing.len() == 1 { "it" } else { "them" },
+                sources.join(" or ")
+            )
+            .context(message)
+        };
+        errors.insert(0, error);
+    }
+    // `unresolved` is never empty, so there is at least one error.
+    if errors.len() == 1 {
+        errors.remove(0)
+    } else {
+        crate::error::MultiError::new(errors).into()
+    }
+}
+
+/// Substitutes every placeholder in a single string.
+///
+/// # Errors
+/// Returns an error naming every placeholder that cannot be resolved.
+pub async fn substitute_string(s: &str, resolver: &dyn SecretResolver) -> Result<String> {
+    substitute_collect(s, resolver, "")
+        .await
+        .map_err(|unresolved| unresolved_error(unresolved, resolver))
 }
 
 /// Recursively substitute ${ENV_VAR} or ${vault:path#key} with actual values
-#[async_recursion::async_recursion]
-#[allow(clippy::double_must_use)]
+///
+/// # Errors
+/// Returns one error naming every placeholder that cannot be resolved and where it is used
+/// (e.g. `${LDAP_PASSWORD} (at config.bindCredential[0])`).
 pub async fn substitute_secrets(
     value: &mut Value,
     resolver: Arc<dyn SecretResolver>,
 ) -> Result<()> {
-    match value {
-        Value::Object(map) => {
-            let futures: Vec<_> = map
-                .values_mut()
-                .map(|v| Box::pin(substitute_secrets(v, Arc::clone(&resolver))))
-                .collect();
-            futures::future::try_join_all(futures).await?;
-        }
-        Value::Array(arr) => {
-            let futures: Vec<_> = arr
-                .iter_mut()
-                .map(|v| Box::pin(substitute_secrets(v, Arc::clone(&resolver))))
-                .collect();
-            futures::future::try_join_all(futures).await?;
-        }
-        Value::String(s) if s.contains("${") => {
-            *s = substitute_string(s, resolver.as_ref()).await?;
-        }
-        _ => {}
+    let unresolved = substitute_at(value, Arc::clone(&resolver), String::new()).await;
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        Err(unresolved_error(unresolved, resolver.as_ref()))
     }
-    Ok(())
+}
+
+#[async_recursion::async_recursion]
+#[allow(clippy::double_must_use)]
+async fn substitute_at(
+    value: &mut Value,
+    resolver: Arc<dyn SecretResolver>,
+    at: String,
+) -> Vec<Unresolved> {
+    let futures: Vec<_> = match value {
+        Value::Object(map) => map
+            .iter_mut()
+            .map(|(key, v)| {
+                let child = if at.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", at, key)
+                };
+                substitute_at(v, Arc::clone(&resolver), child)
+            })
+            .collect(),
+        Value::Array(arr) => arr
+            .iter_mut()
+            .enumerate()
+            .map(|(i, v)| substitute_at(v, Arc::clone(&resolver), format!("{}[{}]", at, i)))
+            .collect(),
+        Value::String(s) if s.contains("${") => {
+            return match substitute_collect(s, resolver.as_ref(), &at).await {
+                Ok(resolved) => {
+                    *s = resolved;
+                    Vec::new()
+                }
+                Err(unresolved) => unresolved,
+            };
+        }
+        _ => return Vec::new(),
+    };
+    futures::future::join_all(futures)
+        .await
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Merges secrets into the content of a dotenv-style secrets file.
@@ -615,6 +758,76 @@ mod tests {
         assert!(secrets.is_empty());
     }
 
+    /// Resolver that knows no names and fails on `vault:` references.
+    struct FailingResolver;
+
+    #[async_trait]
+    impl SecretResolver for FailingResolver {
+        async fn resolve(&self, key: &str) -> Result<Option<String>> {
+            if key.starts_with("vault:") {
+                anyhow::bail!("Vault unreachable");
+            }
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_substitute_secrets_reports_every_unresolved_placeholder() {
+        let resolver: Arc<dyn SecretResolver> = Arc::new(FailingResolver);
+        assert!(resolver.sources().is_empty());
+        let mut val = json!({
+            "a": "${MISSING_A}",
+            "list": ["${MISSING_B}", "ok"],
+            "v": "${vault:secret/x#y}"
+        });
+        let err = substitute_secrets(&mut val, Arc::clone(&resolver))
+            .await
+            .unwrap_err();
+        let multi = err.downcast_ref::<crate::error::MultiError>().unwrap();
+        assert_eq!(multi.errors().len(), 2);
+        let msg = format!("{:#}", err);
+        // No resolver sources: no hint.
+        assert!(
+            msg.contains("Missing secrets: ${MISSING_A} (at a), ${MISSING_B} (at list[0])"),
+            "{msg}"
+        );
+        assert!(!msg.contains("Hint:"), "{msg}");
+        assert!(
+            msg.contains("Failed to resolve ${vault:secret/x#y} at v: Vault unreachable"),
+            "{msg}"
+        );
+
+        // A failure in a top-level string has no location.
+        let err = substitute_string("${vault:secret/x#y}", resolver.as_ref())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            format!("{:#}", err),
+            "Failed to resolve ${vault:secret/x#y}: Vault unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_composite_resolver_sources_and_hint() {
+        let env = EnvResolver::new(HashMap::new()).with_source(std::path::Path::new(".secrets"));
+        let composite = CompositeResolver::new(vec![
+            Box::new(FailingResolver),
+            Box::new(env),
+            Box::new(EnvResolver::new(HashMap::new())),
+        ]);
+        assert_eq!(
+            composite.sources(),
+            vec!["the environment".to_string(), ".secrets".to_string()]
+        );
+        let err = substitute_string("${MISSING_X}-${MISSING_Y}", &composite)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            format!("{:#}", err),
+            "Missing secrets: ${MISSING_X}, ${MISSING_Y}: Hint: define them in the environment or .secrets"
+        );
+    }
+
     #[tokio::test]
     async fn test_substitute_secrets() {
         let mut vars = HashMap::new();
@@ -641,11 +854,12 @@ mod tests {
         });
         let err = substitute_secrets(&mut missing_val, resolver).await;
         assert!(err.is_err());
-        assert!(
-            err.unwrap_err()
-                .to_string()
-                .contains("Missing required secret or environment variable: NON_EXISTENT_VAR")
+        let err = err.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Missing secret: ${NON_EXISTENT_VAR} (at missing)"
         );
+        assert!(format!("{:#}", err).contains("Hint: define it in the environment"));
     }
 
     #[tokio::test]

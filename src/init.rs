@@ -36,7 +36,10 @@ pub async fn run(interactive: bool, output: Option<PathBuf>, ui: &dyn Ui) -> Res
                 false,
             )?;
             if !overwrite {
-                anyhow::bail!("Initialization aborted to prevent overwrite.");
+                anyhow::bail!(
+                    "Initialization aborted: {} was left untouched",
+                    output_path.display()
+                );
             }
         } else {
             anyhow::bail!(
@@ -143,7 +146,7 @@ pub async fn run(interactive: bool, output: Option<PathBuf>, ui: &dyn Ui) -> Res
         toml::to_string_pretty(&config).context("Failed to serialize configuration to TOML")?;
     crate::utils::write_secure(&output_path, &serialized)
         .await
-        .context("Failed to write config file securely")?;
+        .with_context(|| format!("Failed to write {}", output_path.display()))?;
 
     ui.print_success(&format!(
         "Successfully scaffolded configuration file at {:?}",
@@ -453,7 +456,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Initialization aborted to prevent overwrite.")
+                .contains("Initialization aborted")
         );
 
         let content = tokio::fs::read_to_string(&output_path).await.unwrap();

@@ -51,12 +51,7 @@ async fn test_login_parse_failure() {
         .login("admin-cli", None, Some("bad_json"), Some("admin"))
         .await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Failed to parse token response")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Failed to parse token response"));
 }
 
 #[tokio::test]
@@ -701,7 +696,7 @@ async fn test_register_required_action_no_provider_id() {
         result
             .unwrap_err()
             .to_string()
-            .contains("Provider ID required for registration")
+            .contains("Required action 'action-2' needs a 'providerId'")
     );
 }
 
@@ -758,12 +753,11 @@ async fn test_api_error() {
         .await
         .expect("Login failed");
 
-    let result = client.get_realm().await;
-    assert!(result.is_err());
+    let err = client.get_realm().await.unwrap_err();
+    assert!(kaji::client::is_not_found(&err), "{err:#}");
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("GET request failed")
+        err.to_string()
+            .contains("/admin/realms/non-existent failed: 404"),
+        "{err:#}"
     );
 }

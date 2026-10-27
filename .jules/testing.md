@@ -32,6 +32,7 @@ This document provides context and guidelines for Google Jules when writing, ref
 
 *   **Mock Behavior**: When adding support for a new resource or Keycloak API endpoint, you **must** update the Axum mock server in [tests/common/mod.rs](tests/common/mod.rs) to handle the new routes and return expected mock responses.
 *   **Match the real API**: Mock payloads must mirror what Keycloak actually returns. Check new endpoints against the live harness before encoding their shape in mocks; mocks that copy wrong assumptions hide real bugs (see Known Issue #11).
+*   **Assert on errors through their chain**: errors carry layered context (realm, stage, file, operation), so the top-level `to_string()` rarely holds the detail. Assert with `format!("{:#}", err)`, `kaji::utils::ui::format_error(&err)`, or the typed helpers (`kaji::error::http_status`, `is_not_found`, `is_conflict`, downcasting to `MultiError`).
 *   **Isolate Filesystem Side Effects**: Always use `tempdir()` for testing file I/O operations (e.g. testing `plan`, `apply`, `inspect`, profile configuration parsing).
 *   **Validate Model Debug Obfuscation**: If you introduce sensitive fields to models, write a test in [coverage_improvement_test.rs](tests/coverage_improvement_test.rs) (specifically under `test_models_debug_obfuscation`) to verify that `format!("{:?}", model)` obfuscates the sensitive values with `********`.
 *   **Coverage Rules**: Every new feature or resource support should come with:

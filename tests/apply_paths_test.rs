@@ -448,6 +448,10 @@ async fn failed_post_save_reconciliation_names_the_resource() {
     .await
     .unwrap_err();
     let msg = format!("{:#}", err);
-    assert!(msg.contains("Failed to reconcile clients 'app'"), "{msg}");
+    assert!(
+        msg.contains("Failed to reconcile the relationships of clients 'app'"),
+        "{msg}"
+    );
+    assert!(msg.contains("clients/app.yaml"), "{msg}");
     assert!(msg.contains("missing-scope"), "{msg}");
 }

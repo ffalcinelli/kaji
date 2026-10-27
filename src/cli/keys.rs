@@ -32,30 +32,29 @@ pub async fn rotate_keys_yaml(workspace_dir: &Path, realm: &str) -> Result<usize
 
     let mut rotated_count = 0;
     for keys_dir in target_dirs {
-        let mut entries = match fs::read_dir(&keys_dir).await {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                return Err(anyhow::Error::from(e).context("Failed to read directory"));
-            }
+        let Some(entries) = crate::utils::read_dir_entries(&keys_dir).await? else {
+            continue;
         };
 
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .context("Failed to read directory entry")?
-        {
+        for entry in entries {
             let path = entry.path();
             let is_file = entry.file_type().await.is_ok_and(|ft| ft.is_file());
             if is_file && crate::utils::yaml::is_yaml_file(&path) {
                 let yaml_content = fs::read_to_string(&path)
                     .await
-                    .context("Failed to read key YAML file")?;
+                    .with_context(|| format!("Failed to read {}", path.display()))?;
 
+                let parsed = serde_yaml::from_str::<ComponentRepresentation>(&yaml_content);
+                if let Err(e) = &parsed {
+                    eprintln!(
+                        "{} Skipping {}: {}",
+                        crate::utils::ui::WARN,
+                        path.display(),
+                        e
+                    );
+                }
                 #[allow(clippy::collapsible_if)]
-                if let Ok(component) =
-                    serde_yaml::from_str::<ComponentRepresentation>(&yaml_content)
-                {
+                if let Ok(component) = parsed {
                     if component.provider_type.as_deref() == Some("org.keycloak.keys.KeyProvider") {
                         let mut new_component = component.clone();
                         new_component.id = None;
@@ -93,7 +92,12 @@ pub async fn rotate_keys_yaml(workspace_dir: &Path, realm: &str) -> Result<usize
                             .context("Failed to serialize rotated key to YAML")?;
                         crate::utils::write_secure(&new_file_path, &yaml)
                             .await
-                            .context("Failed to write rotated key YAML file")?;
+                            .with_context(|| {
+                                format!(
+                                    "Failed to write rotated key file {}",
+                                    new_file_path.display()
+                                )
+                            })?;
 
                         rotated_count += 1;
                     }
@@ -159,6 +163,17 @@ mod tests {
         }
 
         assert!(found_rotated, "Did not find a rotated key component file");
+    }
+
+    #[tokio::test]
+    async fn test_rotate_keys_yaml_skips_unparseable_files() {
+        let dir = tempdir().unwrap();
+        let keys_dir = dir.path().join("master").join("keys");
+        fs::create_dir_all(&keys_dir).await.unwrap();
+        fs::write(keys_dir.join("broken.yaml"), "name: [unclosed")
+            .await
+            .unwrap();
+        assert_eq!(rotate_keys_yaml(dir.path(), "master").await.unwrap(), 0);
     }
 
     #[tokio::test]

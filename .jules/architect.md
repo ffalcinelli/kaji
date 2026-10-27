@@ -13,6 +13,10 @@ This journal documents critical architectural learnings, boundaries, concepts, a
 ## 2026-09-23 - [Authentication Flow Reconciliation & Shared Sub-flows]
 **Observation:** Authentication flows with shared sub-flows exhibited 409 Conflict errors when parent flows auto-created or locked shared sub-flow containers in Keycloak. Additionally, circular subflow references or invalid execution requirement enums could lead to Keycloak API failures midway through reconciliation.
 **Action:** Implemented:
-1. Pure-local pre-flight validation in `src/validate.rs`: requirement enum validation, subflow alias presence check, and DFS cycle detection (`detect_flow_cycles`) with shared referrer tracking.
+1. Pure-local pre-flight validation in `src/validate.rs`: requirement enum validation, subflow alias presence check, and DFS cycle detection (`find_flow_cycles`) with shared referrer tracking.
 2. Topological dependency ordering in `src/apply/generic.rs`: sorting authentication flows into dependency tiers (Tier 0 leaf/shared sub-flows, Tier 1+ dependent parent flows) applied sequentially across tiers and concurrently within each tier.
 3. Graceful 409 Conflict auto-adoption: catching 409 Conflict during flow creation, invalidating client cache, discovering the auto-created remote flow ID, and reconciling via PUT update.
+
+## 2026-10-27 - [Explicit Errors]
+**Observation:** A flow using an authenticator whose provider jar was missing made Keycloak answer `404 Could not find authenticator provider`, and kaji reported only `GET request failed: 404 Not Found` without the flow, URL or provider. The same pattern was everywhere: HTTP errors without URL, bare `?` on client/IO/secret calls, the first of several failures only, message-text matching (`contains("404")`), and swallowed errors (one of which could make `apply --prune` delete the resource of an unreadable file).
+**Action:** Errors follow the layered convention in [AGENTS.md](../AGENTS.md#-error-reporting): typed `HttpError`/`MultiError` (`src/error.rs`), realm → stage → file → operation context, `Hint:` causes, aggregated failures (`join_all_tasks`, `validate`, `substitute_secrets`) and a tree renderer (`utils::ui::format_error`). The flow tree diagnoses missing providers against the server's provider lists.

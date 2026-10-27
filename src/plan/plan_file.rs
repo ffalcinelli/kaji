@@ -107,13 +107,22 @@ impl PlanFile {
             Err(e) => return Err(e).with_context(|| format!("Failed to read {:?}", path)),
         };
         let plan: Self = serde_json::from_str(&content)
-            .map_err(|_| anyhow::anyhow!("Hint: Run `kaji plan` again to regenerate it."))
-            .with_context(|| format!("Unsupported or corrupt plan file {:?}", path))?;
+            .map_err(|e| {
+                anyhow::Error::new(e).context("Hint: Run `kaji plan` again to regenerate it.")
+            })
+            .with_context(|| format!("Unsupported or corrupt plan file {}", path.display()))?;
         if plan.version != PLAN_VERSION {
             return Err(anyhow::anyhow!(
                 "Hint: Run `kaji plan` again to regenerate it."
             ))
-            .with_context(|| format!("Unsupported plan version {}", plan.version));
+            .with_context(|| {
+                format!(
+                    "Plan file {} has version {}, this kaji reads version {}",
+                    path.display(),
+                    plan.version,
+                    PLAN_VERSION
+                )
+            });
         }
         Ok(Some(plan))
     }
@@ -128,11 +137,17 @@ impl PlanFile {
         profile: Option<&str>,
     ) -> Result<HashSet<PathBuf>> {
         if self.profile.as_deref() != profile {
-            return Err(anyhow::anyhow!(
-                "Hint: Run `kaji plan` with the same profile, or apply with `--profile {}`.",
-                self.profile.as_deref().unwrap_or("<none>")
-            ))
-            .with_context(|| {
+            let hint = match self.profile.as_deref() {
+                Some(planned) => format!(
+                    "Hint: Run `kaji plan` with the same profile, or apply with `--profile {}`.",
+                    planned
+                ),
+                None => {
+                    "Hint: Run `kaji plan` with the same profile, or apply without `--profile`."
+                        .to_string()
+                }
+            };
+            return Err(anyhow::anyhow!(hint)).with_context(|| {
                 format!(
                     "Plan was created for profile '{}' but apply runs with profile '{}'",
                     self.profile.as_deref().unwrap_or("<none>"),
@@ -145,9 +160,14 @@ impl PlanFile {
         let mut stale = Vec::new();
         for file in &self.files {
             let absolute = workspace_dir.join(&file.path);
+            let display = file.path.display();
             match content_hash(&absolute, profile).await {
                 Ok(hash) if hash == file.sha256 => {}
-                _ => stale.push(file.path.display().to_string()),
+                Ok(_) => stale.push(format!("{} (changed)", display)),
+                Err(_) if !async_fs::try_exists(&absolute).await.unwrap_or(true) => {
+                    stale.push(format!("{} (deleted)", display))
+                }
+                Err(e) => stale.push(format!("{} (unreadable: {:#})", display, e)),
             }
             planned.insert(absolute);
         }
@@ -170,6 +190,36 @@ impl PlanFile {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_verify_explains_profile_and_stale_files() -> Result<()> {
+        let dir = tempdir()?;
+        let ws = dir.path();
+        std::fs::create_dir_all(ws.join("r/clients"))?;
+        let kept = ws.join("r/clients/kept.yaml");
+        let deleted = ws.join("r/clients/deleted.yaml");
+        std::fs::write(&kept, "clientId: kept\n")?;
+        std::fs::write(&deleted, "clientId: deleted\n")?;
+        let plan = PlanFile::build(ws, None, &[kept.clone(), deleted.clone()]).await?;
+
+        // Planned without a profile, applied with one: the hint says to drop `--profile`.
+        let err = plan.verify(ws, Some("prod")).await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("apply without `--profile`"), "{msg}");
+
+        std::fs::write(&kept, "clientId: changed\n")?;
+        std::fs::remove_file(&deleted)?;
+        let err = plan.verify(ws, None).await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("kept.yaml (changed)"), "{msg}");
+        assert!(msg.contains("deleted.yaml (deleted)"), "{msg}");
+
+        // A planned path that became a directory cannot be read.
+        std::fs::create_dir(&deleted)?;
+        let err = plan.verify(ws, None).await.unwrap_err();
+        assert!(format!("{:#}", err).contains("deleted.yaml (unreadable"));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_plan_roundtrip_and_relative_paths() -> Result<()> {
@@ -227,7 +277,7 @@ mod tests {
             r#"{"version": 99, "profile": null, "files": []}"#,
         )?;
         let err = PlanFile::read(dir.path()).await.unwrap_err();
-        assert!(format!("{:#}", err).contains("Unsupported plan version 99"));
+        assert!(format!("{:#}", err).contains("has version 99"));
         // A planned file outside the workspace cannot be recorded
         let outside = tempdir()?;
         let file = outside.path().join("x.yaml");

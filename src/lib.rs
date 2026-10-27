@@ -14,6 +14,8 @@ pub mod clean;
 pub mod cli;
 /// Keycloak Admin REST API HTTP client wrapper.
 pub mod client;
+/// Shared error types (`HttpError`, `MultiError`) and helpers to inspect them.
+pub mod error;
 /// Scaffolding for project configuration.
 pub mod init;
 /// Inspection pipeline to bootstrap local configuration files.
@@ -213,6 +215,46 @@ impl ConnectionSettings {
     }
 }
 
+/// Returns the process environment plus the entries of the secrets file at `env_path` (which
+/// take precedence). A missing file is fine; an unreadable file or invalid lines are reported as
+/// warnings, so a typo does not silently turn into a "missing secret" later.
+fn load_secret_vars(env_path: &std::path::Path) -> HashMap<String, String> {
+    let mut vars = std::env::vars().collect::<HashMap<String, String>>();
+    let warn = |msg: String| eprintln!("{} {}", utils::ui::WARN, style(msg).yellow());
+    match dotenvy::from_path_iter(env_path) {
+        Ok(iter) => {
+            for item in iter {
+                match item {
+                    Ok((k, v)) => {
+                        vars.insert(k, v);
+                    }
+                    Err(e @ dotenvy::Error::LineParse(..)) => warn(format!(
+                        "Ignoring an invalid entry of secrets file {}: {}",
+                        env_path.display(),
+                        e
+                    )),
+                    // I/O errors repeat forever: stop reading the file.
+                    Err(e) => {
+                        warn(format!(
+                            "Could not read secrets file {}: {}",
+                            env_path.display(),
+                            e
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) if e.not_found() => {}
+        Err(e) => warn(format!(
+            "Could not read secrets file {}: {}",
+            env_path.display(),
+            e
+        )),
+    }
+    vars
+}
+
 /// Resolves `${VAR}` placeholders in a profile's connection fields from the environment and the
 /// profile's secrets file (e.g. `client_secret: "${PROD_KAJI_SECRET}"`).
 ///
@@ -224,13 +266,7 @@ pub async fn resolve_profile_placeholders(
 ) -> Result<Profile> {
     let secrets_file = profile.secrets_file.as_deref().unwrap_or(".secrets");
     let env_path = workspace.join(secrets_file);
-    let mut vars = std::env::vars().collect::<HashMap<String, String>>();
-    if let Ok(iter) = dotenvy::from_path_iter(&env_path) {
-        for (k, v) in iter.flatten() {
-            vars.insert(k, v);
-        }
-    }
-    let resolver = EnvResolver::new(vars);
+    let resolver = EnvResolver::new(load_secret_vars(&env_path)).with_source(&env_path);
 
     profile.server_url = utils::secrets::substitute_string(&profile.server_url, &resolver)
         .await
@@ -287,8 +323,7 @@ pub async fn init_client(cli: &Cli, profile: Option<&Profile>) -> Result<Keycloa
             user.as_deref(),
             password.as_deref(),
         )
-        .await
-        .context("Login failed")?;
+        .await?;
     Ok(client)
 }
 
@@ -307,14 +342,7 @@ pub async fn init_secrets(
         .unwrap_or(".secrets");
 
     let env_path = workspace.join(secrets_file);
-    let mut vars = std::env::vars().collect::<HashMap<String, String>>();
-    if tokio::fs::try_exists(&env_path).await.unwrap_or(false)
-        && let Ok(iter) = dotenvy::from_path_iter(&env_path)
-    {
-        for item in iter.flatten() {
-            vars.insert(item.0, item.1);
-        }
-    }
+    let vars = load_secret_vars(&env_path);
 
     let mut resolvers: Vec<Box<dyn SecretResolver>> = Vec::new();
 
@@ -332,10 +360,12 @@ pub async fn init_secrets(
     );
 
     if let (Some(addr), Some(token)) = (vault_addr, vault_token) {
-        resolvers.push(Box::new(VaultResolver::new(&addr, &token)?));
+        let vault = VaultResolver::new(&addr, &token)
+            .with_context(|| format!("Invalid Vault configuration (address '{}')", addr))?;
+        resolvers.push(Box::new(vault));
     }
 
-    resolvers.push(Box::new(EnvResolver::new(vars)));
+    resolvers.push(Box::new(EnvResolver::new(vars).with_source(&env_path)));
 
     Ok(Arc::new(CompositeResolver::new(resolvers)))
 }
@@ -426,7 +456,7 @@ async fn handle_apply(
     );
     validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
         .await
-        .context("Pre-apply validation failed. Fix the issues above before running apply.")?;
+        .context("Validation failed: fix these problems before running apply")?;
 
     // 2. Connect to Keycloak and apply
     let client = init_client(cli, profile).await?;
@@ -477,7 +507,7 @@ async fn handle_plan(
     );
     validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
         .await
-        .context("Pre-plan validation failed. Fix the issues above before running plan.")?;
+        .context("Validation failed: fix these problems before running plan")?;
 
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -525,7 +555,7 @@ async fn handle_drift(
     );
     validate::run_with_profile(workspace.to_path_buf(), &cli.realms, cli.profile.as_deref())
         .await
-        .context("Pre-drift validation failed. Fix the issues above before running drift.")?;
+        .context("Validation failed: fix these problems before running drift")?;
 
     let client = init_client(cli, profile).await?;
     let resolver = init_secrets(cli, workspace, profile).await?;
@@ -658,7 +688,10 @@ pub async fn run_app(cli: Cli) -> Result<()> {
     // 5. Load profile if requested
     let profile = if let Some(p) = &cli.profile {
         let loaded = load_profile(&workspace, p).await?;
-        Some(resolve_profile_placeholders(loaded, &workspace).await?)
+        let resolved = resolve_profile_placeholders(loaded, &workspace)
+            .await
+            .with_context(|| format!("Failed to load profile '{}'", p))?;
+        Some(resolved)
     } else {
         None
     };
@@ -735,6 +768,19 @@ pub async fn run_app(cli: Cli) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_load_secret_vars_keeps_valid_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".secrets");
+        std::fs::write(&path, "GOOD_KEY=value\nthis line is invalid\n").unwrap();
+        let vars = load_secret_vars(&path);
+        assert_eq!(vars.get("GOOD_KEY").map(String::as_str), Some("value"));
+
+        // Missing file: only the environment; unreadable file (a directory): a warning.
+        assert!(!load_secret_vars(&dir.path().join("missing")).contains_key("GOOD_KEY"));
+        assert!(!load_secret_vars(dir.path()).contains_key("GOOD_KEY"));
+    }
 
     fn profile_with(server: &str, user: Option<&str>) -> Profile {
         Profile {

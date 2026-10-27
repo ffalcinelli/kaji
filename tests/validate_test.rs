@@ -74,12 +74,7 @@ async fn test_validate_empty_role_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Role name is empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Role name is empty"));
 }
 
 #[tokio::test]
@@ -140,12 +135,7 @@ async fn test_validate_duplicate_role_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Duplicate role name: admin")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Duplicate role name 'admin'"));
 }
 
 #[tokio::test]
@@ -157,12 +147,7 @@ async fn test_validate_missing_realm() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("realm.yaml not found")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("realm.yaml not found"));
 }
 
 #[tokio::test]
@@ -213,12 +198,7 @@ async fn test_validate_empty_client_id() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Client ID is missing or empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Client ID is missing or empty"));
 }
 
 #[tokio::test]
@@ -269,9 +249,7 @@ async fn test_validate_empty_idp_alias() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
+        format!("{:#}", result.unwrap_err())
             .contains("Identity Provider alias is missing or empty")
     );
 }
@@ -324,9 +302,7 @@ async fn test_validate_empty_idp_provider_id() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
+        format!("{:#}", result.unwrap_err())
             .contains("Identity Provider providerId is missing or empty")
     );
 }
@@ -369,12 +345,7 @@ async fn test_validate_empty_client_scope_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Client Scope name is missing or empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Client Scope name is missing or empty"));
 }
 
 #[tokio::test]
@@ -414,12 +385,7 @@ async fn test_validate_empty_group_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Group name is missing or empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Group name is missing or empty"));
 }
 
 #[tokio::test]
@@ -463,12 +429,7 @@ async fn test_validate_empty_username() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("User username is missing or empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("User username is missing or empty"));
 }
 
 #[tokio::test]
@@ -512,12 +473,7 @@ async fn test_validate_missing_username() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("User username is missing or empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("User username is missing or empty"));
 }
 
 #[tokio::test]
@@ -562,9 +518,7 @@ async fn test_validate_empty_auth_flow_alias() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
+        format!("{:#}", result.unwrap_err())
             .contains("Authentication Flow alias is missing or empty")
     );
 }
@@ -611,10 +565,7 @@ async fn test_validate_empty_required_action_alias() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Required Action alias is missing or empty")
+        format!("{:#}", result.unwrap_err()).contains("Required Action alias is missing or empty")
     );
 }
 
@@ -660,9 +611,7 @@ async fn test_validate_empty_required_action_provider_id() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
+        format!("{:#}", result.unwrap_err())
             .contains("Required Action providerId is missing or empty")
     );
 }
@@ -708,12 +657,7 @@ async fn test_validate_empty_component_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Component name is empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Component name is empty"));
 }
 
 #[tokio::test]
@@ -805,10 +749,7 @@ async fn test_validate_empty_component_provider_id() {
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Component providerId is missing or empty")
+        format!("{:#}", result.unwrap_err()).contains("Component providerId is missing or empty")
     );
 }
 
@@ -834,12 +775,7 @@ async fn test_validate_empty_realm_name() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Realm name is empty in realm.yaml")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("Realm name is empty"));
 }
 
 #[tokio::test]
@@ -883,12 +819,7 @@ async fn test_validate_empty_username_edge_case() {
 
     let result = validate::run(workspace_dir.clone(), &["test-realm".to_string()]).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("User username is missing or empty")
-    );
+    assert!(format!("{:#}", result.unwrap_err()).contains("User username is missing or empty"));
 }
 
 #[tokio::test]
@@ -948,7 +879,7 @@ async fn test_validate_client_roles_empty_and_duplicate() {
         .await
         .unwrap_err();
     assert!(
-        err.to_string().contains("Role name is empty"),
+        format!("{:#}", err).contains("Role name is empty"),
         "Expected empty role name error, got: {err}"
     );
 
@@ -959,7 +890,7 @@ async fn test_validate_client_roles_empty_and_duplicate() {
         .await
         .unwrap_err();
     assert!(
-        err.to_string().contains("Duplicate role name: reader"),
+        format!("{:#}", err).contains("Duplicate client role name 'reader'"),
         "Expected duplicate client role error, got: {err}"
     );
 
@@ -989,7 +920,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("Duplicate clientId 'app'"));
+    assert!(format!("{:#}", err).contains("Duplicate clientId 'app'"));
     fs::remove_file(clients_dir.join("c2.yaml")).unwrap();
 
     // Duplicate IDP alias
@@ -1008,10 +939,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("Duplicate Identity Provider alias 'google'")
-    );
+    assert!(format!("{:#}", err).contains("Duplicate Identity Provider alias 'google'"));
     fs::remove_file(idps_dir.join("i2.yaml")).unwrap();
 
     // Duplicate Client Scope name
@@ -1022,10 +950,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("Duplicate Client Scope name 'custom-scope'")
-    );
+    assert!(format!("{:#}", err).contains("Duplicate Client Scope name 'custom-scope'"));
     fs::remove_file(scopes_dir.join("s2.yaml")).unwrap();
 
     // Duplicate Group and invalid/duplicate subGroups
@@ -1039,7 +964,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("Group name is missing or empty"));
+    assert!(format!("{:#}", err).contains("Group name is missing or empty"));
 
     fs::write(
         groups_dir.join("g1.yaml"),
@@ -1049,17 +974,14 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("Duplicate subGroup name 'team' under group 'eng'")
-    );
+    assert!(format!("{:#}", err).contains("Duplicate subGroup name 'team' under group '/eng'"));
 
     fs::write(groups_dir.join("g1.yaml"), "name: eng\n").unwrap();
     fs::write(groups_dir.join("g2.yaml"), "name: eng\n").unwrap();
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("Duplicate Group 'eng'"));
+    assert!(format!("{:#}", err).contains("Duplicate Group 'eng'"));
     fs::remove_file(groups_dir.join("g2.yaml")).unwrap();
 
     // Duplicate User username
@@ -1070,7 +992,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("Duplicate User username 'alice'"));
+    assert!(format!("{:#}", err).contains("Duplicate User username 'alice'"));
     fs::remove_file(users_dir.join("u2.yaml")).unwrap();
 
     // Duplicate Required Action alias
@@ -1089,10 +1011,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("Duplicate Required Action alias 'terms'")
-    );
+    assert!(format!("{:#}", err).contains("Duplicate Required Action alias 'terms'"));
     fs::remove_file(actions_dir.join("a2.yaml")).unwrap();
 
     // Duplicate Authenticator Config alias
@@ -1103,10 +1022,7 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
     let err = validate::run(workspace_dir.clone(), &["test-realm".to_string()])
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("Duplicate Authenticator Config alias 'otp-cfg'")
-    );
+    assert!(format!("{:#}", err).contains("Duplicate Authenticator Config alias 'otp-cfg'"));
     fs::remove_file(configs_dir.join("ac2.yaml")).unwrap();
 
     // Once duplicates are removed, validation succeeds
@@ -1114,5 +1030,46 @@ async fn test_validate_duplicate_resource_identities_and_subgroups() {
         validate::run(workspace_dir, &["test-realm".to_string()])
             .await
             .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn test_validate_reports_every_problem_with_its_files() {
+    let dir = tempdir().unwrap();
+    let workspace_dir = dir.path().to_path_buf();
+    let realm_dir = workspace_dir.join("test-realm");
+    for sub in ["clients", "users", "authentication-flows"] {
+        std::fs::create_dir_all(realm_dir.join(sub)).unwrap();
+    }
+    fs::write(realm_dir.join("realm.yaml"), "realm: test-realm\n").unwrap();
+    fs::write(realm_dir.join("clients/a.yaml"), "clientId: app\n").unwrap();
+    fs::write(realm_dir.join("clients/b.yaml"), "clientId: app\n").unwrap();
+    fs::write(realm_dir.join("users/u.yaml"), "username: \"\"\n").unwrap();
+    fs::write(
+        realm_dir.join("authentication-flows/f.yaml"),
+        "alias: my-flow\nauthenticationExecutions:\n- authenticator: auth-cookie\n  requirement: MAYBE\n",
+    )
+    .unwrap();
+
+    let err = validate::run(workspace_dir, &["test-realm".to_string()])
+        .await
+        .unwrap_err();
+    let msg = format!("{:#}", err);
+    assert!(msg.contains("Realm 'test-realm' is invalid"), "{msg}");
+    assert!(msg.contains("3 problems found"), "{msg}");
+    assert!(
+        msg.contains("b.yaml: Duplicate clientId 'app' (also declared in")
+            && msg.contains("a.yaml)"),
+        "{msg}"
+    );
+    assert!(
+        msg.contains("u.yaml: User username is missing or empty"),
+        "{msg}"
+    );
+    assert!(
+        msg.contains(
+            "f.yaml: Invalid requirement 'MAYBE' in execution #1 (auth-cookie) of flow 'my-flow'"
+        ),
+        "{msg}"
     );
 }

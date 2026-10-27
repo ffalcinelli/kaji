@@ -70,12 +70,7 @@ macro_rules! handle_upsert {
             let _ = &$update_id;
             let $update_rep = &$rep;
             $update_expr.await.with_context(|| {
-                format!(
-                    "Failed to update {} '{}' in realm '{}'",
-                    $resource_name,
-                    $rep.get_name(),
-                    $realm_name
-                )
+                format!("Failed to update {} '{}'", $resource_name, $rep.get_name())
             })?;
             eprintln!(
                 "  {} {}",
@@ -86,12 +81,7 @@ macro_rules! handle_upsert {
             $rep.$id_field = None;
             let $create_rep = &$rep;
             $create_expr.await.with_context(|| {
-                format!(
-                    "Failed to create {} '{}' in realm '{}'",
-                    $resource_name,
-                    $rep.get_name(),
-                    $realm_name
-                )
+                format!("Failed to create {} '{}'", $resource_name, $rep.get_name())
             })?;
             eprintln!(
                 "  {} {}",
@@ -157,13 +147,23 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
     }
 
     let secrets_file = if let Some(p) = &profile {
-        if let Ok(profile_obj) = crate::load_profile(&workspace_dir, p).await {
-            profile_obj
+        match crate::load_profile(&workspace_dir, p).await {
+            Ok(profile_obj) => profile_obj
                 .secrets_file
                 .clone()
-                .unwrap_or_else(|| ".secrets".to_string())
-        } else {
-            ".secrets".to_string()
+                .unwrap_or_else(|| ".secrets".to_string()),
+            Err(e) => {
+                eprintln!(
+                    "{} {}",
+                    WARN,
+                    style(format!(
+                        "Could not load profile '{}', writing new secrets to .secrets: {:#}",
+                        p, e
+                    ))
+                    .yellow()
+                );
+                ".secrets".to_string()
+            }
         }
     } else {
         ".secrets".to_string()
@@ -245,10 +245,11 @@ pub async fn run(args: ApplyArgs<'_>) -> Result<()> {
                 prompt_mutex,
             })
             .await
+            .with_context(|| format!("Failed to apply realm '{}'", realm_name))
         });
     }
 
-    crate::utils::join_all_tasks(set, None).await?;
+    crate::utils::join_all_tasks(set, "realms").await?;
 
     // Success - remove plan
     match async_fs::remove_file(&plan_path).await {
@@ -297,7 +298,9 @@ impl ApplyContext<'_> {
 
 async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
     // Stage 0: Realm (flow bindings to flows that do not exist yet are deferred to the last stage)
-    let pending_realm = realm::apply_realm(ctx.reborrow()).await?;
+    let pending_realm = realm::apply_realm(ctx.reborrow())
+        .await
+        .context("Stage 0: realm settings")?;
 
     let ApplyContext {
         client,
@@ -337,7 +340,9 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                 RequiredActionProviderRepresentation
             ]
         );
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, "stage 1")
+            .await
+            .context("Stage 1: roles, client scopes and required actions")?;
     }
 
     // Stage 2: Authentication Flows
@@ -359,7 +364,9 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             prompt_mutex,
             [AuthenticationFlowRepresentation]
         );
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, "stage 2")
+            .await
+            .context("Stage 2: authentication flows")?;
     }
 
     // Stage 3: Identity Providers (reference flows), Clients (reference client scopes and flows)
@@ -381,13 +388,19 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             prompt_mutex,
             [IdentityProviderRepresentation, ClientRepresentation]
         );
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, "stage 3")
+            .await
+            .context("Stage 3: identity providers and clients")?;
     }
 
     // Stage 4: Client roles, then role composites (may reference any client role), then groups
     // with sub-groups and role mappings
-    client_roles::apply_client_roles(ctx.reborrow()).await?;
-    client_roles::apply_role_composites(ctx.reborrow()).await?;
+    client_roles::apply_client_roles(ctx.reborrow())
+        .await
+        .context("Stage 4: client roles")?;
+    client_roles::apply_role_composites(ctx.reborrow())
+        .await
+        .context("Stage 4: role composites")?;
     {
         let mut set = JoinSet::new();
         spawn_apply_stage!(
@@ -406,7 +419,9 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
             prompt_mutex,
             [GroupRepresentation]
         );
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, "stage 4")
+            .await
+            .context("Stage 4: groups")?;
     }
 
     // Stage 5: Users, Authenticator Configs, Components, Keys
@@ -454,6 +469,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                 prompt_mutex: prompt_mutex_ac,
             })
             .await
+            .context("Authenticator configs")
         });
 
         let client_co = client.clone();
@@ -484,6 +500,7 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                 "components",
             )
             .await
+            .context("Components")
         });
 
         let client_ke = client.clone();
@@ -514,13 +531,18 @@ async fn apply_single_realm(ctx: ApplyContext<'_>) -> Result<()> {
                 "keys",
             )
             .await
+            .context("Keys")
         });
 
-        crate::utils::join_all_tasks(set, None).await?;
+        crate::utils::join_all_tasks(set, "stage 5")
+            .await
+            .context("Stage 5: users, authenticator configs, components and keys")?;
     }
 
     // Stage 6: Realm flow bindings and local enrichment sync
-    realm::finish_realm(ctx.reborrow(), pending_realm).await?;
+    realm::finish_realm(ctx.reborrow(), pending_realm)
+        .await
+        .context("Stage 6: realm flow bindings")?;
 
     Ok(())
 }
