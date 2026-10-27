@@ -812,3 +812,140 @@ async fn unreachable_vault_is_named() {
         "Failed to read secret 'secret/app' from Vault at http://127.0.0.1:9",
     );
 }
+
+#[tokio::test]
+async fn client_list_failure_for_client_roles_names_the_user() {
+    let url = start(vec![
+        (
+            "POST /admin/realms/r/users",
+            201,
+            json!({"__location": "http://x/admin/realms/r/users/u1"}),
+        ),
+        ("GET /admin/realms/r/users/u1/role-mappings", 200, json!({})),
+        ("GET /admin/realms/r/clients", 500, json!({})),
+    ])
+    .await;
+    let c = client(url);
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("users/u.yaml"),
+        "username: u\nclientRoles:\n  app:\n  - reader\n",
+    );
+    assert_contains(
+        &chain(apply::generic::apply_resources::<UserRepresentation>(ctx(&c, dir.path())).await),
+        "Failed to list clients (for the client roles of user u)",
+    );
+}
+
+#[tokio::test]
+async fn client_role_prune_and_composites_edge_cases() {
+    let dir = tempdir().unwrap();
+    write(
+        &dir.path().join("clients/app/roles/reader.yaml"),
+        "name: reader\n",
+    );
+    // A realm role without composites is skipped by the composites pass.
+    write(&dir.path().join("roles/plain.yaml"), "name: plain\n");
+    let c = client(
+        start(vec![
+            (
+                "GET /admin/realms/r/clients",
+                200,
+                json!([{"id": "c1", "clientId": "app"}]),
+            ),
+            (
+                "GET /admin/realms/r/clients/c1/roles",
+                200,
+                json!([{"id": "r1", "name": "reader"}, {"name": "orphan"}]),
+            ),
+            (
+                "GET /admin/realms/r/roles-by-id/r1",
+                200,
+                json!({"id": "r1", "name": "reader", "clientRole": true}),
+            ),
+        ])
+        .await,
+    );
+    apply::client_roles::apply_role_composites(ctx(&c, dir.path()))
+        .await
+        .unwrap();
+    let mut context = ctx(&c, dir.path());
+    context.prune = true;
+    assert_contains(
+        &chain(apply::client_roles::apply_client_roles(context).await),
+        "Role 'orphan' of client 'app' has no ID",
+    );
+}
+
+#[tokio::test]
+async fn sub_flows_are_fetched_and_bad_config_responses_named() {
+    let c = client(
+        start(vec![
+            top_flow(json!([])),
+            (
+                "GET /admin/realms/r/authentication/flows/top/executions",
+                200,
+                json!([{"id": "e1", "authenticationFlow": true, "flowId": "sf1",
+                        "displayName": "sub", "level": 0}]),
+            ),
+            (
+                "GET /admin/realms/r/authentication/flows/sf1",
+                200,
+                json!({"id": "sf1", "alias": "sub", "topLevel": false}),
+            ),
+        ])
+        .await,
+    );
+    let flows = c
+        .get_resources::<AuthenticationFlowRepresentation>()
+        .await
+        .unwrap();
+    assert_eq!(flows.len(), 2);
+
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock(
+            "POST",
+            "/admin/realms/r/authentication/executions/e1/config",
+        )
+        .with_status(201)
+        .with_body("not json")
+        .create_async()
+        .await;
+    let config: AuthenticatorConfigRepresentation =
+        serde_json::from_value(json!({"alias": "otp-config"})).unwrap();
+    assert_contains(
+        &chain(
+            client(server.url())
+                .create_authenticator_config_for_execution("e1", &config)
+                .await,
+        ),
+        "Failed to parse the response of POST",
+    );
+}
+
+#[tokio::test]
+async fn inspect_names_an_unreadable_secrets_file() {
+    let url = start(vec![(
+        "GET /admin/realms/r",
+        200,
+        json!({"realm": "r", "smtpServer": {"password": "s3cret"}}),
+    )])
+    .await;
+    let c = client(url);
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join(".secrets")).unwrap();
+    assert_contains(
+        &chain(
+            kaji::inspect::run_with_ui(
+                &c,
+                dir.path().to_path_buf(),
+                &["r".to_string()],
+                true,
+                Arc::new(MockUi::new()),
+            )
+            .await,
+        ),
+        "Failed to read secrets file",
+    );
+}
