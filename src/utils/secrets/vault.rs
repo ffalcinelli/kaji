@@ -323,6 +323,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_vault_resolver_forbidden_and_bad_body() {
+        let mut server = Server::new_async().await;
+        let _forbidden = server
+            .mock("GET", "/v1/secret/data/denied")
+            .with_status(403)
+            .create_async()
+            .await;
+        let _bad = server
+            .mock("GET", "/v1/secret/data/kv1")
+            .with_status(200)
+            .with_body(r#"{"data": {"password": "kv1 layout"}}"#)
+            .create_async()
+            .await;
+
+        let resolver = VaultResolver::new(&server.url(), "token").unwrap();
+        let err = resolver
+            .resolve("vault:secret/denied#field")
+            .await
+            .unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(
+            msg.contains("Vault denied access to secret 'secret/denied' (403 Forbidden)"),
+            "{msg}"
+        );
+        assert!(msg.contains("Hint: check that the Vault token"), "{msg}");
+
+        let err = resolver
+            .resolve("vault:secret/kv1#password")
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("expected a KV v2 secret"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_vault_resolver_invalid_address() {
         let res = VaultResolver::new("invalid_addr", "token");
         assert!(res.is_err());

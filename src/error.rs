@@ -243,6 +243,12 @@ mod tests {
 
     #[test]
     fn test_multi_error() {
+        let nested = MultiError::new(vec![anyhow::anyhow!("b"), anyhow::anyhow!("a")]);
+        assert_eq!(nested.summary(), "2 operations failed:");
+        let flat = MultiError::flatten(vec![nested.into(), anyhow::anyhow!("c")]);
+        let messages: Vec<String> = flat.iter().map(|e| e.to_string()).collect();
+        assert_eq!(messages, ["a", "b", "c"]);
+
         assert!(MultiError::into_result(vec![]).is_ok());
 
         let single = MultiError::into_result(vec![anyhow::anyhow!("only")]).unwrap_err();

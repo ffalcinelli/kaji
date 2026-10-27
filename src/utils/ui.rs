@@ -404,6 +404,19 @@ impl Ui for MockUi {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn test_hints_are_printed_once() {
+        let first = anyhow::anyhow!("Hint: same").context("first");
+        let second = anyhow::anyhow!("Hint: same").context("second");
+        let err = crate::error::MultiError::with_noun(vec![first, second], "problems found");
+        let err: anyhow::Error = err.into();
+        let rendered = super::format_error(&err);
+        assert_eq!(rendered.matches("Hint: same").count(), 1, "{rendered}");
+        assert!(rendered.starts_with("  2 problems found:"), "{rendered}");
+        // The styled variant prints the same report to stderr.
+        super::eprint_error(&err);
+    }
+
+    #[test]
     fn test_format_error_renders_tree_and_hints() {
         let http: anyhow::Error = crate::error::HttpError::new(
             "PUT",

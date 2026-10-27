@@ -228,11 +228,20 @@ fn load_secret_vars(env_path: &std::path::Path) -> HashMap<String, String> {
                     Ok((k, v)) => {
                         vars.insert(k, v);
                     }
-                    Err(e) => warn(format!(
+                    Err(e @ dotenvy::Error::LineParse(..)) => warn(format!(
                         "Ignoring an invalid entry of secrets file {}: {}",
                         env_path.display(),
                         e
                     )),
+                    // I/O errors repeat forever: stop reading the file.
+                    Err(e) => {
+                        warn(format!(
+                            "Could not read secrets file {}: {}",
+                            env_path.display(),
+                            e
+                        ));
+                        break;
+                    }
                 }
             }
         }
@@ -759,6 +768,19 @@ pub async fn run_app(cli: Cli) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_load_secret_vars_keeps_valid_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".secrets");
+        std::fs::write(&path, "GOOD_KEY=value\nthis line is invalid\n").unwrap();
+        let vars = load_secret_vars(&path);
+        assert_eq!(vars.get("GOOD_KEY").map(String::as_str), Some("value"));
+
+        // Missing file: only the environment; unreadable file (a directory): a warning.
+        assert!(!load_secret_vars(&dir.path().join("missing")).contains_key("GOOD_KEY"));
+        assert!(!load_secret_vars(dir.path()).contains_key("GOOD_KEY"));
+    }
 
     fn profile_with(server: &str, user: Option<&str>) -> Profile {
         Profile {

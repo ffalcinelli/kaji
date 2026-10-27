@@ -192,6 +192,36 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
+    async fn test_verify_explains_profile_and_stale_files() -> Result<()> {
+        let dir = tempdir()?;
+        let ws = dir.path();
+        std::fs::create_dir_all(ws.join("r/clients"))?;
+        let kept = ws.join("r/clients/kept.yaml");
+        let deleted = ws.join("r/clients/deleted.yaml");
+        std::fs::write(&kept, "clientId: kept\n")?;
+        std::fs::write(&deleted, "clientId: deleted\n")?;
+        let plan = PlanFile::build(ws, None, &[kept.clone(), deleted.clone()]).await?;
+
+        // Planned without a profile, applied with one: the hint says to drop `--profile`.
+        let err = plan.verify(ws, Some("prod")).await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("apply without `--profile`"), "{msg}");
+
+        std::fs::write(&kept, "clientId: changed\n")?;
+        std::fs::remove_file(&deleted)?;
+        let err = plan.verify(ws, None).await.unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(msg.contains("kept.yaml (changed)"), "{msg}");
+        assert!(msg.contains("deleted.yaml (deleted)"), "{msg}");
+
+        // A planned path that became a directory cannot be read.
+        std::fs::create_dir(&deleted)?;
+        let err = plan.verify(ws, None).await.unwrap_err();
+        assert!(format!("{:#}", err).contains("deleted.yaml (unreadable"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_plan_roundtrip_and_relative_paths() -> Result<()> {
         let dir = tempdir()?;
         let ws = dir.path();

@@ -166,6 +166,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rotate_keys_yaml_skips_unparseable_files() {
+        let dir = tempdir().unwrap();
+        let keys_dir = dir.path().join("master").join("keys");
+        fs::create_dir_all(&keys_dir).await.unwrap();
+        fs::write(keys_dir.join("broken.yaml"), "name: [unclosed")
+            .await
+            .unwrap();
+        assert_eq!(rotate_keys_yaml(dir.path(), "master").await.unwrap(), 0);
+    }
+
+    #[tokio::test]
     async fn test_rotate_keys_yaml_no_dir() {
         let dir = tempdir().unwrap();
         let workspace_dir = dir.path();

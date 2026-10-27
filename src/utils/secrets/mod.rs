@@ -433,9 +433,11 @@ fn unresolved_error(unresolved: Vec<Unresolved>, resolver: &dyn SecretResolver) 
         };
         errors.insert(0, error);
     }
-    match crate::error::MultiError::into_result(errors) {
-        Err(e) => e,
-        Ok(()) => anyhow::anyhow!("No unresolved placeholder"),
+    // `unresolved` is never empty, so there is at least one error.
+    if errors.len() == 1 {
+        errors.remove(0)
+    } else {
+        crate::error::MultiError::new(errors).into()
     }
 }
 
@@ -754,6 +756,76 @@ mod tests {
         extract_secrets(&mut val, "prefix", &mut secrets);
         assert_eq!(val, json!([]));
         assert!(secrets.is_empty());
+    }
+
+    /// Resolver that knows no names and fails on `vault:` references.
+    struct FailingResolver;
+
+    #[async_trait]
+    impl SecretResolver for FailingResolver {
+        async fn resolve(&self, key: &str) -> Result<Option<String>> {
+            if key.starts_with("vault:") {
+                anyhow::bail!("Vault unreachable");
+            }
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_substitute_secrets_reports_every_unresolved_placeholder() {
+        let resolver: Arc<dyn SecretResolver> = Arc::new(FailingResolver);
+        assert!(resolver.sources().is_empty());
+        let mut val = json!({
+            "a": "${MISSING_A}",
+            "list": ["${MISSING_B}", "ok"],
+            "v": "${vault:secret/x#y}"
+        });
+        let err = substitute_secrets(&mut val, Arc::clone(&resolver))
+            .await
+            .unwrap_err();
+        let multi = err.downcast_ref::<crate::error::MultiError>().unwrap();
+        assert_eq!(multi.errors().len(), 2);
+        let msg = format!("{:#}", err);
+        // No resolver sources: no hint.
+        assert!(
+            msg.contains("Missing secrets: ${MISSING_A} (at a), ${MISSING_B} (at list[0])"),
+            "{msg}"
+        );
+        assert!(!msg.contains("Hint:"), "{msg}");
+        assert!(
+            msg.contains("Failed to resolve ${vault:secret/x#y} at v: Vault unreachable"),
+            "{msg}"
+        );
+
+        // A failure in a top-level string has no location.
+        let err = substitute_string("${vault:secret/x#y}", resolver.as_ref())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            format!("{:#}", err),
+            "Failed to resolve ${vault:secret/x#y}: Vault unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_composite_resolver_sources_and_hint() {
+        let env = EnvResolver::new(HashMap::new()).with_source(std::path::Path::new(".secrets"));
+        let composite = CompositeResolver::new(vec![
+            Box::new(FailingResolver),
+            Box::new(env),
+            Box::new(EnvResolver::new(HashMap::new())),
+        ]);
+        assert_eq!(
+            composite.sources(),
+            vec!["the environment".to_string(), ".secrets".to_string()]
+        );
+        let err = substitute_string("${MISSING_X}-${MISSING_Y}", &composite)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            format!("{:#}", err),
+            "Missing secrets: ${MISSING_X}, ${MISSING_Y}: Hint: define them in the environment or .secrets"
+        );
     }
 
     #[tokio::test]

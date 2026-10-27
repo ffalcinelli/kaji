@@ -80,13 +80,10 @@ async fn read_yaml_files<T: DeserializeOwned + Send + 'static>(
     }
     let mut items = Vec::new();
     let mut problems = Vec::new();
-    while let Some(result) = join_set.join_next().await {
+    for result in join_set.join_all().await {
         match result {
-            Ok(Ok(item)) => items.push(item),
-            Ok(Err(e)) => problems.push(e),
-            Err(e) => problems.push(
-                anyhow::Error::new(e).context(format!("Task reading {} failed", dir.display())),
-            ),
+            Ok(item) => items.push(item),
+            Err(e) => problems.push(e),
         }
     }
     items.sort_by(|a, b| a.0.cmp(&b.0));
@@ -514,13 +511,14 @@ fn validate_authentication_flows(
         }
     }
 
-    // Cycle detection across flow and sub-flow dependencies
+    // Cycle detection across flow and sub-flow dependencies (every flow of a cycle has
+    // executions, hence a file)
     for cycle in find_flow_cycles(&adj) {
         let files: Vec<String> = cycle[..cycle.len() - 1]
             .iter()
-            .map(|alias| match seen.get(alias) {
-                Some(file) => format!("'{}' in {}", alias, file.display()),
-                None => format!("'{}'", alias),
+            .filter_map(|alias| {
+                let file = seen.get(alias)?;
+                Some(format!("'{}' in {}", alias, file.display()))
             })
             .collect();
         problems.push(anyhow::anyhow!(

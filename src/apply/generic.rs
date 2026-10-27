@@ -896,6 +896,19 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
+    async fn test_append_secrets_names_unreadable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut secrets = std::collections::BTreeMap::new();
+        secrets.insert("KEY".to_string(), "value".to_string());
+        // The secrets "file" is a directory.
+        let err = append_secrets(dir.path(), &secrets).await.unwrap_err();
+        assert!(
+            format!("{:#}", err).contains("Failed to read secrets file"),
+            "{err:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_check_and_update_enrichment_unit() -> Result<()> {
         let temp = tempdir()?;
         let client_path = temp.path().join("client.yaml");
